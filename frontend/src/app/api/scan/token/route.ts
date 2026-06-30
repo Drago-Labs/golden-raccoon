@@ -4,6 +4,7 @@ import { getMockTokenScan } from "@/server/scan/mockScan";
 
 const bodySchema = z.object({
   query: z.string().min(1).max(120),
+  chain: z.string().min(1).max(40).optional(),
 });
 
 export async function POST(request: Request) {

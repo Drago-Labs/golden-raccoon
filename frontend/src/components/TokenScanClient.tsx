@@ -2,36 +2,10 @@
 
 import { Lock } from "lucide-react";
 import { useState } from "react";
-import type { AgentStep, TokenScanResult } from "@/server/types";
-import { AgentTimeline } from "@/components/AgentTimeline";
+import type { TokenScanResult } from "@/server/types";
 import { RiskBreakdownCard } from "@/components/RiskBreakdownCard";
 
-const scanSteps: AgentStep[] = [
-  {
-    key: "observe",
-    label: "Website",
-    status: "complete",
-    detail: "Checking project website, docs, team, audit and social links.",
-  },
-  {
-    key: "analyze",
-    label: "X / social",
-    status: "complete",
-    detail: "Reading social sentiment, warning keywords and hype quality.",
-  },
-  {
-    key: "decide",
-    label: "On-chain",
-    status: "complete",
-    detail: "Checking liquidity, whale flows, holders and contract flags.",
-  },
-  {
-    key: "plan",
-    label: "Verdict",
-    status: "complete",
-    detail: "Generating risk score, reasons and suggested protection action.",
-  },
-];
+const checks = ["Social", "Contract", "Liquidity", "Verdict"];
 
 export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: string }) {
   const [query, setQuery] = useState(initialQuery || "MEME");
@@ -55,12 +29,12 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
       <section className="grid gap-5 lg:grid-cols-[.9fr_1.1fr]">
         <div className="glass-panel rounded-[28px] p-6">
           <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Token scan</div>
-          <h1 className="mt-3 text-4xl font-semibold tracking-tight">Scan token</h1>
+          <h1 className="mt-3 text-4xl font-semibold tracking-tight">Contract scan</h1>
           <div className="mt-7 flex flex-col gap-3 sm:flex-row">
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="MEME or 0x..."
+              placeholder="Contract address"
               className="h-12 min-w-0 flex-1 rounded-full border border-white/10 bg-white/7 px-5 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#d9a441]/60"
             />
             <button
@@ -76,7 +50,17 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
             Deep scan: x402 premium
           </div>
         </div>
-        <AgentTimeline steps={scan ? scanSteps : scanSteps.map((step) => ({ ...step, status: "pending" }))} />
+        <div className="glass-panel rounded-[28px] p-6">
+          <h2 className="text-2xl font-semibold">Checks</h2>
+          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            {checks.map((check) => (
+              <div key={check} className="flex items-center justify-between rounded-2xl bg-white/6 p-4">
+                <span className="text-sm font-medium">{check}</span>
+                <span className={scan ? "h-2 w-2 rounded-full bg-emerald-300" : "h-2 w-2 rounded-full bg-[#d9a441]"} />
+              </div>
+            ))}
+          </div>
+        </div>
       </section>
 
       {scan ? (

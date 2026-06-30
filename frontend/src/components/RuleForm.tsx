@@ -33,9 +33,9 @@ export function RuleForm({ initialRules }: { initialRules: UserRule }) {
       </div>
       <div className="mt-8 grid gap-5">
         {[
-          ["maxRiskScore", "Max token risk score"],
-          ["maxTradePercent", "Max trade percent"],
-          ["maxMemeExposurePercent", "Max meme exposure"],
+          ["maxRiskScore", "Max risk"],
+          ["maxTradePercent", "Max trade"],
+          ["maxMemeExposurePercent", "Meme cap"],
         ].map(([key, label]) => (
           <label key={key} className="block">
             <div className="mb-2 flex items-center justify-between text-sm">
@@ -54,18 +54,6 @@ export function RuleForm({ initialRules }: { initialRules: UserRule }) {
             />
           </label>
         ))}
-        <label className="flex items-center justify-between rounded-2xl bg-white/6 p-4">
-          <div>
-            <div className="font-medium">Auto-execute</div>
-            <div className="mt-1 text-sm text-white/45">Demo / future</div>
-          </div>
-          <input
-            type="checkbox"
-            checked={rules.autoExecute}
-            onChange={(event) => setRules((current) => ({ ...current, autoExecute: event.target.checked }))}
-            className="h-5 w-5 accent-[#d9a441]"
-          />
-        </label>
       </div>
       <button
         type="button"

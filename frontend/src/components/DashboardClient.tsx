@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { useAccount } from "wagmi";
 import { ArrowRight, Bot, Check, ChevronDown, Newspaper, RadioTower, ShieldCheck, Wallet } from "lucide-react";
-import type { PortfolioSnapshot } from "@/server/types";
+import type { PortfolioSnapshot, TokenScanResult } from "@/server/types";
 import { RiskScoreCard } from "@/components/RiskScoreCard";
 import { WalletPortfolioCard } from "@/components/WalletPortfolioCard";
 import { WalletConnectButton } from "@/components/WalletConnectButton";
@@ -32,6 +33,9 @@ export function DashboardClient() {
   const [scanQuery, setScanQuery] = useState("");
   const [selectedNetwork, setSelectedNetwork] = useState(networks[0]);
   const [isNetworkOpen, setIsNetworkOpen] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<TokenScanResult | null>(null);
+  const [isScanModalOpen, setIsScanModalOpen] = useState(false);
 
   useEffect(() => {
     const walletAddress = address ?? "0xDemoWallet";
@@ -43,6 +47,27 @@ export function DashboardClient() {
 
   if (!portfolio) {
     return <div className="glass-panel rounded-[28px] p-8 text-white/56">Loading portfolio...</div>;
+  }
+
+  async function runTokenScan(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!scanQuery.trim()) {
+      return;
+    }
+
+    setIsScanModalOpen(true);
+    setIsScanning(true);
+    setScanResult(null);
+
+    const response = await fetch("/api/scan/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: scanQuery.trim(), chain: selectedNetwork.id }),
+    });
+    const data = (await response.json()) as TokenScanResult;
+
+    setScanResult(data);
+    setIsScanning(false);
   }
 
   return (
@@ -77,8 +102,7 @@ export function DashboardClient() {
             <div className="mt-2 text-xl font-semibold">Contract first</div>
             <div className="mt-2 text-sm text-white/42">Network, social, liquidity</div>
           </div>
-          <form action="/scan" className="flex flex-col gap-3 sm:flex-row">
-            <input type="hidden" name="chain" value={selectedNetwork.id} />
+          <form onSubmit={runTokenScan} className="flex flex-col gap-3 sm:flex-row">
             <div className="relative sm:w-56">
               <button
                 type="button"
@@ -127,9 +151,10 @@ export function DashboardClient() {
             />
             <button
               type="submit"
+              disabled={isScanning || !scanQuery.trim()}
               className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#d9a441] px-5 text-sm font-semibold text-black transition hover:bg-[#f2c86d]"
             >
-              Scan token
+              {isScanning ? "Scanning" : "Scan token"}
               <ArrowRight className="h-4 w-4" />
             </button>
           </form>
@@ -169,6 +194,58 @@ export function DashboardClient() {
           })}
         </div>
       </section>
+
+      {isScanModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-5 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-[28px] border border-white/10 bg-[#101010] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Token scan</div>
+                <h2 className="mt-2 text-2xl font-semibold">{scanResult ? scanResult.symbol : "Agents running"}</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsScanModalOpen(false)}
+                className="rounded-full border border-white/10 px-3 py-1 text-sm text-white/54 transition hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-4">
+              {["Social", "Contract", "Liquidity", "Verdict"].map((step, index) => {
+                const complete = Boolean(scanResult) || (isScanning && index < 3);
+
+                return (
+                  <div key={step} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                    <div className={complete ? "h-2 w-2 rounded-full bg-emerald-300" : "h-2 w-2 rounded-full bg-[#d9a441]"} />
+                    <div className="mt-4 text-sm font-semibold">{step}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-[#d9a441]/20 bg-[#d9a441]/8 p-4 text-sm text-white/58">
+              {scanResult
+                ? scanResult.summary
+                : `Scanning ${selectedNetwork.name} contract, social sentiment and liquidity signals.`}
+            </div>
+
+            {scanResult ? (
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-white/6 p-4">
+                  <div className="text-sm text-white/42">Risk</div>
+                  <div className="mt-1 text-3xl font-semibold text-red-200">{scanResult.overallRiskScore}</div>
+                </div>
+                <div className="rounded-2xl bg-white/6 p-4">
+                  <div className="text-sm text-white/42">Opportunity</div>
+                  <div className="mt-1 text-3xl font-semibold text-emerald-200">{scanResult.opportunityScore}</div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
