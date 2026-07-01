@@ -13,7 +13,7 @@ type ChainConfig = {
   covalentChainId?: string;
 };
 
-type GoPlusTokenSecurity = Record<string, string | undefined>;
+type GoPlusTokenSecurity = Record<string, unknown>;
 
 type GoPlusTokenSecurityResponse = {
   code?: number;
@@ -39,6 +39,14 @@ type DexScreenerPair = {
   fdv?: number;
   marketCap?: number;
   pairCreatedAt?: number;
+};
+
+type TokenHolder = {
+  address?: string;
+  tag?: string;
+  is_contract?: string | number | boolean;
+  is_locked?: string | number | boolean;
+  percent?: string | number;
 };
 
 type CreatorActivity = {
@@ -96,6 +104,32 @@ function isFlagged(value?: string) {
   return value === "1" || value?.toLowerCase() === "true";
 }
 
+function getStringField(security: GoPlusTokenSecurity | undefined, key: string) {
+  const value = security?.[key];
+
+  return typeof value === "string" ? value : value === undefined || value === null ? undefined : String(value);
+}
+
+function getArrayField<T>(security: GoPlusTokenSecurity | undefined, key: string): T[] {
+  const value = security?.[key];
+
+  if (Array.isArray(value)) {
+    return value as T[];
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+
+      return Array.isArray(parsed) ? (parsed as T[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
 function parseTax(value?: string) {
   const parsed = Number(value);
 
@@ -113,11 +147,11 @@ function parsePercent(value?: string) {
 }
 
 function getCreatorAddress(security?: GoPlusTokenSecurity) {
-  return security?.creator_address || security?.deployer_address || security?.owner_address;
+  return getStringField(security, "creator_address") || getStringField(security, "deployer_address") || getStringField(security, "owner_address");
 }
 
 function getOwnerAddress(security?: GoPlusTokenSecurity) {
-  return security?.owner_address;
+  return getStringField(security, "owner_address");
 }
 
 function sameAddress(left?: string, right?: string) {
@@ -182,8 +216,8 @@ async function fetchCreatorActivity(
 ): Promise<CreatorActivity | undefined> {
   const creatorAddress = getCreatorAddress(security);
   const ownerAddress = getOwnerAddress(security);
-  const creatorPercent = parsePercent(security?.creator_percent);
-  const ownerPercent = parsePercent(security?.owner_percent);
+  const creatorPercent = parsePercent(getStringField(security, "creator_percent"));
+  const ownerPercent = parsePercent(getStringField(security, "owner_percent"));
   const bestPair = getBestPair(pairs);
   const pairAddress = bestPair?.pairAddress;
   const apiKey = process.env.GOLDRUSH_API_KEY ?? process.env.COVALENT_API_KEY;
@@ -259,19 +293,19 @@ function buildSecurityFindings(security?: GoPlusTokenSecurity): AgentFinding[] {
     ];
   }
 
-  const buyTax = parseTax(security.buy_tax);
-  const sellTax = parseTax(security.sell_tax);
+  const buyTax = parseTax(getStringField(security, "buy_tax"));
+  const sellTax = parseTax(getStringField(security, "sell_tax"));
   const criticalFlags = [
-    ["Honeypot", security.is_honeypot],
-    ["Cannot sell all", security.cannot_sell_all],
-    ["Blacklist", security.is_blacklisted],
-    ["Owner balance change", security.owner_change_balance],
+    ["Honeypot", getStringField(security, "is_honeypot")],
+    ["Cannot sell all", getStringField(security, "cannot_sell_all")],
+    ["Blacklist", getStringField(security, "is_blacklisted")],
+    ["Owner balance change", getStringField(security, "owner_change_balance")],
   ].filter(([, value]) => isFlagged(value));
   const permissionFlags = [
-    ["Mint permission", security.is_mintable],
-    ["Pause permission", security.transfer_pausable],
-    ["Proxy contract", security.is_proxy],
-    ["Hidden owner", security.hidden_owner],
+    ["Mint permission", getStringField(security, "is_mintable")],
+    ["Pause permission", getStringField(security, "transfer_pausable")],
+    ["Proxy contract", getStringField(security, "is_proxy")],
+    ["Hidden owner", getStringField(security, "hidden_owner")],
   ].filter(([, value]) => isFlagged(value));
 
   return [
@@ -289,6 +323,57 @@ function buildSecurityFindings(security?: GoPlusTokenSecurity): AgentFinding[] {
       label: "Buy/sell tax",
       severity: buyTax >= 10 || sellTax >= 10 ? "high" : buyTax > 0 || sellTax > 0 ? "medium" : "low",
       detail: `Buy tax ${buyTax.toFixed(2)}%, sell tax ${sellTax.toFixed(2)}%.`,
+    },
+  ];
+}
+
+function getHolderPercent(holder: TokenHolder) {
+  return parsePercent(holder.percent === undefined ? undefined : String(holder.percent));
+}
+
+function isLockedOrContractHolder(holder: TokenHolder) {
+  return isFlagged(String(holder.is_locked ?? "")) || isFlagged(String(holder.is_contract ?? ""));
+}
+
+function buildHolderFindings(security?: GoPlusTokenSecurity): AgentFinding[] {
+  const holders = getArrayField<TokenHolder>(security, "holders")
+    .map((holder) => ({
+      ...holder,
+      percent: getHolderPercent(holder),
+    }))
+    .filter((holder): holder is TokenHolder & { percent: number } => typeof holder.percent === "number")
+    .sort((a, b) => b.percent - a.percent);
+
+  if (holders.length === 0) {
+    return [
+      {
+        label: "Holder concentration",
+        severity: "medium",
+        detail: "Top holder distribution is unavailable from the security provider.",
+      },
+    ];
+  }
+
+  const unlockedHolders = holders.filter((holder) => !isLockedOrContractHolder(holder));
+  const concentrationSet = unlockedHolders.length > 0 ? unlockedHolders : holders;
+  const topHolder = concentrationSet[0];
+  const top5Percent = concentrationSet.slice(0, 5).reduce((total, holder) => total + holder.percent, 0);
+  const top10Percent = concentrationSet.slice(0, 10).reduce((total, holder) => total + holder.percent, 0);
+  const topHolderPercent = topHolder?.percent ?? 0;
+
+  return [
+    {
+      label: "Top holder concentration",
+      severity: top5Percent >= 45 || topHolderPercent >= 20 ? "high" : top5Percent >= 25 || topHolderPercent >= 10 ? "medium" : "low",
+      detail: `Top holder controls ${topHolderPercent.toFixed(2)}%; top 5 control ${top5Percent.toFixed(2)}%; top 10 control ${top10Percent.toFixed(2)}%.`,
+    },
+    {
+      label: "Unlocked holder concentration",
+      severity: unlockedHolders.length === 0 ? "medium" : top10Percent >= 60 ? "high" : top10Percent >= 35 ? "medium" : "low",
+      detail:
+        unlockedHolders.length === 0
+          ? "Holder list is mostly contract/locked addresses, so concentration needs manual review."
+          : `${unlockedHolders.length} unlocked/non-contract holder${unlockedHolders.length === 1 ? "" : "s"} were included in concentration scoring.`,
     },
   ];
 }
@@ -430,6 +515,10 @@ function scoreFindings(findings: AgentFinding[]) {
       return 1.25;
     }
 
+    if (label.includes("holder concentration") || label.includes("top holder")) {
+      return 1.2;
+    }
+
     if (label.includes("tax") || label.includes("permission")) {
       return 1.15;
     }
@@ -503,6 +592,7 @@ export async function runOnchainAgent(input: OnchainAgentInput): Promise<AgentRe
   const creatorActivity = await fetchCreatorActivity(chainConfig, security, contractAddress, pairs).catch(() => undefined);
   const findings = [
     ...buildSecurityFindings(security),
+    ...buildHolderFindings(security),
     ...buildLiquidityFindings(pairs),
     ...buildMarketAnomalyFindings(pairs),
     ...buildCreatorFindings(creatorActivity),
@@ -513,6 +603,14 @@ export async function runOnchainAgent(input: OnchainAgentInput): Promise<AgentRe
       label: "GoPlus token security",
       status: security ? "connected" : "unavailable",
       detail: security ? "Contract permission and honeypot flags returned." : "GoPlus data unavailable for this request.",
+    },
+    {
+      label: "Holder distribution",
+      status: getArrayField<TokenHolder>(security, "holders").length > 0 ? "connected" : "unavailable",
+      detail:
+        getArrayField<TokenHolder>(security, "holders").length > 0
+          ? "Top holder distribution returned by security provider."
+          : "Holder distribution unavailable for this request.",
     },
     {
       label: "DexScreener token pairs",
