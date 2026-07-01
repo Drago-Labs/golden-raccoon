@@ -4,7 +4,8 @@ import { z } from "zod";
 const bodySchema = z.object({
   decisionId: z.string().optional(),
   walletAddress: z.string().min(1),
-  txHash: z.string().min(1),
+  txHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "Expected a wallet-signed transaction hash"),
+  userApproved: z.literal(true),
 });
 
 export async function POST(request: Request) {
@@ -17,7 +18,8 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     ...parsed.data,
-    status: "executed",
+    status: "confirmed",
+    autoExecuted: false,
     confirmedAt: new Date().toISOString(),
   });
 }

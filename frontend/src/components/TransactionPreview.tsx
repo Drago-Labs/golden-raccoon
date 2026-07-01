@@ -18,7 +18,25 @@ export function TransactionPreview({ preview }: { preview: Preview }) {
           </div>
         </div>
       </div>
-      <div className="mt-5 rounded-2xl bg-black/20 px-4 py-3 text-sm text-white/56">Approval required on {preview.network}</div>
+      {preview.blockedReason ? (
+        <div className="mt-5 rounded-2xl border border-red-300/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+          {preview.blockedReason}
+        </div>
+      ) : (
+        <div className="mt-5 rounded-2xl bg-black/20 px-4 py-3 text-sm text-white/56">
+          {preview.requiresApproval ? "Approval required" : "No wallet approval required"} on {preview.network}
+          {preview.percent ? ` · ${preview.percent}% ${preview.fromToken ?? "TOKEN"} to ${preview.toToken ?? "USDC"}` : null}
+        </div>
+      )}
+      {preview.approvalSteps?.length ? (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {preview.approvalSteps.map((step) => (
+            <div key={step} className="rounded-2xl bg-white/6 px-4 py-3 text-sm text-white/52">
+              {step}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }

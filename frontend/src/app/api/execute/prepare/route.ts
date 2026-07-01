@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { runGoldRaccoonAgent } from "@/server/agent";
+import { buildExecutionPreviewFromPortfolio } from "@/server/agents/execution";
 import { getPortfolioSnapshot } from "@/server/portfolio/getPortfolio";
 
 const bodySchema = z.object({
   walletAddress: z.string().optional(),
+  action: z.string().optional(),
   fromToken: z.string().optional(),
   toToken: z.string().optional(),
   percent: z.number().min(0).max(100).optional(),
+  riskScore: z.number().min(0).max(100).optional(),
+  estimatedValueUsd: z.number().min(0).optional(),
+  network: z.string().optional(),
 });
 
 export async function POST(request: Request) {
@@ -19,7 +23,7 @@ export async function POST(request: Request) {
   }
 
   const { portfolio } = await getPortfolioSnapshot(parsed.data.walletAddress);
-  const analysis = runGoldRaccoonAgent(portfolio);
+  const preview = buildExecutionPreviewFromPortfolio(portfolio, parsed.data);
 
-  return NextResponse.json(analysis.preview);
+  return NextResponse.json(preview);
 }

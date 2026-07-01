@@ -111,11 +111,18 @@ export type AgentDecision = {
 
 export type TransactionPreview = {
   title: string;
+  action?: "swap" | "reduce_exposure" | "watchlist" | "no_action";
+  fromToken?: string;
+  toToken?: string;
+  percent?: number;
   estimatedValueUsd: number;
   currentRiskScore: number;
   projectedRiskScore: number;
   requiresApproval: boolean;
   network: string;
+  slippageBps?: number;
+  approvalSteps?: string[];
+  blockedReason?: string;
 };
 
 export type UserRule = {
