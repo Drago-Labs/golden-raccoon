@@ -1,7 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, ShieldCheck, Sparkles, Wallet } from "lucide-react";
-import { WalletConnectButton } from "@/components/WalletConnectButton";
 
 export default function Home() {
   return (
@@ -21,7 +20,13 @@ export default function Home() {
             <div className="text-xs text-white/48">Multi-agent portfolio intelligence</div>
           </div>
         </Link>
-        <WalletConnectButton />
+        <Link
+          href="/dashboard"
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-white/10 bg-white/7 px-5 text-sm font-semibold text-white transition hover:border-[#d9a441]/40 hover:bg-white/12"
+        >
+          Go Dashboard
+          <ArrowRight className="h-4 w-4 text-[#d9a441]" />
+        </Link>
       </header>
 
       <main className="mx-auto grid min-h-[calc(100vh-80px)] w-full max-w-7xl items-center gap-10 px-5 pb-12 pt-4 sm:px-8 lg:grid-cols-[1.02fr_.98fr]">

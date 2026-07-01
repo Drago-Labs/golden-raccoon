@@ -27,7 +27,7 @@ const networks = [
 ];
 
 export function DashboardClient() {
-  const { address, isConnected } = useAccount();
+  const { address } = useAccount();
   const [portfolio, setPortfolio] = useState<PortfolioSnapshot | null>(null);
   const [scanQuery, setScanQuery] = useState("");
   const [selectedNetwork, setSelectedNetwork] = useState(networks[0]);
@@ -78,7 +78,7 @@ export function DashboardClient() {
             <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">Wallet guarded by agents</h1>
           </div>
           <div className="flex flex-col items-start gap-3 lg:items-end">
-            {!isConnected ? <WalletConnectButton /> : null}
+            <WalletConnectButton />
           </div>
         </div>
       </section>

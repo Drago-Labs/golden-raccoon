@@ -2,7 +2,6 @@ import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ShieldCheck } from "lucide-react";
-import { WalletConnectButton } from "./WalletConnectButton";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
@@ -42,7 +41,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               </Link>
             ))}
           </nav>
-          <WalletConnectButton />
+          <Link
+            href="/dashboard"
+            className="inline-flex h-10 items-center justify-center rounded-full border border-[#d9a441]/25 bg-[#d9a441]/10 px-4 text-sm font-medium text-[#f2c86d] transition hover:border-[#d9a441]/45"
+          >
+            Go Dashboard
+          </Link>
         </div>
       </header>
       <main className="mx-auto w-full max-w-7xl px-5 py-8 sm:px-8">
