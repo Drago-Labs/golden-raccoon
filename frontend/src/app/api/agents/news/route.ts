@@ -16,5 +16,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  return NextResponse.json(runNewsAgent(parsed.data));
+  return NextResponse.json(await runNewsAgent(parsed.data));
 }
