@@ -5,5 +5,10 @@
     "build": "npm --prefix frontend run build",
     "lint": "npm --prefix frontend run lint",
     "start": "npm --prefix frontend run start"
+  },
+  "dependencies": {
+    "next": "16.2.9",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
   }
 }
