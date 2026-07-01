@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { runTokenScan } from "@/server/scan/tokenScan";
+import { runSocialAgent } from "@/server/agents/social";
 
 const bodySchema = z.object({
-  query: z.string().min(1).max(260),
-  chain: z.string().min(1).max(40).optional(),
+  query: z.string().optional(),
 });
 
 export async function POST(request: Request) {
@@ -15,5 +14,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  return NextResponse.json(await runTokenScan(parsed.data.query, parsed.data.chain));
+  return NextResponse.json(runSocialAgent(parsed.data));
 }

@@ -6,9 +6,38 @@ import type { TokenScanResult } from "@/server/types";
 import { RiskBreakdownCard } from "@/components/RiskBreakdownCard";
 
 const checks = ["Social", "Contract", "Liquidity", "Verdict"];
+const chains = [
+  { value: "base", label: "Base" },
+  { value: "bsc", label: "BNB" },
+  { value: "ethereum", label: "Ethereum" },
+  { value: "arbitrum", label: "Arbitrum" },
+  { value: "polygon", label: "Polygon" },
+  { value: "linea", label: "Linea" },
+];
+
+function formatUsd(value?: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "N/A";
+  }
+
+  return value.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: value >= 1 ? 0 : 6,
+  });
+}
+
+function formatPercent(value?: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "N/A";
+  }
+
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
 
 export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: string }) {
   const [query, setQuery] = useState(initialQuery || "MEME");
+  const [chain, setChain] = useState("base");
   const [scan, setScan] = useState<TokenScanResult | null>(null);
   const [isScanning, setIsScanning] = useState(false);
 
@@ -17,7 +46,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
     const response = await fetch("/api/scan/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, chain }),
     });
     const data = (await response.json()) as TokenScanResult;
     setScan(data);
@@ -29,12 +58,23 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
       <section className="grid gap-5 lg:grid-cols-[.9fr_1.1fr]">
         <div className="glass-panel rounded-[28px] p-6">
           <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Token scan</div>
-          <h1 className="mt-3 text-4xl font-semibold tracking-tight">Contract scan</h1>
-          <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+          <h1 className="mt-3 text-4xl font-semibold tracking-tight">Token scan</h1>
+          <div className="mt-7 grid gap-3 lg:grid-cols-[9rem_1fr_auto]">
+            <select
+              value={chain}
+              onChange={(event) => setChain(event.target.value)}
+              className="h-12 rounded-full border border-white/10 bg-white/7 px-4 text-sm text-white outline-none transition focus:border-[#d9a441]/60"
+            >
+              {chains.map((item) => (
+                <option key={item.value} value={item.value} className="bg-[#101010] text-white">
+                  {item.label}
+                </option>
+              ))}
+            </select>
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Contract address"
+              placeholder="DexScreener URL or contract address"
               className="h-12 min-w-0 flex-1 rounded-full border border-white/10 bg-white/7 px-5 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#d9a441]/60"
             />
             <button
@@ -95,6 +135,41 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
                 ))}
               </div>
             </div>
+            {scan.market ? (
+              <div className="glass-panel rounded-[28px] p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-xl font-semibold">DexScreener market</h2>
+                    <div className="mt-1 text-sm text-white/42">{scan.market.dexId ?? "DEX"} pair data</div>
+                  </div>
+                  {scan.market.pairUrl ? (
+                    <a
+                      href={scan.market.pairUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/62 transition hover:text-white"
+                    >
+                      Open
+                    </a>
+                  ) : null}
+                </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  {[
+                    ["Liquidity", formatUsd(scan.market.liquidityUsd)],
+                    ["24h volume", formatUsd(scan.market.volume24hUsd)],
+                    ["FDV", formatUsd(scan.market.fdvUsd)],
+                    ["24h change", formatPercent(scan.market.priceChange24hPercent)],
+                    ["Pair age", typeof scan.market.pairAgeDays === "number" ? `${scan.market.pairAgeDays} days` : "N/A"],
+                    ["Price", formatUsd(scan.market.priceUsd)],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-2xl bg-white/6 p-4">
+                      <div className="text-sm text-white/42">{label}</div>
+                      <div className="mt-1 text-lg font-semibold">{value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
           <div className="space-y-5">
             <RiskBreakdownCard items={scan.riskBreakdown} />

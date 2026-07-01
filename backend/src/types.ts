@@ -1,5 +1,43 @@
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
+export type AgentStatus = "idle" | "running" | "complete" | "warning" | "error" | "unavailable";
+
+export type AgentSource = {
+  label: string;
+  url?: string;
+  status: "mock" | "connected" | "unavailable";
+  detail?: string;
+};
+
+export type AgentFinding = {
+  label: string;
+  severity: RiskLevel;
+  detail: string;
+};
+
+export type AgentRecommendedAction =
+  | "hold"
+  | "watch"
+  | "reduce_exposure"
+  | "swap_to_stable"
+  | "avoid"
+  | "manual_review"
+  | "prepare_transaction"
+  | "no_action";
+
+export type AgentResult = {
+  agent: "portfolio" | "news" | "social" | "onchain" | "decision" | "execution";
+  status: AgentStatus;
+  score: number;
+  verdict: string;
+  summary: string;
+  findings: AgentFinding[];
+  sources: AgentSource[];
+  confidence: number;
+  recommendedAction: AgentRecommendedAction;
+  createdAt: string;
+};
+
 export type TokenSignal = {
   scamRisk: number;
   websiteTrustRisk: number;
@@ -110,6 +148,18 @@ export type TokenScanResult = {
   symbol: string;
   tokenAddress: string;
   chain: string;
+  market?: {
+    pairAddress?: string;
+    dexId?: string;
+    pairUrl?: string;
+    priceUsd?: number;
+    liquidityUsd?: number;
+    volume24hUsd?: number;
+    fdvUsd?: number;
+    marketCapUsd?: number;
+    priceChange24hPercent?: number;
+    pairAgeDays?: number;
+  };
   overallRiskScore: number;
   opportunityScore: number;
   verdict: "safe" | "watch" | "high_risk" | "critical";

@@ -1,68 +1,298 @@
-import { Bot, Newspaper, RadioTower, ShieldCheck, Wallet } from "lucide-react";
+"use client";
 
-const modules = [
-  { name: "Portfolio", icon: Wallet },
-  { name: "News", icon: Newspaper },
-  { name: "Social", icon: RadioTower },
-  { name: "Onchain", icon: ShieldCheck },
-  { name: "Execution", icon: Bot },
+import { useState } from "react";
+import { ArrowRight, Bot, CheckCircle2, Loader2, Newspaper, RadioTower, ShieldCheck, Wallet, X } from "lucide-react";
+import type { AgentResult } from "@/server/types";
+
+type AgentKey = AgentResult["agent"];
+
+type AgentModule = {
+  key: AgentKey;
+  name: string;
+  description: string;
+  inputLabel: string;
+  placeholder: string;
+  defaultValue: string;
+  icon: typeof Wallet;
+};
+
+const modules: AgentModule[] = [
+  {
+    key: "portfolio",
+    name: "Portfolio Agent",
+    description: "Concentration, stable reserve and meme exposure.",
+    inputLabel: "Wallet",
+    placeholder: "0x wallet address",
+    defaultValue: "0xDemoWallet",
+    icon: Wallet,
+  },
+  {
+    key: "news",
+    name: "News Agent",
+    description: "Catalysts, negative mentions and source quality.",
+    inputLabel: "Token",
+    placeholder: "GOAT, MEME, project name",
+    defaultValue: "GOAT",
+    icon: Newspaper,
+  },
+  {
+    key: "social",
+    name: "Social Agent",
+    description: "Hype quality, shill density and phishing signals.",
+    inputLabel: "Query",
+    placeholder: "$GOAT, handle or hashtag",
+    defaultValue: "$GOAT",
+    icon: RadioTower,
+  },
+  {
+    key: "onchain",
+    name: "Onchain Agent",
+    description: "Contract risk, permissions and liquidity checks.",
+    inputLabel: "Contract",
+    placeholder: "0x contract address",
+    defaultValue: "",
+    icon: ShieldCheck,
+  },
+  {
+    key: "decision",
+    name: "Decision Agent",
+    description: "Combines agent results into one recommendation.",
+    inputLabel: "Mode",
+    placeholder: "balanced",
+    defaultValue: "balanced",
+    icon: CheckCircle2,
+  },
+  {
+    key: "execution",
+    name: "Execution Agent",
+    description: "Creates approval-only transaction plans.",
+    inputLabel: "Action",
+    placeholder: "reduce_exposure",
+    defaultValue: "reduce_exposure",
+    icon: Bot,
+  },
 ];
 
-const flow = ["Scan", "Score", "Recommend", "Approve"];
+function buildRequestBody(agent: AgentKey, value: string, results: Partial<Record<AgentKey, AgentResult>>) {
+  if (agent === "portfolio") {
+    return { walletAddress: value || "0xDemoWallet" };
+  }
+
+  if (agent === "news") {
+    return { symbol: value || "GOAT" };
+  }
+
+  if (agent === "social") {
+    return { query: value || "$GOAT" };
+  }
+
+  if (agent === "onchain") {
+    return { chain: "goat", contractAddress: value };
+  }
+
+  if (agent === "decision") {
+    return { results: Object.values(results) };
+  }
+
+  return { action: value || "reduce_exposure", percent: 30 };
+}
 
 export function AgentsNetwork() {
+  const [inputs, setInputs] = useState<Record<AgentKey, string>>(() =>
+    modules.reduce(
+      (state, module) => ({
+        ...state,
+        [module.key]: module.defaultValue,
+      }),
+      {} as Record<AgentKey, string>
+    )
+  );
+  const [loading, setLoading] = useState<Partial<Record<AgentKey, boolean>>>({});
+  const [results, setResults] = useState<Partial<Record<AgentKey, AgentResult>>>({});
+  const [selectedResult, setSelectedResult] = useState<AgentResult | null>(null);
+  const completedCount = Object.keys(results).length;
+  const warningCount = Object.values(results).filter((result) => result?.status === "warning").length;
+
+  async function runAgent(agent: AgentKey) {
+    setLoading((current) => ({ ...current, [agent]: true }));
+
+    try {
+      const response = await fetch(`/api/agents/${agent}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildRequestBody(agent, inputs[agent], results)),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Agent request failed with ${response.status}`);
+      }
+
+      const result = (await response.json()) as AgentResult;
+      setResults((current) => ({ ...current, [agent]: result }));
+    } finally {
+      setLoading((current) => ({ ...current, [agent]: false }));
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <section>
-        <div className="text-sm uppercase tracking-[0.2em] text-[#d9a441]">Agents</div>
-        <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">Agent modules</h1>
+      <section className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+        <div>
+          <div className="text-sm uppercase tracking-[0.2em] text-[#d9a441]">Agents</div>
+          <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">Agent command center</h1>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-white/50">
+            Run each specialist agent independently, inspect findings, then combine results through the Decision Agent.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl border border-white/10 bg-white/[.045] px-4 py-3">
+            <div className="text-2xl font-semibold">{completedCount}</div>
+            <div className="mt-1 text-xs text-white/42">completed</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/[.045] px-4 py-3">
+            <div className="text-2xl font-semibold">{warningCount}</div>
+            <div className="mt-1 text-xs text-white/42">warnings</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/[.045] px-4 py-3">
+            <div className="text-2xl font-semibold">6</div>
+            <div className="mt-1 text-xs text-white/42">agents</div>
+          </div>
+        </div>
       </section>
 
-      <section className="glass-panel rounded-[28px] p-5">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {modules.map((module) => {
-            const Icon = module.icon;
+      <section className="grid gap-4 lg:grid-cols-3">
+        {modules.map((module) => {
+          const Icon = module.icon;
+          const result = results[module.key];
+          const isLoading = Boolean(loading[module.key]);
 
-            return (
-              <div key={module.name} className="rounded-[22px] border border-white/10 bg-black/20 p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#d9a441]/10 text-[#d9a441]">
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <span className="h-2 w-2 rounded-full bg-emerald-300" />
+          return (
+            <article key={module.key} className="flex min-h-[22rem] flex-col rounded-[24px] border border-white/10 bg-white/[.045] p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#d9a441]/10 text-[#d9a441]">
+                  <Icon className="h-5 w-5" />
                 </div>
-                <div className="mt-5 text-lg font-semibold">{module.name}</div>
+                <span className={result?.status === "warning" ? "rounded-full bg-[#d9a441]/15 px-3 py-1 text-xs text-[#f2c86d]" : "rounded-full bg-white/7 px-3 py-1 text-xs text-white/46"}>
+                  {isLoading ? "running" : result?.status ?? "idle"}
+                </span>
               </div>
-            );
-          })}
-        </div>
+
+              <div className="mt-5">
+                <h2 className="text-xl font-semibold">{module.name}</h2>
+                <p className="mt-2 min-h-12 text-sm leading-6 text-white/48">{module.description}</p>
+              </div>
+
+              <label className="mt-5 text-xs uppercase tracking-[0.16em] text-white/34" htmlFor={`${module.key}-input`}>
+                {module.inputLabel}
+              </label>
+              <input
+                id={`${module.key}-input`}
+                value={inputs[module.key]}
+                onChange={(event) => setInputs((current) => ({ ...current, [module.key]: event.target.value }))}
+                placeholder={module.placeholder}
+                className="mt-2 h-11 rounded-full border border-white/10 bg-black/20 px-4 text-sm text-white outline-none transition placeholder:text-white/26 focus:border-[#d9a441]/50"
+              />
+
+              <button
+                type="button"
+                onClick={() => void runAgent(module.key)}
+                disabled={isLoading}
+                className="mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#d9a441] px-4 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                Run
+              </button>
+
+              <div className="mt-4 flex flex-1 flex-col justify-end">
+                {result ? (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedResult(result)}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4 text-left transition hover:border-[#d9a441]/35"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold">{result.verdict}</div>
+                      <div className="text-sm text-white/44">{result.score}/100</div>
+                    </div>
+                    <p className="mt-2 line-clamp-2 text-sm leading-6 text-white/46">{result.summary}</p>
+                  </button>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-white/10 p-4 text-sm text-white/34">No result yet.</div>
+                )}
+              </div>
+            </article>
+          );
+        })}
       </section>
 
-      <section className="grid gap-5 lg:grid-cols-[.9fr_1.1fr]">
-        <div className="rounded-[28px] border border-[#d9a441]/20 bg-[#d9a441]/8 p-6">
-          <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Current flow</div>
-          <div className="mt-5 grid gap-3 sm:grid-cols-4 lg:grid-cols-2">
-            {flow.map((step, index) => (
-              <div key={step} className="rounded-2xl bg-black/20 p-4">
-                <div className="text-sm text-white/38">0{index + 1}</div>
-                <div className="mt-2 text-lg font-semibold">{step}</div>
+      {selectedResult ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-5 backdrop-blur-sm">
+          <section className="w-full max-w-3xl rounded-[28px] border border-white/10 bg-[#101010] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">{selectedResult.agent} agent</div>
+                <h2 className="mt-2 text-3xl font-semibold">{selectedResult.verdict}</h2>
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-white/52">{selectedResult.summary}</p>
               </div>
-            ))}
-          </div>
-        </div>
+              <button
+                type="button"
+                onClick={() => setSelectedResult(null)}
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 text-white/60 transition hover:text-white"
+                aria-label="Close result detail"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
 
-        <div className="glass-panel rounded-[28px] p-6">
-          <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Recommendation</div>
-          <h2 className="mt-3 text-3xl font-semibold">Approval required before execution</h2>
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            {["Risk checked", "Rules matched", "Transaction prepared"].map((item) => (
-              <div key={item} className="rounded-2xl bg-white/6 p-4 text-sm text-white/62">
-                {item}
+            <div className="mt-6 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl bg-white/[.055] p-4">
+                <div className="text-sm text-white/42">Score</div>
+                <div className="mt-1 text-3xl font-semibold">{selectedResult.score}</div>
               </div>
-            ))}
-          </div>
+              <div className="rounded-2xl bg-white/[.055] p-4">
+                <div className="text-sm text-white/42">Confidence</div>
+                <div className="mt-1 text-3xl font-semibold">{Math.round(selectedResult.confidence * 100)}%</div>
+              </div>
+              <div className="rounded-2xl bg-white/[.055] p-4">
+                <div className="text-sm text-white/42">Action</div>
+                <div className="mt-2 text-sm font-semibold">{selectedResult.recommendedAction.replaceAll("_", " ")}</div>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-4 lg:grid-cols-2">
+              <div>
+                <div className="text-sm uppercase tracking-[0.16em] text-white/34">Findings</div>
+                <div className="mt-3 space-y-2">
+                  {selectedResult.findings.map((finding) => (
+                    <div key={`${finding.label}-${finding.detail}`} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold">{finding.label}</div>
+                        <div className="text-xs text-white/38">{finding.severity}</div>
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-white/48">{finding.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-sm uppercase tracking-[0.16em] text-white/34">Sources</div>
+                <div className="mt-3 space-y-2">
+                  {selectedResult.sources.map((source) => (
+                    <div key={`${source.label}-${source.status}`} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold">{source.label}</div>
+                        <div className="text-xs text-white/38">{source.status}</div>
+                      </div>
+                      {source.detail ? <div className="mt-2 text-sm leading-6 text-white/48">{source.detail}</div> : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
-      </section>
+      ) : null}
     </div>
   );
 }

@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { runTokenScan } from "@/server/scan/tokenScan";
+import { runOnchainAgent } from "@/server/agents/onchain";
 
 const bodySchema = z.object({
-  query: z.string().min(1).max(260),
-  chain: z.string().min(1).max(40).optional(),
+  chain: z.string().optional(),
+  contractAddress: z.string().optional(),
 });
 
 export async function POST(request: Request) {
@@ -15,5 +15,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  return NextResponse.json(await runTokenScan(parsed.data.query, parsed.data.chain));
+  return NextResponse.json(await runOnchainAgent(parsed.data));
 }
