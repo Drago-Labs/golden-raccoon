@@ -1,4 +1,5 @@
 import type { AgentFinding, AgentResult, RiskBreakdownItem, RiskLevel, TokenScanResult } from "@/server/types";
+import { runDecisionAgent } from "@/server/agents/decision";
 import { runNewsAgent } from "@/server/agents/news";
 import { runOnchainAgent } from "@/server/agents/onchain";
 import { runSocialAgent } from "@/server/agents/social";
@@ -51,23 +52,36 @@ function mapFindingToBreakdown(finding: AgentFinding): RiskBreakdownItem {
   };
 }
 
-function hasConnectedSource(result: AgentResult) {
-  return result.sources.some((source) => source.status === "connected");
-}
+function suggestedActionFromDecision(decisionResult: AgentResult): TokenScanResult["suggestedAction"] {
+  if (decisionResult.recommendedAction === "avoid" || decisionResult.recommendedAction === "manual_review" || decisionResult.recommendedAction === "watch") {
+    return {
+      type: "hold",
+      fromToken: "TOKEN",
+      toToken: "USDC",
+      percent: 0,
+    };
+  }
 
-function combineAgentScores(onchainResult: AgentResult, newsResult: AgentResult, socialResult: AgentResult) {
-  const newsHasConnectedSource = newsResult.sources.some((source) => source.status === "connected");
-  const socialHasConnectedSource = hasConnectedSource(socialResult);
-  const newsWeight = newsHasConnectedSource ? 0.2 : 0.08;
-  const socialWeight = socialHasConnectedSource ? 0.18 : 0.08;
-  const onchainWeight = 1 - newsWeight - socialWeight;
+  if (decisionResult.recommendedAction === "reduce_exposure") {
+    return {
+      type: "reduce_exposure",
+      fromToken: "TOKEN",
+      toToken: "USDC",
+      percent: 30,
+    };
+  }
 
-  return Math.round(onchainResult.score * onchainWeight + newsResult.score * newsWeight + socialResult.score * socialWeight);
-}
+  if (decisionResult.recommendedAction === "swap_to_stable") {
+    return {
+      type: "swap_to_stablecoin",
+      fromToken: "TOKEN",
+      toToken: "USDC",
+      percent: 30,
+    };
+  }
 
-function combinedSuggestedAction(score: number): TokenScanResult["suggestedAction"] {
   return {
-    type: score >= 70 ? "hold" : "hold",
+    type: "hold",
     fromToken: "TOKEN",
     toToken: "USDC",
     percent: 0,
@@ -107,8 +121,9 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
       telegramUrl: normalized.links?.telegramUrl,
     }),
   ]);
-  const overallRiskScore = combineAgentScores(onchainResult, newsResult, socialResult);
-  const combinedFindings = [...onchainResult.findings, ...newsResult.findings, ...socialResult.findings];
+  const decisionResult = runDecisionAgent({ results: [onchainResult, newsResult, socialResult] });
+  const overallRiskScore = decisionResult.score;
+  const combinedFindings = [...decisionResult.findings, ...onchainResult.findings, ...newsResult.findings, ...socialResult.findings];
   const riskBreakdown = combinedFindings.map(mapFindingToBreakdown);
 
   return {
@@ -119,9 +134,9 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
     overallRiskScore,
     opportunityScore: Math.max(0, 100 - overallRiskScore),
     verdict: verdictFromScore(overallRiskScore),
-    summary: `${onchainResult.summary} ${newsResult.summary} ${socialResult.summary}`,
+    summary: `${decisionResult.summary} ${onchainResult.summary} ${newsResult.summary} ${socialResult.summary}`,
     reasons: combinedFindings.map((finding) => finding.detail).slice(0, 10),
-    suggestedAction: combinedSuggestedAction(overallRiskScore),
+    suggestedAction: suggestedActionFromDecision(decisionResult),
     riskBreakdown: riskBreakdown.length > 0
       ? riskBreakdown
       : [
@@ -130,7 +145,7 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
             label: "Token security",
             score: overallRiskScore,
             severity: riskLevel(overallRiskScore),
-            finding: `${onchainResult.summary} ${newsResult.summary} ${socialResult.summary}`,
+            finding: `${decisionResult.summary} ${onchainResult.summary} ${newsResult.summary} ${socialResult.summary}`,
           },
         ],
     sources: [
@@ -150,6 +165,11 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
         detail: source.detail ?? "",
       })),
       ...socialResult.sources.map((source) => ({
+        label: source.label,
+        status: source.status,
+        detail: source.detail ?? "",
+      })),
+      ...decisionResult.sources.map((source) => ({
         label: source.label,
         status: source.status,
         detail: source.detail ?? "",
