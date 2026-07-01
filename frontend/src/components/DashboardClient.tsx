@@ -8,7 +8,6 @@ import type { PortfolioSnapshot, TokenScanResult } from "@/server/types";
 import { RiskScoreCard } from "@/components/RiskScoreCard";
 import { WalletPortfolioCard } from "@/components/WalletPortfolioCard";
 import { WalletConnectButton } from "@/components/WalletConnectButton";
-import { shortAddress } from "@/lib/format";
 
 const agents = [
   { name: "Portfolio", detail: "Reads holdings, allocation and wallet exposure.", icon: Wallet },
@@ -79,9 +78,6 @@ export function DashboardClient() {
             <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">Wallet guarded by agents</h1>
           </div>
           <div className="flex flex-col items-start gap-3 lg:items-end">
-            <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-sm text-white/58">
-              {isConnected ? shortAddress(address) : "Connect wallet to start"}
-            </div>
             {!isConnected ? <WalletConnectButton /> : null}
           </div>
         </div>
