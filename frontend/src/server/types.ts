@@ -16,9 +16,16 @@ export type TokenHolding = {
   tokenAddress: string;
   symbol: "GOAT" | "USDC" | "MEME" | string;
   name: string;
+  chainId?: string;
+  chainName?: string;
+  chainLogoUrl?: string;
+  logoUrl?: string;
+  isVerified?: boolean;
   balance: number;
   priceUsd: number;
   valueUsd: number;
+  dayChangeUsd?: number;
+  dayChangePercent?: number;
   allocationPercent: number;
   riskScore: number;
   riskLevel: RiskLevel;
@@ -30,6 +37,7 @@ export type PortfolioSnapshot = {
   nativeBalance: number;
   nativeSymbol: string;
   dayChangePercent: number;
+  dayChangeUsd?: number;
   totalValueUsd: number;
   riskScore: number;
   createdAt: string;

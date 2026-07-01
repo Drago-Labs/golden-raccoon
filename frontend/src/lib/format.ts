@@ -1,8 +1,14 @@
-export function formatUsd(value: number): string {
+type UsdFormatOptions = {
+  minimumFractionDigits?: number;
+  maximumFractionDigits?: number;
+};
+
+export function formatUsd(value: number, options: UsdFormatOptions = {}): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: options.minimumFractionDigits ?? 0,
+    maximumFractionDigits: options.maximumFractionDigits ?? 0,
   }).format(value);
 }
 

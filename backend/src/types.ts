@@ -16,6 +16,8 @@ export type TokenHolding = {
   tokenAddress: string;
   symbol: "GOAT" | "USDC" | "MEME" | string;
   name: string;
+  chainName?: string;
+  logoUrl?: string;
   balance: number;
   priceUsd: number;
   valueUsd: number;

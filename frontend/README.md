@@ -2,6 +2,23 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+Create `frontend/.env.local` for local secrets/config:
+
+```bash
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+NEXT_PUBLIC_GOAT_RPC_URL=https://rpc.goat.network
+
+# Recommended: multi-chain wallet portfolio with balances, logos, and USD quotes.
+GOLDRUSH_API_KEY=
+GOLDRUSH_CHAINS=eth-mainnet,base-mainnet,arbitrum-mainnet,bsc-mainnet,linea-mainnet,matic-mainnet,optimism-mainnet
+
+# Optional fallback: single-chain ERC-20 discovery with Alchemy.
+# Supported values: ethereum, base, arbitrum.
+ALCHEMY_API_KEY=
+PORTFOLIO_CHAIN=
+```
+
 First, run the development server:
 
 ```bash
