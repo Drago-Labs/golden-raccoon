@@ -6,6 +6,11 @@ export type NormalizedTokenInput = {
   pairAddress?: string;
   symbol?: string;
   name?: string;
+  links?: {
+    websiteUrl?: string;
+    twitterUrl?: string;
+    telegramUrl?: string;
+  };
   market?: {
     pairAddress?: string;
     dexId?: string;
@@ -44,6 +49,16 @@ type DexScreenerPairResponse = {
       address?: string;
       name?: string;
       symbol?: string;
+    };
+    info?: {
+      websites?: Array<{
+        label?: string;
+        url?: string;
+      }>;
+      socials?: Array<{
+        type?: string;
+        url?: string;
+      }>;
     };
   }> | null;
 };
@@ -91,6 +106,9 @@ async function resolveDexScreenerPair(chain: string, pairAddress: string): Promi
   const payload = (await response.json()) as DexScreenerPairResponse;
   const pair = payload.pairs?.[0];
   const tokenAddress = pair?.baseToken?.address;
+  const twitterUrl = pair?.info?.socials?.find((social) => social.type?.toLowerCase() === "twitter" || social.type?.toLowerCase() === "x")?.url;
+  const telegramUrl = pair?.info?.socials?.find((social) => social.type?.toLowerCase() === "telegram")?.url;
+  const websiteUrl = pair?.info?.websites?.[0]?.url;
 
   if (!tokenAddress) {
     return null;
@@ -102,6 +120,11 @@ async function resolveDexScreenerPair(chain: string, pairAddress: string): Promi
     pairAddress: pair.pairAddress ?? pairAddress,
     symbol: pair.baseToken?.symbol,
     name: pair.baseToken?.name,
+    links: {
+      websiteUrl,
+      twitterUrl,
+      telegramUrl,
+    },
     market: {
       pairAddress: pair.pairAddress ?? pairAddress,
       dexId: pair.dexId,

@@ -1,6 +1,7 @@
 import type { AgentFinding, AgentResult, RiskBreakdownItem, RiskLevel, TokenScanResult } from "@/server/types";
 import { runNewsAgent } from "@/server/agents/news";
 import { runOnchainAgent } from "@/server/agents/onchain";
+import { runSocialAgent } from "@/server/agents/social";
 import { getMockTokenScan } from "@/server/scan/mockScan";
 import { normalizeTokenInput } from "@/server/scan/tokenInput";
 
@@ -33,6 +34,8 @@ function mapFindingToBreakdown(finding: AgentFinding): RiskBreakdownItem {
         ? "whales"
       : lowerLabel.includes("news") || lowerLabel.includes("catalyst") || lowerLabel.includes("regulatory") || lowerLabel.includes("scam")
         ? "scam"
+      : lowerLabel.includes("social") || lowerLabel.includes("phishing") || lowerLabel.includes("giveaway") || lowerLabel.includes("engagement")
+        ? "xSentiment"
       : lowerLabel.includes("tax") || lowerLabel.includes("permission") || lowerLabel.includes("contract")
         ? "contract"
         : lowerLabel.includes("holder")
@@ -48,12 +51,18 @@ function mapFindingToBreakdown(finding: AgentFinding): RiskBreakdownItem {
   };
 }
 
-function combineAgentScores(onchainResult: AgentResult, newsResult: AgentResult) {
-  const newsHasConnectedSource = newsResult.sources.some((source) => source.status === "connected");
-  const newsWeight = newsHasConnectedSource ? 0.25 : 0.1;
-  const onchainWeight = 1 - newsWeight;
+function hasConnectedSource(result: AgentResult) {
+  return result.sources.some((source) => source.status === "connected");
+}
 
-  return Math.round(onchainResult.score * onchainWeight + newsResult.score * newsWeight);
+function combineAgentScores(onchainResult: AgentResult, newsResult: AgentResult, socialResult: AgentResult) {
+  const newsHasConnectedSource = newsResult.sources.some((source) => source.status === "connected");
+  const socialHasConnectedSource = hasConnectedSource(socialResult);
+  const newsWeight = newsHasConnectedSource ? 0.2 : 0.08;
+  const socialWeight = socialHasConnectedSource ? 0.18 : 0.08;
+  const onchainWeight = 1 - newsWeight - socialWeight;
+
+  return Math.round(onchainResult.score * onchainWeight + newsResult.score * newsWeight + socialResult.score * socialWeight);
 }
 
 function combinedSuggestedAction(score: number): TokenScanResult["suggestedAction"] {
@@ -79,7 +88,7 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
     return getMockTokenScan(query);
   }
 
-  const [onchainResult, newsResult] = await Promise.all([
+  const [onchainResult, newsResult, socialResult] = await Promise.all([
     runOnchainAgent({
       chain: normalized.chain,
       contractAddress: normalized.contractAddress,
@@ -89,9 +98,17 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
       tokenName: normalized.name,
       contractAddress: normalized.contractAddress,
     }),
+    runSocialAgent({
+      symbol: normalized.symbol,
+      tokenName: normalized.name,
+      query: normalized.symbol ?? normalized.name ?? normalized.contractAddress,
+      websiteUrl: normalized.links?.websiteUrl,
+      twitterUrl: normalized.links?.twitterUrl,
+      telegramUrl: normalized.links?.telegramUrl,
+    }),
   ]);
-  const overallRiskScore = combineAgentScores(onchainResult, newsResult);
-  const combinedFindings = [...onchainResult.findings, ...newsResult.findings];
+  const overallRiskScore = combineAgentScores(onchainResult, newsResult, socialResult);
+  const combinedFindings = [...onchainResult.findings, ...newsResult.findings, ...socialResult.findings];
   const riskBreakdown = combinedFindings.map(mapFindingToBreakdown);
 
   return {
@@ -102,7 +119,7 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
     overallRiskScore,
     opportunityScore: Math.max(0, 100 - overallRiskScore),
     verdict: verdictFromScore(overallRiskScore),
-    summary: `${onchainResult.summary} ${newsResult.summary}`,
+    summary: `${onchainResult.summary} ${newsResult.summary} ${socialResult.summary}`,
     reasons: combinedFindings.map((finding) => finding.detail).slice(0, 10),
     suggestedAction: combinedSuggestedAction(overallRiskScore),
     riskBreakdown: riskBreakdown.length > 0
@@ -113,7 +130,7 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
             label: "Token security",
             score: overallRiskScore,
             severity: riskLevel(overallRiskScore),
-            finding: `${onchainResult.summary} ${newsResult.summary}`,
+            finding: `${onchainResult.summary} ${newsResult.summary} ${socialResult.summary}`,
           },
         ],
     sources: [
@@ -128,6 +145,11 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
         detail: source.detail ?? "",
       })),
       ...newsResult.sources.map((source) => ({
+        label: source.label,
+        status: source.status,
+        detail: source.detail ?? "",
+      })),
+      ...socialResult.sources.map((source) => ({
         label: source.label,
         status: source.status,
         detail: source.detail ?? "",

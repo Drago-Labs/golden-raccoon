@@ -4,6 +4,11 @@ import { runSocialAgent } from "@/server/agents/social";
 
 const bodySchema = z.object({
   query: z.string().optional(),
+  symbol: z.string().optional(),
+  tokenName: z.string().optional(),
+  websiteUrl: z.string().optional(),
+  twitterUrl: z.string().optional(),
+  telegramUrl: z.string().optional(),
 });
 
 export async function POST(request: Request) {
@@ -14,5 +19,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  return NextResponse.json(runSocialAgent(parsed.data));
+  return NextResponse.json(await runSocialAgent(parsed.data));
 }
