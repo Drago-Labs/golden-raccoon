@@ -1,0 +1,9 @@
+{
+  "name": "golden-raccoon",
+  "private": true,
+  "scripts": {
+    "build": "npm --prefix frontend run build",
+    "lint": "npm --prefix frontend run lint",
+    "start": "npm --prefix frontend run start"
+  }
+}
