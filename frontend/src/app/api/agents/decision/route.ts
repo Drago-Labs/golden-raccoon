@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { AgentResult } from "@/server/types";
+import { withCacheHeaders } from "@/server/cache/strategy";
 import { runDecisionAgent } from "@/server/agents/decision";
+import { checkRateLimit } from "@/server/security/rateLimit";
 
 const agentResultSchema = z.object({
   agent: z.enum(["portfolio", "news", "social", "onchain", "decision", "execution"]),
@@ -43,6 +45,12 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const rateLimited = checkRateLimit(request, { namespace: "agent:decision", limit: 40, windowMs: 60_000 });
+
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const body = await request.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);
 
@@ -50,5 +58,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  return NextResponse.json(runDecisionAgent({ results: parsed.data.results as AgentResult[] | undefined }));
+  return withCacheHeaders(NextResponse.json(runDecisionAgent({ results: parsed.data.results as AgentResult[] | undefined })), "decision");
 }

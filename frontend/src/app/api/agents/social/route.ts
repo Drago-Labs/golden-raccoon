@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { withCacheHeaders } from "@/server/cache/strategy";
 import { runSocialAgent } from "@/server/agents/social";
+import { checkRateLimit } from "@/server/security/rateLimit";
 
 const bodySchema = z.object({
   query: z.string().optional(),
@@ -12,6 +14,12 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const rateLimited = checkRateLimit(request, { namespace: "agent:social", limit: 30, windowMs: 60_000 });
+
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const body = await request.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);
 
@@ -19,5 +27,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  return NextResponse.json(await runSocialAgent(parsed.data));
+  return withCacheHeaders(NextResponse.json(await runSocialAgent(parsed.data)), "social");
 }

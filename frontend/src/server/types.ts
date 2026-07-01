@@ -13,6 +13,9 @@ export type AgentFinding = {
   label: string;
   severity: RiskLevel;
   detail: string;
+  sourceLabel?: string;
+  raw?: string;
+  interpretation?: string;
 };
 
 export type AgentRecommendedAction =
@@ -192,4 +195,32 @@ export type TransactionRecord = {
   status: "pending" | "confirmed" | "failed";
   createdAt: string;
   network: string;
+};
+
+export type AgentRunRecord = {
+  id: string;
+  walletAddress: string;
+  targetToken?: {
+    symbol?: string;
+    name?: string;
+    tokenAddress?: string;
+    chain?: string;
+    riskScore?: number;
+    allocationPercent?: number;
+  };
+  status: "completed" | "partial" | "failed";
+  recommendation: AgentRecommendedAction;
+  decisionScore: number;
+  confidence: number;
+  summary: string;
+  results: AgentResult[];
+  createdAt: string;
+};
+
+export type StorageProvider = "memory" | "supabase_postgres";
+
+export type StorageHealth = {
+  provider: StorageProvider;
+  persistent: boolean;
+  detail: string;
 };

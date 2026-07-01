@@ -252,6 +252,24 @@ export function DashboardClient() {
       pushResult(decisionResult);
       setStep("decision", "complete", decisionResult.verdict);
       setDashboardRunSummary({ riskyToken, final: decisionResult });
+      void fetch("/api/history/agent-runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          walletAddress,
+          targetToken: riskyToken
+            ? {
+                symbol: riskyToken.symbol,
+                name: riskyToken.name,
+                tokenAddress: riskyToken.tokenAddress,
+                chain: riskyToken.chainId ?? riskyToken.chainName,
+                riskScore: riskyToken.riskScore,
+                allocationPercent: riskyToken.allocationPercent,
+              }
+            : undefined,
+          results: [...decisionInputs, decisionResult],
+        }),
+      });
     } catch (error) {
       setDashboardRunSummary({
         error: error instanceof Error ? error.message : "Agent run failed",

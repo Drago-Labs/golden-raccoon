@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { withCacheHeaders } from "@/server/cache/strategy";
 import { buildExecutionPreviewFromPortfolio } from "@/server/agents/execution";
 import { getPortfolioSnapshot } from "@/server/portfolio/getPortfolio";
+import { assertApprovalOnly } from "@/server/security/policy";
+import { checkRateLimit } from "@/server/security/rateLimit";
 
 const bodySchema = z.object({
   walletAddress: z.string().optional(),
@@ -15,6 +18,12 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const rateLimited = checkRateLimit(request, { namespace: "execute:prepare", limit: 20, windowMs: 60_000 });
+
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const body = await request.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);
 
@@ -22,8 +31,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
+  try {
+    assertApprovalOnly({ autoExecute: false });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Execution policy failed" }, { status: 403 });
+  }
+
   const { portfolio } = await getPortfolioSnapshot(parsed.data.walletAddress);
   const preview = buildExecutionPreviewFromPortfolio(portfolio, parsed.data);
 
-  return NextResponse.json(preview);
+  return withCacheHeaders(NextResponse.json(preview), "execution");
 }

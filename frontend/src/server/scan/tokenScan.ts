@@ -1,5 +1,6 @@
 import type { AgentFinding, AgentResult, RiskBreakdownItem, RiskLevel, TokenScanResult } from "@/server/types";
 import { runDecisionAgent } from "@/server/agents/decision";
+import { runAgentSafely } from "@/server/agents/shared";
 import { runNewsAgent } from "@/server/agents/news";
 import { runOnchainAgent } from "@/server/agents/onchain";
 import { runSocialAgent } from "@/server/agents/social";
@@ -103,23 +104,29 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
   }
 
   const [onchainResult, newsResult, socialResult] = await Promise.all([
-    runOnchainAgent({
-      chain: normalized.chain,
-      contractAddress: normalized.contractAddress,
-    }),
-    runNewsAgent({
-      symbol: normalized.symbol,
-      tokenName: normalized.name,
-      contractAddress: normalized.contractAddress,
-    }),
-    runSocialAgent({
-      symbol: normalized.symbol,
-      tokenName: normalized.name,
-      query: normalized.symbol ?? normalized.name ?? normalized.contractAddress,
-      websiteUrl: normalized.links?.websiteUrl,
-      twitterUrl: normalized.links?.twitterUrl,
-      telegramUrl: normalized.links?.telegramUrl,
-    }),
+    runAgentSafely("onchain", () =>
+      runOnchainAgent({
+        chain: normalized.chain,
+        contractAddress: normalized.contractAddress,
+      }),
+    ),
+    runAgentSafely("news", () =>
+      runNewsAgent({
+        symbol: normalized.symbol,
+        tokenName: normalized.name,
+        contractAddress: normalized.contractAddress,
+      }),
+    ),
+    runAgentSafely("social", () =>
+      runSocialAgent({
+        symbol: normalized.symbol,
+        tokenName: normalized.name,
+        query: normalized.symbol ?? normalized.name ?? normalized.contractAddress,
+        websiteUrl: normalized.links?.websiteUrl,
+        twitterUrl: normalized.links?.twitterUrl,
+        telegramUrl: normalized.links?.telegramUrl,
+      }),
+    ),
   ]);
   const decisionResult = runDecisionAgent({ results: [onchainResult, newsResult, socialResult] });
   const overallRiskScore = decisionResult.score;
