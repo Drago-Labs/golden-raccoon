@@ -126,6 +126,17 @@ export type TransactionPreview = {
   slippageBps?: number;
   approvalSteps?: string[];
   blockedReason?: string;
+  policy?: {
+    maxTradePercent: number;
+    maxRiskScore: number;
+    maxMemeExposurePercent: number;
+    autoExecute: false;
+  };
+  audit?: {
+    approvalRequired: boolean;
+    serverCanSign: false;
+    userRuleWallet?: string;
+  };
 };
 
 export type UserRule = {

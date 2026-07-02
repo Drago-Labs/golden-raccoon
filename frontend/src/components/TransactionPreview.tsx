@@ -37,6 +37,27 @@ export function TransactionPreview({ preview }: { preview: Preview }) {
           ))}
         </div>
       ) : null}
+      {preview.policy ? (
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+            <div className="text-xs text-white/38">Max trade</div>
+            <div className="mt-1 text-sm font-semibold">{preview.policy.maxTradePercent}%</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+            <div className="text-xs text-white/38">Risk threshold</div>
+            <div className="mt-1 text-sm font-semibold">{preview.policy.maxRiskScore}/100</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+            <div className="text-xs text-white/38">Auto execute</div>
+            <div className="mt-1 text-sm font-semibold">{preview.policy.autoExecute ? "On" : "Off"}</div>
+          </div>
+        </div>
+      ) : null}
+      {preview.audit ? (
+        <div className="mt-3 rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white/48">
+          Server signing is disabled. {preview.audit.approvalRequired ? "Wallet approval is required." : "No wallet approval is required."}
+        </div>
+      ) : null}
     </section>
   );
 }

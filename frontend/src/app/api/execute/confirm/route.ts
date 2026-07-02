@@ -10,6 +10,9 @@ const bodySchema = z.object({
   walletAddress: z.string().min(1),
   txHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "Expected a wallet-signed transaction hash"),
   userApproved: z.literal(true),
+  network: z.string().optional(),
+  asset: z.string().optional(),
+  valueUsd: z.number().min(0).optional(),
 });
 
 export async function POST(request: Request) {
@@ -40,10 +43,10 @@ export async function POST(request: Request) {
   const transaction = createTransactionRecord({
     hash: parsed.data.txHash,
     type: "approval",
-    asset: "Wallet approval",
-    valueUsd: 0,
+    asset: parsed.data.asset ?? "Wallet approval",
+    valueUsd: parsed.data.valueUsd ?? 0,
     status: "confirmed",
-    network: "Connected wallet",
+    network: parsed.data.network ?? "Connected wallet",
     walletAddress: parsed.data.walletAddress,
     userApproved: true,
     decisionId: parsed.data.decisionId,

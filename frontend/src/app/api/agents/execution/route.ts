@@ -4,6 +4,7 @@ import { withCacheHeaders } from "@/server/cache/strategy";
 import { runExecutionAgent } from "@/server/agents/execution";
 import { assertApprovalOnly } from "@/server/security/policy";
 import { checkRateLimit } from "@/server/security/rateLimit";
+import { getUserRuleRecord } from "@/server/storage";
 
 const bodySchema = z.object({
   action: z.string().optional(),
@@ -36,5 +37,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Execution policy failed" }, { status: 403 });
   }
 
-  return withCacheHeaders(NextResponse.json(runExecutionAgent(parsed.data)), "execution");
+  const rules = getUserRuleRecord(parsed.data.walletAddress);
+
+  return withCacheHeaders(NextResponse.json(runExecutionAgent({ ...parsed.data, rules })), "execution");
 }

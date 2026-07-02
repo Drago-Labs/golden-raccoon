@@ -5,6 +5,7 @@ import { buildExecutionPreviewFromPortfolio } from "@/server/agents/execution";
 import { getPortfolioSnapshot } from "@/server/portfolio/getPortfolio";
 import { assertApprovalOnly } from "@/server/security/policy";
 import { checkRateLimit } from "@/server/security/rateLimit";
+import { getUserRuleRecord } from "@/server/storage";
 
 const bodySchema = z.object({
   walletAddress: z.string().optional(),
@@ -38,7 +39,8 @@ export async function POST(request: Request) {
   }
 
   const { portfolio } = await getPortfolioSnapshot(parsed.data.walletAddress);
-  const preview = buildExecutionPreviewFromPortfolio(portfolio, parsed.data);
+  const rules = getUserRuleRecord(parsed.data.walletAddress ?? portfolio.walletAddress);
+  const preview = buildExecutionPreviewFromPortfolio(portfolio, { ...parsed.data, rules });
 
   return withCacheHeaders(NextResponse.json(preview), "execution");
 }

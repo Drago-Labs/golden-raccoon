@@ -1,5 +1,6 @@
-import type { AgentRecommendedAction, AgentResult, PortfolioSnapshot, TransactionPreview } from "@/server/types";
+import type { AgentRecommendedAction, AgentResult, PortfolioSnapshot, TransactionPreview, UserRule } from "@/server/types";
 import { buildAgentResult } from "@/server/agents/shared";
+import { buildExecutionPolicy, getBlockedReason } from "@/server/agents/execution/policy";
 
 type ExecutionAgentInput = {
   action?: AgentRecommendedAction | string;
@@ -10,14 +11,7 @@ type ExecutionAgentInput = {
   riskScore?: number;
   estimatedValueUsd?: number;
   network?: string;
-};
-
-const executionPolicy = {
-  autoExecute: false,
-  maxTradePercent: 30,
-  maxRiskScoreForTrade: 70,
-  defaultSlippageBps: 100,
-  allowedActions: new Set(["reduce_exposure", "swap_to_stable", "prepare_transaction", "watch", "hold", "no_action"]),
+  rules?: UserRule;
 };
 
 function clampPercent(percent?: number) {
@@ -49,26 +43,6 @@ function normalizeAction(action?: string): AgentRecommendedAction {
   return "no_action";
 }
 
-function getBlockedReason(action: AgentRecommendedAction, percent: number, riskScore: number) {
-  if (!executionPolicy.allowedActions.has(action)) {
-    return `Action ${action} is not allowed by execution policy.`;
-  }
-
-  if (action === "avoid" || action === "manual_review") {
-    return `Action ${action.replaceAll("_", " ")} cannot prepare a transaction until the user reviews the risk.`;
-  }
-
-  if (percent > executionPolicy.maxTradePercent) {
-    return `Requested ${percent}% exceeds max trade percent ${executionPolicy.maxTradePercent}%.`;
-  }
-
-  if ((action === "swap_to_stable" || action === "reduce_exposure" || action === "prepare_transaction") && riskScore > executionPolicy.maxRiskScoreForTrade) {
-    return `Risk score ${riskScore} exceeds max trade risk threshold ${executionPolicy.maxRiskScoreForTrade}.`;
-  }
-
-  return undefined;
-}
-
 function estimateProjectedRisk(currentRiskScore: number, percent: number) {
   const reduction = Math.round(percent * 0.6);
 
@@ -76,10 +50,11 @@ function estimateProjectedRisk(currentRiskScore: number, percent: number) {
 }
 
 export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPreview {
+  const executionPolicy = buildExecutionPolicy(input.rules);
   const action = normalizeAction(input.action);
   const percent = clampPercent(input.percent);
   const currentRiskScore = Math.min(100, Math.max(0, Math.round(input.riskScore ?? 0)));
-  const blockedReason = getBlockedReason(action, percent, currentRiskScore);
+  const blockedReason = getBlockedReason(action, percent, currentRiskScore, executionPolicy);
   const hasTradeAction = action === "swap_to_stable" || action === "reduce_exposure" || action === "prepare_transaction";
   const preview: TransactionPreview = {
     title: blockedReason
@@ -97,6 +72,17 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
     requiresApproval: hasTradeAction && !blockedReason,
     network: input.network ?? "GOAT Network",
     slippageBps: executionPolicy.defaultSlippageBps,
+    policy: {
+      maxTradePercent: executionPolicy.maxTradePercent,
+      maxRiskScore: executionPolicy.maxRiskScoreForTrade,
+      maxMemeExposurePercent: executionPolicy.maxMemeExposurePercent,
+      autoExecute: false,
+    },
+    audit: {
+      approvalRequired: hasTradeAction && !blockedReason,
+      serverCanSign: false,
+      userRuleWallet: executionPolicy.walletAddress,
+    },
     approvalSteps: [
       "Review agent reasoning",
       "Review wallet transaction details",
@@ -130,6 +116,7 @@ export function buildExecutionPreviewFromPortfolio(portfolio: PortfolioSnapshot,
 }
 
 export function runExecutionAgent(input: ExecutionAgentInput): AgentResult {
+  const executionPolicy = buildExecutionPolicy(input.rules);
   const action = normalizeAction(input.action);
   const percent = clampPercent(input.percent);
   const riskScore = Math.min(100, Math.max(0, Math.round(input.riskScore ?? 0)));
