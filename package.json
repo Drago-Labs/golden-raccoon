@@ -4,7 +4,10 @@
   "scripts": {
     "build": "npm --prefix frontend run build",
     "lint": "npm --prefix frontend run lint",
-    "start": "npm --prefix frontend run start"
+    "start": "npm --prefix frontend run start",
+    "deploy:check": "node scripts/check-deploy-readiness.mjs",
+    "smoke": "node scripts/smoke-api.mjs",
+    "verify": "npm run deploy:check && npm run lint && npm run build"
   },
   "dependencies": {
     "next": "16.2.9",

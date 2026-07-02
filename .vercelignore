@@ -19,4 +19,6 @@ coverage
 
 backend
 PROJECT_TODO.md
+REAL_AGENT_TODO.md
+DEPLOYMENT_CHECKLIST.md
 *.log
