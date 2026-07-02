@@ -15,7 +15,9 @@ build/
 dist/
 coverage/
 artifacts/
-cache/
+backend/contracts/cache/
+!frontend/src/server/cache/
+!frontend/src/server/cache/**
 typechain-types/
 
 # env and secrets

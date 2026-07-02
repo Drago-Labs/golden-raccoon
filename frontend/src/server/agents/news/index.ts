@@ -312,6 +312,12 @@ export async function runNewsAgent(input: NewsAgentInput): Promise<AgentResult> 
         ? `${result.value.length} RSS item${result.value.length === 1 ? "" : "s"} fetched.`
         : "RSS feed unavailable for this request.",
   }));
+  const matchedArticleSources: AgentSource[] = relevantItems.slice(0, 5).map((item) => ({
+    label: `${item.source}: ${item.title.slice(0, 72)}`,
+    url: item.link,
+    status: "connected",
+    detail: item.publishedAt ? `Matched article published ${item.publishedAt.toISOString()}.` : "Matched article from connected RSS feed.",
+  }));
 
   return buildAgentResult({
     agent: "news",
@@ -322,7 +328,7 @@ export async function runNewsAgent(input: NewsAgentInput): Promise<AgentResult> 
         ? `${subject} matched ${relevantItems.length} recent RSS item${relevantItems.length === 1 ? "" : "s"} across connected crypto news sources.`
         : `${subject} had no recent matching RSS coverage across connected sources.`,
     findings,
-    sources,
+    sources: [...sources, ...matchedArticleSources],
     confidence: sources.some((source) => source.status === "connected") ? 0.58 : 0.24,
     recommendedAction: score >= 70 ? "manual_review" : score >= 40 ? "watch" : "hold",
   });

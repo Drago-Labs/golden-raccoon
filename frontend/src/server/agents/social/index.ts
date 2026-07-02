@@ -114,6 +114,22 @@ function severityFromCount(count: number, mediumAt: number, highAt: number): Ris
   return "low";
 }
 
+function getSocialProviderSource(): AgentSource {
+  const configuredProvider =
+    process.env.SOCIAL_DATA_PROVIDER_URL ||
+    process.env.APIFY_TOKEN ||
+    process.env.TAVILY_API_KEY ||
+    process.env.X_BEARER_TOKEN;
+
+  return {
+    label: "Engagement provider",
+    status: configuredProvider ? "connected" : "unavailable",
+    detail: configuredProvider
+      ? "A social data provider is configured. Live engagement integration can be enabled for follower/reply/bot metrics."
+      : "Follower quality, bot clusters, reply quality and shill density need X API, Apify, Tavily or another provider.",
+  };
+}
+
 function buildFindings(input: SocialAgentInput, metadata: SocialMetadata[]): AgentFinding[] {
   const text = textOf(metadata);
   const handle = getTwitterHandle(input.twitterUrl, input.query);
@@ -147,8 +163,11 @@ function buildFindings(input: SocialAgentInput, metadata: SocialMetadata[]): Age
     },
     {
       label: "Engagement quality",
-      severity: "medium",
-      detail: "Live follower, reply, like and bot-cluster metrics require an X API or social-data provider. No engagement values were invented.",
+      severity: getSocialProviderSource().status === "connected" ? "medium" : "high",
+      detail:
+        getSocialProviderSource().status === "connected"
+          ? "A social engagement provider is configured, but this MVP path has not yet fetched follower/reply/bot metrics."
+          : "Live follower, reply, like and bot-cluster metrics require an X API or social-data provider. No engagement values were invented.",
     },
   ];
 }
@@ -193,11 +212,7 @@ export async function runSocialAgent(input: SocialAgentInput): Promise<AgentResu
         detail: connected ? "Public metadata fetched." : "Metadata unavailable or blocked.",
       };
     }),
-    {
-      label: "Engagement provider",
-      status: "unavailable",
-      detail: "Follower quality, bot clusters, reply quality and shill density need X API, Apify, Tavily or another provider.",
-    },
+    getSocialProviderSource(),
   ];
 
   return buildAgentResult({

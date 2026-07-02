@@ -9,6 +9,14 @@ export type AgentSource = {
   detail?: string;
 };
 
+export type SourceDataQuality = {
+  mode: "live" | "partial" | "unavailable";
+  connectedSources: number;
+  unavailableSources: number;
+  mockSources: number;
+  detail: string;
+};
+
 export type AgentFinding = {
   label: string;
   severity: RiskLevel;
@@ -36,6 +44,7 @@ export type AgentResult = {
   summary: string;
   findings: AgentFinding[];
   sources: AgentSource[];
+  dataQuality?: SourceDataQuality;
   confidence: number;
   recommendedAction: AgentRecommendedAction;
   createdAt: string;
@@ -195,13 +204,7 @@ export type TokenScanResult = {
   suggestedAction: SuggestedAction;
   riskBreakdown: RiskBreakdownItem[];
   sources: ScanSource[];
-  dataQuality?: {
-    mode: "live" | "partial" | "unavailable";
-    connectedSources: number;
-    unavailableSources: number;
-    mockSources: number;
-    detail: string;
-  };
+  dataQuality?: SourceDataQuality;
   scannedAt: string;
 };
 

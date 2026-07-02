@@ -43,6 +43,36 @@ function getWeightedScore(results: AgentResult[]) {
   return clampScore(weighted.score / weighted.weight);
 }
 
+function getSourceCoverage(results: AgentResult[]) {
+  const sources = results.flatMap((result) => result.sources);
+  const connected = sources.filter((source) => source.status === "connected").length;
+  const unavailable = sources.filter((source) => source.status === "unavailable").length;
+  const mock = sources.filter((source) => source.status === "mock").length;
+  const total = sources.length;
+
+  return {
+    connected,
+    unavailable,
+    mock,
+    total,
+    ratio: total > 0 ? connected / total : 0,
+  };
+}
+
+function applyCoveragePenalty(score: number, results: AgentResult[]) {
+  const coverage = getSourceCoverage(results);
+
+  if (coverage.total === 0 || coverage.connected === 0) {
+    return clampScore(Math.max(score, 72));
+  }
+
+  if (coverage.ratio < 0.5) {
+    return clampScore(Math.max(score, 62));
+  }
+
+  return score;
+}
+
 function hasCriticalFinding(results: AgentResult[]) {
   return results.some((result) => result.findings.some((finding) => finding.severity === "critical"));
 }
@@ -60,7 +90,13 @@ function getWorstFindings(results: AgentResult[]) {
     .slice(0, 5);
 }
 
-function decideAction(score: number, critical: boolean): AgentRecommendedAction {
+function decideAction(score: number, critical: boolean, results: AgentResult[]): AgentRecommendedAction {
+  const coverage = getSourceCoverage(results);
+
+  if (coverage.total === 0 || coverage.connected === 0) {
+    return "manual_review";
+  }
+
   if (critical || score >= 85) {
     return "avoid";
   }
@@ -94,8 +130,7 @@ function verdictForAction(action: AgentRecommendedAction) {
 
 function buildDecisionFindings(results: AgentResult[], score: number, action: AgentRecommendedAction): AgentFinding[] {
   const worstFindings = getWorstFindings(results);
-  const connectedSources = results.flatMap((result) => result.sources).filter((source) => source.status === "connected").length;
-  const unavailableSources = results.flatMap((result) => result.sources).filter((source) => source.status === "unavailable").length;
+  const coverage = getSourceCoverage(results);
 
   return [
     {
@@ -113,8 +148,8 @@ function buildDecisionFindings(results: AgentResult[], score: number, action: Ag
     },
     {
       label: "Source coverage",
-      severity: unavailableSources > connectedSources ? "medium" : "low",
-      detail: `${connectedSources} connected source${connectedSources === 1 ? "" : "s"} and ${unavailableSources} unavailable source${unavailableSources === 1 ? "" : "s"} contributed to this decision.`,
+      severity: coverage.connected === 0 ? "high" : coverage.ratio < 0.5 ? "medium" : "low",
+      detail: `${coverage.connected} connected, ${coverage.unavailable} unavailable, and ${coverage.mock} mock source${coverage.total === 1 ? "" : "s"} contributed to this decision.`,
     },
   ];
 }
@@ -134,9 +169,9 @@ function confidenceFromCoverage(results: AgentResult[]) {
 
 export function runDecisionAgent(input: DecisionInput): AgentResult {
   const results = (input.results ?? []).filter((result) => result.agent !== "decision");
-  const score = getWeightedScore(results);
+  const score = applyCoveragePenalty(getWeightedScore(results), results);
   const critical = hasCriticalFinding(results);
-  const recommendedAction = decideAction(score, critical);
+  const recommendedAction = decideAction(score, critical, results);
   const findings = buildDecisionFindings(results, score, recommendedAction);
 
   return buildAgentResult({
@@ -150,7 +185,7 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
     findings,
     sources: results.map((result) => ({
       label: `${result.agent} agent`,
-      status: result.sources.some((source) => source.status === "connected") ? "connected" : result.sources.length > 0 ? "unavailable" : "mock",
+      status: result.sources.some((source) => source.status === "connected") ? "connected" : "unavailable",
       detail: `${result.verdict}: ${result.summary}`,
     })),
     confidence: confidenceFromCoverage(results),

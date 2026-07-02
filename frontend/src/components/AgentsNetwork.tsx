@@ -259,6 +259,23 @@ export function AgentsNetwork() {
               </div>
             </div>
 
+            {selectedResult.dataQuality ? (
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/[.045] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold">Data quality</div>
+                  <span className="rounded-full border border-white/10 px-3 py-1 text-xs capitalize text-white/54">
+                    {selectedResult.dataQuality.mode}
+                  </span>
+                </div>
+                <div className="mt-2 text-sm leading-6 text-white/48">{selectedResult.dataQuality.detail}</div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-xl bg-black/20 p-3 text-sm text-white/52">Connected: {selectedResult.dataQuality.connectedSources}</div>
+                  <div className="rounded-xl bg-black/20 p-3 text-sm text-white/52">Unavailable: {selectedResult.dataQuality.unavailableSources}</div>
+                  <div className="rounded-xl bg-black/20 p-3 text-sm text-white/52">Mock: {selectedResult.dataQuality.mockSources}</div>
+                </div>
+              </div>
+            ) : null}
+
             <div className="mt-6 grid gap-4 lg:grid-cols-2">
               <div>
                 <div className="text-sm uppercase tracking-[0.16em] text-white/34">Findings</div>

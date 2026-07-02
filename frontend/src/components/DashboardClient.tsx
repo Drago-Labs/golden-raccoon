@@ -514,6 +514,25 @@ export function DashboardClient() {
                 </div>
               </div>
             ) : null}
+
+            {scanResult?.dataQuality ? (
+              <div className="mt-5 rounded-2xl border border-white/10 bg-white/6 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold">Data quality</div>
+                  <span className="rounded-full border border-white/10 px-3 py-1 text-xs capitalize text-white/54">
+                    {scanResult.dataQuality.mode}
+                  </span>
+                </div>
+                <div className="mt-2 text-xs leading-5 text-white/46">{scanResult.dataQuality.detail}</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {scanResult.sources.slice(0, 4).map((source) => (
+                    <span key={source.label} className="rounded-full border border-white/10 px-3 py-1 text-xs text-white/42">
+                      {source.label}: {source.status}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

@@ -173,6 +173,31 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
           </div>
           <div className="space-y-5">
             <RiskBreakdownCard items={scan.riskBreakdown} />
+            {scan.dataQuality ? (
+              <section className="glass-panel rounded-[28px] p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-xl font-semibold">Data quality</h2>
+                    <div className="mt-1 text-sm leading-6 text-white/48">{scan.dataQuality.detail}</div>
+                  </div>
+                  <span className="rounded-full border border-white/10 bg-white/7 px-3 py-1 text-xs capitalize text-white/54">
+                    {scan.dataQuality.mode}
+                  </span>
+                </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  {[
+                    ["Connected", scan.dataQuality.connectedSources],
+                    ["Unavailable", scan.dataQuality.unavailableSources],
+                    ["Mock", scan.dataQuality.mockSources],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-2xl bg-white/6 p-4">
+                      <div className="text-sm text-white/42">{label}</div>
+                      <div className="mt-1 text-2xl font-semibold">{value}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
             <section className="glass-panel rounded-[28px] p-6">
               <h2 className="text-xl font-semibold">Sources checked</h2>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
