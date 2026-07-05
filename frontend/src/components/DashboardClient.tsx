@@ -7,7 +7,6 @@ import { ArrowRight, Bot, Check, ChevronDown, Loader2, Newspaper, RadioTower, Sh
 import type { AgentResult, PortfolioSnapshot, TokenHolding, TokenScanResult } from "@/server/types";
 import { RiskScoreCard } from "@/components/RiskScoreCard";
 import { WalletPortfolioCard } from "@/components/WalletPortfolioCard";
-import { WalletConnectButton } from "@/components/WalletConnectButton";
 
 const agents = [
   { name: "Portfolio", detail: "Reads holdings, allocation and wallet exposure.", icon: Wallet },
@@ -297,9 +296,6 @@ export function DashboardClient() {
           <div className="max-w-3xl">
             <div className="text-sm uppercase tracking-[0.2em] text-[#d9a441]">Multi agent dashboard</div>
             <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">Wallet guarded by agents</h1>
-          </div>
-          <div className="flex flex-col items-start gap-3 lg:items-end">
-            <WalletConnectButton />
           </div>
         </div>
       </section>

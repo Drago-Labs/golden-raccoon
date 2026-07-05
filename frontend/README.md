@@ -5,18 +5,29 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 Create `frontend/.env.local` for local secrets/config:
 
 ```bash
+# Public browser config.
 NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 NEXT_PUBLIC_GOAT_RPC_URL=https://rpc.goat.network
+NEXT_PUBLIC_GOAT_EXPLORER_URL=https://explorer.goat.network
 
-# Recommended: multi-chain wallet portfolio with balances, logos, and USD quotes.
+# Server-only storage. Never expose SERVICE_ROLE keys with NEXT_PUBLIC_.
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+
+# Server-only portfolio providers.
 GOLDRUSH_API_KEY=
+COVALENT_API_KEY=
 GOLDRUSH_CHAINS=eth-mainnet,base-mainnet,arbitrum-mainnet,bsc-mainnet,linea-mainnet,matic-mainnet,optimism-mainnet
 
-# Optional fallback: single-chain ERC-20 discovery with Alchemy.
+# Optional server-only fallback: single-chain ERC-20 discovery with Alchemy.
 # Supported values: ethereum, base, arbitrum.
 ALCHEMY_API_KEY=
 PORTFOLIO_CHAIN=
+
+# Server-only RPC/provider config.
+GOAT_RPC_URL=https://rpc.goat.network
+GOPLUS_API_KEY=
 ```
 
 First, run the development server:
