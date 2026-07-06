@@ -47,6 +47,7 @@ type ClassifiedEvent = {
   reliability: number;
   identityConfidence: number;
   recencyWeight: number;
+  confirmationStatus: "official_confirmed" | "exchange_confirmed" | "security_confirmed" | "unverified_rumor" | "social_only_claim" | "reported";
 };
 
 type IdentityTerm = {
@@ -288,6 +289,50 @@ function getIdentityMatch(item: NewsItem, terms: IdentityTerm[]) {
   };
 }
 
+function extractNewsEntity(item: NewsItem, terms: IdentityTerm[]) {
+  const title = normalizeText(item.title);
+  const body = normalizeText(item.description ?? "");
+  const link = normalizeText(item.link ?? "");
+  const titleMatches = terms.filter((term) => title.includes(term.value));
+  const bodyMatches = terms.filter((term) => body.includes(term.value) || link.includes(term.value));
+  const highConfidenceMatches = [...titleMatches, ...bodyMatches].filter((term) => term.strength === "high");
+  const titleBodyConflict = titleMatches.length > 0 && bodyMatches.length > 0 && !titleMatches.some((titleTerm) => bodyMatches.some((bodyTerm) => bodyTerm.value === titleTerm.value));
+
+  return {
+    titleEntityTerms: titleMatches.map((term) => term.label),
+    bodyEntityTerms: bodyMatches.map((term) => term.label),
+    contractOrWebsiteMatched: highConfidenceMatches.length > 0,
+    symbolCollisionPossible: terms.some((term) => term.label === "symbol") && highConfidenceMatches.length === 0,
+    titleBodyConflict,
+  };
+}
+
+function getSourceCredibility(item: NewsItem) {
+  const text = itemText(item);
+  const sponsored = text.includes("sponsored") || text.includes("press release") || text.includes("partner content");
+
+  return {
+    source: item.source,
+    tier: item.sourceTier,
+    historicalReliability: item.reliability,
+    sourceType: item.sourceKind === "official_project" || item.sourceKind === "exchange_announcement" ? "official" : "third_party",
+    sponsoredOrPressRelease: sponsored,
+    aggregatorDuplicateRisk: item.sourceKind === "aggregator",
+  };
+}
+
+function getConfirmationStatus(item: NewsItem): ClassifiedEvent["confirmationStatus"] {
+  const text = itemText(item);
+
+  if (item.sourceKind === "exchange_announcement") return "exchange_confirmed";
+  if (item.sourceKind === "security_incident") return "security_confirmed";
+  if (item.sourceKind === "official_project") return "official_confirmed";
+  if (text.includes("rumor") || text.includes("unconfirmed") || text.includes("reportedly")) return "unverified_rumor";
+  if (text.includes("tweet") || text.includes("social post") || text.includes("influencer")) return "social_only_claim";
+
+  return "reported";
+}
+
 function titleKey(title: string) {
   return normalizeText(title).replace(/\b(the|a|an|to|for|of|and|in|on)\b/g, "").replace(/\s+/g, " ").trim();
 }
@@ -370,6 +415,7 @@ function classifyEvents(relevantItems: ReturnType<typeof filterRelevantItems>): 
       reliability: item.reliability,
       identityConfidence: identity.confidence,
       recencyWeight,
+      confirmationStatus: getConfirmationStatus(item),
     }));
   });
 }
@@ -481,6 +527,13 @@ function buildNewsFindings(input: {
   const scamEvents = input.events.filter((event) => event.type === "scam_or_rug");
   const regulatoryEvents = input.events.filter((event) => event.type === "regulatory");
   const strongestEvent = [...input.events].sort((left, right) => scoreForSeverity(right.severity) - scoreForSeverity(left.severity))[0];
+  const entityExtractions = input.relevantItems.map(({ item, identity }) => extractNewsEntity(item, identity.matchedTerms));
+  const titleBodyConflicts = entityExtractions.filter((entity) => entity.titleBodyConflict).length;
+  const symbolCollisionItems = entityExtractions.filter((entity) => entity.symbolCollisionPossible).length;
+  const credibility = input.relevantItems.map(({ item }) => getSourceCredibility(item));
+  const sponsoredCount = credibility.filter((item) => item.sponsoredOrPressRelease).length;
+  const aggregatorDuplicateCount = credibility.filter((item) => item.aggregatorDuplicateRisk).length;
+  const unconfirmedCount = input.events.filter((event) => event.confirmationStatus === "unverified_rumor" || event.confirmationStatus === "social_only_claim").length;
 
   if (input.connectedSourceCount === 0) {
     return [
@@ -495,6 +548,27 @@ function buildNewsFindings(input: {
   }
 
   return [
+    {
+      label: "News entity extraction",
+      severity: titleBodyConflicts > 0 || symbolCollisionItems > 0 ? "high" : input.relevantItems.length > 0 ? "low" : "medium",
+      detail: `${input.relevantItems.length} article entity extraction${input.relevantItems.length === 1 ? "" : "s"} completed; ${titleBodyConflicts} title/body conflict${titleBodyConflicts === 1 ? "" : "s"}, ${symbolCollisionItems} symbol-collision warning${symbolCollisionItems === 1 ? "" : "s"}.`,
+      scoreImpact: titleBodyConflicts > 0 ? 72 : symbolCollisionItems > 0 ? 58 : 12,
+      raw: JSON.stringify(entityExtractions),
+    },
+    {
+      label: "Source credibility registry",
+      severity: sponsoredCount > 0 || aggregatorDuplicateCount > 0 ? "medium" : "low",
+      detail: `${credibility.length} matched source credibility profile${credibility.length === 1 ? "" : "s"} evaluated; ${sponsoredCount} sponsored/press-release flag${sponsoredCount === 1 ? "" : "s"}, ${aggregatorDuplicateCount} aggregator duplicate risk flag${aggregatorDuplicateCount === 1 ? "" : "s"}.`,
+      scoreImpact: sponsoredCount > 0 || aggregatorDuplicateCount > 0 ? 34 : 10,
+      raw: JSON.stringify(credibility),
+    },
+    {
+      label: "Rumor versus confirmed",
+      severity: unconfirmedCount > 0 ? "medium" : input.events.length > 0 ? "low" : "medium",
+      detail: `${input.events.length} classified event${input.events.length === 1 ? "" : "s"} checked for confirmation status; ${unconfirmedCount} unverified rumor/social-only claim${unconfirmedCount === 1 ? "" : "s"}.`,
+      scoreImpact: unconfirmedCount > 0 ? 42 : 12,
+      raw: JSON.stringify(input.events.map((event) => ({ title: event.title, source: event.source, confirmationStatus: event.confirmationStatus }))),
+    },
     {
       label: "Matched articles",
       severity: input.relevantItems.length > 0 ? "low" : "medium",
@@ -708,6 +782,18 @@ export async function runNewsAgent(input: NewsAgentInput, providers: NewsAgentPr
         identityMatchConfidence: identity.confidence,
         matchedTerms: identity.matchedTerms.map((term) => term.label),
         recencyWeight,
+      })),
+      entityExtraction: relevantItems.map(({ item, identity }) => ({
+        title: item.title,
+        source: item.source,
+        ...extractNewsEntity(item, identity.matchedTerms),
+      })),
+      sourceCredibility: relevantItems.map(({ item }) => getSourceCredibility(item)),
+      confirmationStatus: events.map((event) => ({
+        title: event.title,
+        source: event.source,
+        type: event.type,
+        confirmationStatus: event.confirmationStatus,
       })),
       events,
       sourceReliability: averageReliability,

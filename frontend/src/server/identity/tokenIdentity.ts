@@ -1,4 +1,5 @@
 import type { AgentInputIdentity, ResolvedTokenIdentity } from "@/server/types";
+import { buildTokenIdentityGraph } from "@/server/identity/identityGraph";
 
 const evmAddressPattern = /^0x[a-fA-F0-9]{40}$/;
 const genericSymbols = new Set(["AI", "GOAT", "MOON", "PEPE", "MEME", "DOGE", "CAT", "BTC", "ETH"]);
@@ -38,6 +39,8 @@ export function resolveTokenIdentity(input: AgentInputIdentity): ResolvedTokenId
   const websiteUrl = normalizeUrl(input.websiteUrl);
   const twitterUrl = normalizeUrl(input.twitterUrl);
   const telegramUrl = normalizeUrl(input.telegramUrl);
+  const discordUrl = normalizeUrl(input.discordUrl);
+  const identityGraph = buildTokenIdentityGraph({ ...input, websiteUrl, twitterUrl, telegramUrl, discordUrl });
   const matchReasons: string[] = [];
   const warnings: string[] = [];
   let confidence = 0;
@@ -59,7 +62,7 @@ export function resolveTokenIdentity(input: AgentInputIdentity): ResolvedTokenId
     matchReasons.push("website");
   }
 
-  if (twitterUrl || telegramUrl) {
+  if (twitterUrl || telegramUrl || discordUrl) {
     confidence += 0.12;
     matchReasons.push("official social link");
   }
@@ -74,6 +77,16 @@ export function resolveTokenIdentity(input: AgentInputIdentity): ResolvedTokenId
     matchReasons.push("DexScreener pair");
   }
 
+  if (input.coinmarketcapId) {
+    confidence += 0.1;
+    matchReasons.push("CoinMarketCap id");
+  }
+
+  if (input.pairAddress) {
+    confidence += 0.08;
+    matchReasons.push("pair address");
+  }
+
   if (symbol && tokenName) {
     confidence += 0.1;
     matchReasons.push("symbol and token name");
@@ -85,6 +98,18 @@ export function resolveTokenIdentity(input: AgentInputIdentity): ResolvedTokenId
   if (symbol && genericSymbols.has(symbol) && !contractAddress) {
     confidence -= 0.18;
     warnings.push("generic or collision-prone symbol without contract address");
+  }
+
+  if (identityGraph.collision.risk === "high") {
+    confidence -= 0.12;
+    warnings.push(identityGraph.collision.detail);
+  }
+
+  if (identityGraph.officialLinks.conflicts.length > 0) {
+    confidence -= 0.16;
+    warnings.push(...identityGraph.officialLinks.conflicts);
+  } else {
+    confidence += identityGraph.officialLinks.confidenceBoost;
   }
 
   if (!contractAddress && !websiteUrl && !input.coingeckoId && !input.dexScreenerPairUrl) {
@@ -108,11 +133,17 @@ export function resolveTokenIdentity(input: AgentInputIdentity): ResolvedTokenId
     websiteUrl,
     twitterUrl,
     telegramUrl,
+    discordUrl,
     identityKey,
     confidence: boundedConfidence,
     confidenceLabel: getConfidenceLabel(boundedConfidence),
     matchReasons,
     warnings,
+    identityGraph: {
+      nodes: identityGraph.nodes,
+      edges: identityGraph.edges,
+    },
+    symbolCollision: identityGraph.collision,
+    officialLinkVerification: identityGraph.officialLinks,
   };
 }
-

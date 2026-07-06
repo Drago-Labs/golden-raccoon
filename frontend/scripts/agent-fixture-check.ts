@@ -9,7 +9,11 @@ import { resolveTokenIdentity } from "../src/server/identity/tokenIdentity";
 import { createAgentRunRecord, getStorageHealth } from "../src/server/storage";
 import { getCachePolicyMetadata } from "../src/server/cache/strategy";
 import { getProviderTimeoutBudget, resolveProviderConflict, runProviderFallbacks } from "../src/server/providers/adapter";
-import type { AgentResult } from "../src/server/types";
+import { getRuntimeModeHealth } from "../src/server/env/runtimeMode";
+import { evaluateUrlSafety } from "../src/server/security/urlSafety";
+import { getPortfolioHardeningReport } from "../src/server/portfolio/hardening";
+import { getPortfolioRiskSignals } from "../src/server/portfolio/riskScoring";
+import type { AgentResult, PortfolioSnapshot, TokenHolding } from "../src/server/types";
 import { POST as confirmExecution } from "../src/app/api/execute/confirm/route";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -84,6 +88,7 @@ async function runOnchainChecks() {
   assertAgentContract(honeypot);
   assert(honeypot.recommendedAction === "avoid", "Honeypot fixture must recommend avoid.");
   assert(honeypot.riskScore >= 75, "Honeypot fixture must produce critical risk.");
+  assert(getRaw<{ simulationOverridesSecurityProvider?: boolean }>(honeypot, "simulationPrecedence").simulationOverridesSecurityProvider === true, "Simulation precedence must be exposed above security provider flags.");
 
   const lowLiquidity = await runOnchainAgent(baseInput, {
     fetchSecurity: async () => cleanSecurity({ lp_holders: [{ address: "0x5555555555555555555555555555555555555555", percent: "0.10", is_contract: "0", is_locked: "0" }] }),
@@ -92,6 +97,8 @@ async function runOnchainChecks() {
   });
   assert(lowLiquidity.riskScore >= 50, "Low liquidity fixture must produce high risk.");
   assert(lowLiquidity.recommendedAction === "manual_review" || lowLiquidity.recommendedAction === "avoid", "Low liquidity fixture must not recommend hold.");
+  assert(getRaw<{ lockProvider?: { provider?: string } }>(lowLiquidity, "lp").lockProvider?.provider !== undefined, "Liquidity lock provider status must be exposed.");
+  assert(getRaw<{ washVolumeSuspicion?: string }>(lowLiquidity, "marketManipulation").washVolumeSuspicion !== undefined, "Market manipulation flags must be exposed.");
 
   const blueChip = await runOnchainAgent(baseInput, {
     fetchSecurity: async () => cleanSecurity(),
@@ -101,6 +108,8 @@ async function runOnchainChecks() {
   assertAgentContract(blueChip);
   assert(blueChip.riskScore < 50, "Blue-chip/high-liquidity fixture must stay low/medium risk.");
   assert(blueChip.recommendedAction === "hold" || blueChip.recommendedAction === "watch", "Blue-chip/high-liquidity fixture must not force manual review.");
+  assert(Array.isArray(getRaw<unknown[]>(blueChip, "privilegedFunctions")), "Privileged function detector must be exposed.");
+  assert(getRaw<{ excludedCount?: number }>(blueChip, "holderExclusions").excludedCount !== undefined, "Holder exclusion report must be exposed.");
 
   const dexOnly = await runOnchainAgent(baseInput, {
     fetchSecurity: async () => {
@@ -189,6 +198,8 @@ async function runNewsChecks() {
     },
   );
   assert(getRaw<unknown[]>(listing, "positiveCatalysts").length > 0, "Official listing must be classified as a positive catalyst.");
+  assert(getRaw<Array<{ confirmationStatus?: string }>>(listing, "confirmationStatus").some((item) => item.confirmationStatus === "exchange_confirmed"), "Exchange listing must be exchange-confirmed.");
+  assert(getRaw<unknown[]>(listing, "sourceCredibility").length > 0, "News source credibility registry must be exposed.");
 
   const duplicate = await runNewsAgent(
     { symbol: "DUPE", tokenName: "Duplicate Token" },
@@ -202,6 +213,7 @@ async function runNewsChecks() {
     },
   );
   assert(getRaw<unknown[]>(duplicate, "matchedArticles").length === 1, "Duplicate articles must count as one matched signal.");
+  assert(getRaw<unknown[]>(duplicate, "entityExtraction").length === 1, "News entity extraction must be exposed for matched articles.");
 
   const unavailable = await runNewsAgent(
     { symbol: "DOWN", tokenName: "Down Token" },
@@ -594,9 +606,92 @@ async function runReadinessChecks() {
   assert(scoreToRiskLevel(12) === "low", "Scoring helper must map low risk consistently.");
   assert(scoreToRiskLevel(52) === "high", "Scoring helper must map high risk consistently.");
   assert(validateAgentResult(blueChipLikeResult()).success, "Fixture AgentResult must pass runtime schema.");
+  assert(getRuntimeModeHealth().liveModeUsesMockData === false, "Runtime mode health must state live mode does not use mock data.");
+
+  const unsafeUrl = evaluateUrlSafety("http://127.0.0.1/admin");
+  assert(unsafeUrl.safe === false && unsafeUrl.issues.includes("private or localhost target blocked"), "URL safety guard must block localhost/private targets.");
 
   const symbolOnlyIdentity = resolveTokenIdentity({ symbol: "GOAT" });
   assert(symbolOnlyIdentity.confidenceLabel === "low", "Symbol-only identity must remain low confidence.");
+  assert(Boolean(symbolOnlyIdentity.identityGraph), "Resolved identity must expose an identity graph.");
+  assert((symbolOnlyIdentity.symbolCollision as { risk?: string }).risk === "high", "Collision-prone symbol-only identity must expose high collision risk.");
+
+  const linkedIdentity = resolveTokenIdentity({
+    symbol: "SAFE",
+    tokenName: "Safe Token",
+    chain: "base",
+    contractAddress: "0x3333333333333333333333333333333333333333",
+    websiteUrl: "https://safe.example",
+    twitterUrl: "https://x.com/safe",
+    dexScreenerPairUrl: "https://dexscreener.com/base/fixture",
+  });
+  assert(linkedIdentity.confidenceLabel === "high", "Contract plus chain and official links must produce high identity confidence.");
+
+  const spamHolding: TokenHolding = {
+    tokenAddress: "0x9999999999999999999999999999999999999999",
+    symbol: "CLAIM",
+    name: "Claim Airdrop",
+    chainId: "base",
+    isVerified: false,
+    balance: 1,
+    priceUsd: 0.01,
+    valueUsd: 0.01,
+    allocationPercent: 0.01,
+    riskScore: 70,
+    riskLevel: "high",
+    signals: {
+      scamRisk: 80,
+      websiteTrustRisk: 70,
+      contractRisk: 70,
+      whaleSellRisk: 40,
+      liquidityRisk: 80,
+      xSentimentRisk: 70,
+      holderConcentrationRisk: 70,
+      priceVolatilityRisk: 50,
+      portfolioExposureRisk: 1,
+    },
+  };
+  const stableHolding: TokenHolding = {
+    tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    symbol: "USDC",
+    name: "USD Coin",
+    chainId: "base",
+    isVerified: true,
+    balance: 100,
+    priceUsd: 1,
+    valueUsd: 100,
+    allocationPercent: 99.99,
+    riskScore: 8,
+    riskLevel: "low",
+    signals: {
+      scamRisk: 5,
+      websiteTrustRisk: 5,
+      contractRisk: 5,
+      whaleSellRisk: 5,
+      liquidityRisk: 5,
+      xSentimentRisk: 5,
+      holderConcentrationRisk: 5,
+      priceVolatilityRisk: 2,
+      portfolioExposureRisk: 5,
+    },
+  };
+  const portfolio: PortfolioSnapshot = {
+    walletAddress: "0xabc",
+    nativeBalance: 0,
+    nativeSymbol: "ETH",
+    dayChangePercent: 0,
+    dayChangeUsd: 0,
+    totalValueUsd: 100.01,
+    riskScore: 12,
+    createdAt: now.toISOString(),
+    holdings: [spamHolding, stableHolding],
+  };
+  const portfolioSignals = getPortfolioRiskSignals(portfolio.holdings);
+  const hardening = getPortfolioHardeningReport(portfolio, portfolioSignals, "connected");
+  assert(hardening.dustFilter.spamHoldingCount === 1, "Portfolio hardening must detect dust/spam holdings.");
+  assert(hardening.fakeStablecoins.length === 0, "Verified chain-specific stablecoin must not be flagged fake.");
+  assert(hardening.chainReadiness.executionReadiness === "gas_missing", "Portfolio hardening must expose native gas readiness.");
+  assert(hardening.riskDriverBreakdown.some((item) => item.key === "chain_readiness"), "Portfolio hardening must expose deterministic risk driver breakdown.");
 
   const storageHealth = getStorageHealth();
   for (const table of ["wallets", "agent_runs", "agent_results", "recommendations", "user_rules", "approvals", "transactions", "token_identities", "source_snapshots"]) {

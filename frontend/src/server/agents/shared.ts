@@ -1,5 +1,6 @@
 import type { AgentBlockingReason, AgentFinding, AgentMissingData, AgentRecommendedAction, AgentResult, AgentSource, RiskLevel, SourceDataQuality } from "@/server/types";
 import { validateAgentResult } from "@/server/agents/schema";
+import { assertNoMockSourcesInLive } from "@/server/env/runtimeMode";
 
 type BuildAgentResultInput = {
   agent: AgentResult["agent"];
@@ -249,6 +250,7 @@ export function buildAgentResult(input: BuildAgentResultInput): AgentResult {
       detail: "No live source was supplied for this agent result.",
     },
   ];
+  assertNoMockSourcesInLive(sources);
   const fallbackSource = sources[0]?.label ?? "Unavailable source";
   const findings = normalizeFindings(input.findings, fallbackSource);
   const riskScore = applyCriticalOverride(input.score, findings);

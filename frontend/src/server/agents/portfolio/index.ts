@@ -2,6 +2,7 @@ import type { AgentResult, AgentSource, PortfolioSnapshot } from "@/server/types
 import { getPortfolioProviderHealth, getPortfolioSnapshot, type PortfolioSnapshotSource } from "@/server/portfolio/getPortfolio";
 import { buildAgentResult } from "@/server/agents/shared";
 import { getPortfolioRiskSignals } from "@/server/portfolio/riskScoring";
+import { getPortfolioHardeningReport } from "@/server/portfolio/hardening";
 import { getKnownTokenClass, isVerifiedStablecoin } from "@/server/portfolio/tokenRegistry";
 
 function getProviderSources(): AgentSource[] {
@@ -58,19 +59,27 @@ function getRecommendedAction(portfolio: PortfolioSnapshot, riskSignals: ReturnT
 
 function analyzePortfolioSnapshot(portfolio: PortfolioSnapshot, source: PortfolioSnapshotSource): AgentResult {
   if (portfolio.holdings.length === 0) {
+    const emptyState = source.status === "connected" ? "empty_wallet" : "provider_unavailable";
+
     return buildAgentResult({
       agent: "portfolio",
       score: 58,
-      verdict: "Portfolio source unavailable",
-      summary: "Portfolio Agent could not read live wallet holdings. No mock holdings were generated.",
+      verdict: emptyState === "empty_wallet" ? "Empty wallet" : "Portfolio source unavailable",
+      summary:
+        emptyState === "empty_wallet"
+          ? "Portfolio provider connected and returned no holdings. This is treated as an empty wallet, not a provider failure."
+          : "Portfolio Agent could not read live wallet holdings. No mock holdings were generated.",
       findings: [
         {
-          label: "Live portfolio unavailable",
+          label: "Portfolio empty state",
           severity: "medium",
-          detail: source.detail,
+          detail: `${emptyState}: ${source.detail}`,
           sourceLabel: "Wallet portfolio API",
           raw: "No holding rows returned from configured portfolio providers.",
-          interpretation: "Connect a supported wallet or configure a live portfolio provider before making allocation decisions.",
+          interpretation:
+            emptyState === "empty_wallet"
+              ? "The wallet appears empty from connected data."
+              : "Connect a supported wallet or configure a live portfolio provider before making allocation decisions.",
         },
       ],
       sources: [
@@ -83,6 +92,10 @@ function analyzePortfolioSnapshot(portfolio: PortfolioSnapshot, source: Portfoli
       ],
       confidence: 0.18,
       recommendedAction: "manual_review",
+      rawSignals: {
+        emptyState,
+        liveModeUsesMockData: false,
+      },
     });
   }
 
@@ -90,6 +103,7 @@ function analyzePortfolioSnapshot(portfolio: PortfolioSnapshot, source: Portfoli
     holding.allocationPercent > largest.allocationPercent ? holding : largest
   );
   const riskSignals = getPortfolioRiskSignals(portfolio.holdings);
+  const hardening = getPortfolioHardeningReport(portfolio, riskSignals, source.status);
   const stablecoinRatio = portfolio.holdings
     .filter((holding) => isVerifiedStablecoin(holding.symbol, holding.chainId ?? holding.chainName, holding.tokenAddress))
     .reduce((total, holding) => total + holding.allocationPercent, 0);
@@ -128,6 +142,46 @@ function analyzePortfolioSnapshot(portfolio: PortfolioSnapshot, source: Portfoli
     verdict: portfolio.riskScore >= 75 ? "Critical portfolio risk" : portfolio.riskScore >= 50 ? "High portfolio risk" : "Portfolio within monitoring range",
     summary: `${largestHolding.symbol} is ${largestHolding.allocationPercent.toFixed(1)}% of the wallet. Verified stable reserve is ${stablecoinRatio.toFixed(1)}%. Low-liquidity exposure is ${lowLiquidityExposure.toFixed(1)}%.`,
     findings: [
+      {
+        label: "Dust and spam filter",
+        severity: hardening.dustFilter.spamHoldingCount > 0 ? "medium" : "low",
+        scoreImpact: Math.min(60, hardening.dustFilter.spamHoldingCount * 12),
+        detail: `${hardening.dustFilter.spamHoldingCount} spam-like holding${hardening.dustFilter.spamHoldingCount === 1 ? "" : "s"} detected; $${hardening.dustFilter.ignoredDustValueUsd.toFixed(2)} dust value is tracked separately so it does not inflate portfolio risk.`,
+        raw: JSON.stringify(hardening.dustFilter),
+        interpretation: "Dust/spam holdings are visible as security context but do not dominate allocation-weighted portfolio risk.",
+      },
+      {
+        label: "Price reliability",
+        severity: hardening.priceReliability.some((item) => item.level === "no_price") ? "high" : hardening.priceReliability.some((item) => item.level === "dex_only" || item.level === "stale_or_anomalous") ? "medium" : "low",
+        scoreImpact: Math.max(0, ...hardening.priceReliability.map((item) => item.risk)),
+        detail: `${hardening.priceReliability.filter((item) => item.level === "verified_market").length} verified market price${hardening.priceReliability.length === 1 ? "" : "s"}, ${hardening.priceReliability.filter((item) => item.level !== "verified_market").length} price reliability warning${hardening.priceReliability.length === 1 ? "" : "s"}.`,
+        raw: JSON.stringify(hardening.priceReliability),
+        interpretation: "No-price and DEX-only exposure raises uncertainty even when allocation is small.",
+      },
+      {
+        label: "Stablecoin verification",
+        severity: hardening.fakeStablecoins.length > 0 ? "high" : "low",
+        scoreImpact: hardening.fakeStablecoins.length > 0 ? 72 : 8,
+        detail: hardening.fakeStablecoins.length > 0 ? `${hardening.fakeStablecoins.length} symbol-only stablecoin${hardening.fakeStablecoins.length === 1 ? "" : "s"} failed chain/address verification.` : "Stable reserve only counts allowlisted chain-specific stablecoin contracts.",
+        raw: JSON.stringify(hardening.fakeStablecoins),
+        interpretation: "Fake USDC/USDT names are not counted as stable reserve unless the chain-specific contract is trusted.",
+      },
+      {
+        label: "Native gas readiness",
+        severity: hardening.chainReadiness.hasNativeGasToken ? "low" : "medium",
+        scoreImpact: riskSignals.chainExecutionRisk,
+        detail: hardening.chainReadiness.hasNativeGasToken ? "Native gas token detected for execution readiness." : "No native gas token detected; execution readiness is reduced.",
+        raw: JSON.stringify(hardening.chainReadiness),
+        interpretation: "Missing gas token can block user-approved exits even when a reduce/swap recommendation is correct.",
+      },
+      {
+        label: "Deterministic risk drivers",
+        severity: severityFromScore(Math.max(...hardening.riskDriverBreakdown.map((item) => item.score))),
+        scoreImpact: Math.max(...hardening.riskDriverBreakdown.map((item) => item.score)),
+        detail: hardening.riskDriverBreakdown.map((item) => `${item.key} ${item.score}/100`).join("; "),
+        raw: JSON.stringify(hardening.riskDriverBreakdown),
+        interpretation: "Portfolio risk is decomposed into concentration, stable reserve, liquidity exit, asset quality, volatility and chain readiness.",
+      },
       {
         label: "Largest holding",
         severity: riskSignals.largestHoldingPercent >= 60 ? "critical" : riskSignals.largestHoldingPercent >= 40 ? "high" : "medium",
@@ -227,6 +281,7 @@ function analyzePortfolioSnapshot(portfolio: PortfolioSnapshot, source: Portfoli
         : [],
     rawSignals: {
       portfolioRisk: riskSignals,
+      hardening,
       stablecoinRatio,
       memeExposure,
       unknownExposure,

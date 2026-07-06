@@ -123,7 +123,10 @@ export type AgentInputIdentity = {
   websiteUrl?: string;
   twitterUrl?: string;
   telegramUrl?: string;
+  discordUrl?: string;
   coingeckoId?: string;
+  coinmarketcapId?: string;
+  pairAddress?: string;
   dexScreenerPairUrl?: string;
 };
 
@@ -133,6 +136,9 @@ export type ResolvedTokenIdentity = AgentInputIdentity & {
   confidenceLabel: "low" | "medium" | "high";
   matchReasons: string[];
   warnings: string[];
+  identityGraph?: unknown;
+  symbolCollision?: unknown;
+  officialLinkVerification?: unknown;
 };
 
 export type TokenSignal = {

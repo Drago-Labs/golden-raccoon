@@ -375,6 +375,61 @@ function buildSecurityFindings(security?: GoPlusTokenSecurity): AgentFinding[] {
   ];
 }
 
+function buildContractAnalysisFindings(security?: GoPlusTokenSecurity): AgentFinding[] {
+  if (!security) {
+    return [
+      {
+        label: "Contract verification and bytecode",
+        severity: "medium",
+        detail: "Verified source, proxy implementation and dangerous bytecode signals are unavailable.",
+      },
+    ];
+  }
+
+  const openSource = isFlagged(getStringField(security, "is_open_source"));
+  const proxy = isFlagged(getStringField(security, "is_proxy"));
+  const hiddenOwner = isFlagged(getStringField(security, "hidden_owner"));
+  const maliciousClone = isFlagged(getStringField(security, "is_malicious"));
+  const renouncedClaim = isFlagged(getStringField(security, "owner_address") === "0x0000000000000000000000000000000000000000" ? "1" : "0");
+
+  return [
+    {
+      label: "Contract verification and bytecode",
+      severity: maliciousClone || hiddenOwner ? "critical" : !openSource || proxy ? "medium" : "low",
+      detail: `Verified source ${openSource ? "yes" : "no"}, proxy ${proxy ? "yes" : "no"}, hidden owner ${hiddenOwner ? "yes" : "no"}, malicious clone signal ${maliciousClone ? "yes" : "no"}, ownership renounced claim ${renouncedClaim ? "yes" : "no"}.`,
+      raw: JSON.stringify({ openSource, proxy, hiddenOwner, maliciousClone, renouncedClaim }),
+      interpretation: "Unverified source, proxy indirection and hidden ownership reduce confidence in permission claims.",
+    },
+  ];
+}
+
+function getPrivilegedFunctionFlags(security?: GoPlusTokenSecurity) {
+  return [
+    { key: "mint", flagged: isFlagged(getStringField(security, "is_mintable")) },
+    { key: "pause", flagged: isFlagged(getStringField(security, "transfer_pausable")) },
+    { key: "blacklist", flagged: isFlagged(getStringField(security, "is_blacklisted")) },
+    { key: "whitelist", flagged: isFlagged(getStringField(security, "is_whitelisted")) },
+    { key: "fee_change", flagged: isFlagged(getStringField(security, "can_take_back_ownership")) || isFlagged(getStringField(security, "owner_change_balance")) },
+    { key: "max_transaction_change", flagged: isFlagged(getStringField(security, "trading_cooldown")) },
+    { key: "balance_manipulation", flagged: isFlagged(getStringField(security, "owner_change_balance")) },
+  ];
+}
+
+function buildPrivilegedFunctionFindings(security?: GoPlusTokenSecurity): AgentFinding[] {
+  const flags = getPrivilegedFunctionFlags(security);
+  const flagged = flags.filter((item) => item.flagged);
+
+  return [
+    {
+      label: "Privileged functions",
+      severity: flagged.length >= 3 ? "critical" : flagged.length > 0 ? "high" : security ? "low" : "medium",
+      detail: flagged.length > 0 ? `Detected privileged controls: ${flagged.map((item) => item.key).join(", ")}.` : security ? "No privileged function flags detected by provider." : "Privileged function coverage unavailable.",
+      raw: JSON.stringify(flags),
+      interpretation: "Mint, pause, blacklist, fee/max transaction and balance manipulation permissions can change exit risk after purchase.",
+    },
+  ];
+}
+
 function getHolderPercent(holder: TokenHolder) {
   return parsePercent(holder.percent === undefined ? undefined : String(holder.percent));
 }
@@ -391,6 +446,36 @@ function isBurnAddress(address?: string) {
     normalized === "0x000000000000000000000000000000000000dead" ||
     normalized === "0x0000000000000000000000000000000000000001"
   );
+}
+
+function isHolderExcluded(holder: TokenHolder) {
+  const address = holder.address?.toLowerCase();
+  const tag = holder.tag?.toLowerCase() ?? "";
+
+  if (isBurnAddress(address)) return "burn_address";
+  if (tag.includes("cex") || tag.includes("binance") || tag.includes("coinbase")) return "cex_wallet";
+  if (tag.includes("bridge")) return "bridge_contract";
+  if (tag.includes("lock")) return "lock_contract";
+  if (isLockedOrContractHolder(holder)) return "lp_or_contract";
+
+  return undefined;
+}
+
+function getHolderExclusionReport(security?: GoPlusTokenSecurity) {
+  const holders = getArrayField<TokenHolder>(security, "holders");
+  const excluded = holders
+    .map((holder) => ({ holder, reason: isHolderExcluded(holder) }))
+    .filter((item): item is { holder: TokenHolder; reason: string } => Boolean(item.reason));
+
+  return {
+    excludedCount: excluded.length,
+    rules: ["burn_address", "lp_or_contract", "cex_wallet", "bridge_contract", "lock_contract"],
+    excludedHolders: excluded.slice(0, 20).map((item) => ({
+      address: item.holder.address,
+      percent: item.holder.percent,
+      reason: item.reason,
+    })),
+  };
 }
 
 function getLpHolders(security?: GoPlusTokenSecurity) {
@@ -435,7 +520,8 @@ function buildHolderFindings(security?: GoPlusTokenSecurity): AgentFinding[] {
     ];
   }
 
-  const unlockedHolders = holders.filter((holder) => !isLockedOrContractHolder(holder));
+  const excludedReport = getHolderExclusionReport(security);
+  const unlockedHolders = holders.filter((holder) => !isHolderExcluded(holder));
   const concentrationSet = unlockedHolders.length > 0 ? unlockedHolders : holders;
   const topHolder = concentrationSet[0];
   const top5Percent = concentrationSet.slice(0, 5).reduce((total, holder) => total + holder.percent, 0);
@@ -455,6 +541,13 @@ function buildHolderFindings(security?: GoPlusTokenSecurity): AgentFinding[] {
         unlockedHolders.length === 0
           ? "Holder list is mostly contract/locked addresses, so concentration needs manual review."
           : `${unlockedHolders.length} unlocked/non-contract holder${unlockedHolders.length === 1 ? "" : "s"} were included in concentration scoring.`,
+    },
+    {
+      label: "Holder exclusion rules",
+      severity: excludedReport.excludedCount > 0 ? "low" : "medium",
+      detail: `${excludedReport.excludedCount} holder${excludedReport.excludedCount === 1 ? "" : "s"} excluded from concentration by burn, LP/contract, CEX, bridge or lock rules.`,
+      raw: JSON.stringify(excludedReport),
+      interpretation: "Excluded holder categories are still disclosed so concentration math can be audited.",
     },
   ];
 }
@@ -494,6 +587,20 @@ function buildLpFindings(security?: GoPlusTokenSecurity, pairs?: DexScreenerPair
           : "A meaningful share of LP ownership is not confirmed locked/burned, so liquidity removal risk remains.",
     },
   ];
+}
+
+function getLiquidityLockReport(security?: GoPlusTokenSecurity) {
+  const lpHolders = getLpHolders(security);
+  const lockedPercent = lpHolders.filter((holder) => isLockedOrContractHolder(holder)).reduce((total, holder) => total + holder.percent, 0);
+  const burnedPercent = lpHolders.filter((holder) => isBurnAddress(holder.address)).reduce((total, holder) => total + holder.percent, 0);
+
+  return {
+    provider: lpHolders.length > 0 ? "security_lp_holders" : "unavailable",
+    lockedPercent,
+    burnedPercent,
+    protectedPercent: lockedPercent + burnedPercent,
+    unlockDate: getStringField(security, "lp_lock_until") ?? getStringField(security, "unlock_time"),
+  };
 }
 
 function buildLiquidityFindings(pairs?: DexScreenerPair[]): AgentFinding[] {
@@ -572,6 +679,31 @@ function buildMarketAnomalyFindings(pairs?: DexScreenerPair[]): AgentFinding[] {
   ];
 }
 
+function getMarketManipulationFlags(pairs?: DexScreenerPair[]) {
+  const bestPair = getBestPair(pairs);
+
+  if (!bestPair) {
+    return {
+      washVolumeSuspicion: "unavailable",
+      suddenLiquidityRemoval: "unavailable",
+      abnormalBuySellImbalance: "unavailable",
+      repeatedWalletTrades: "unavailable",
+    };
+  }
+
+  const liquidityUsd = bestPair.liquidity?.usd ?? 0;
+  const volume24h = bestPair.volume?.h24 ?? 0;
+  const volumeLiquidityRatio = liquidityUsd > 0 ? volume24h / liquidityUsd : 0;
+  const priceChange24h = Math.abs(bestPair.priceChange?.h24 ?? 0);
+
+  return {
+    washVolumeSuspicion: volumeLiquidityRatio >= 8 ? "high" : volumeLiquidityRatio >= 3 ? "medium" : "low",
+    suddenLiquidityRemoval: liquidityUsd < 25_000 && volume24h > 50_000 ? "high" : "not_detected",
+    abnormalBuySellImbalance: priceChange24h >= 40 && volumeLiquidityRatio >= 3 ? "medium" : "not_detected",
+    repeatedWalletTrades: "requires_trade_provider",
+  };
+}
+
 function getSimulationSignals(security?: GoPlusTokenSecurity, pairs?: DexScreenerPair[]): SimulationSignals {
   const bestPair = getBestPair(pairs);
   const liquidityUsd = bestPair?.liquidity?.usd;
@@ -597,6 +729,16 @@ function getSimulationSignals(security?: GoPlusTokenSecurity, pairs?: DexScreene
     liquidityUsd,
     estimatedSlippageRisk: typeof liquidityUsd !== "number" ? "unavailable" : liquidityUsd < 25_000 ? "high" : liquidityUsd < 100_000 ? "medium" : "low",
     detail: "Sellability and tax checks are inferred from security flags and DEX liquidity. A live transaction simulator should still be used before execution.",
+  };
+}
+
+function getSimulationPrecedence(signals: SimulationSignals) {
+  return {
+    simulationOverridesSecurityProvider: true,
+    cannotSellWinsOverCleanSecurity: signals.cannotSell === true,
+    effectiveTaxPercent: Math.max(signals.buyTaxPercent ?? 0, signals.sellTaxPercent ?? 0),
+    slippageRisk: signals.estimatedSlippageRisk,
+    transferRestriction: signals.cannotSell ? "cannot_sell" : "not_detected",
   };
 }
 
@@ -924,6 +1066,8 @@ export async function runOnchainAgent(input: OnchainAgentInput, providers: Oncha
   );
   const simulationSignals = getSimulationSignals(security, pairs);
   const findings = [
+    ...buildContractAnalysisFindings(security),
+    ...buildPrivilegedFunctionFindings(security),
     ...buildSecurityFindings(security),
     ...buildHolderFindings(security),
     ...buildLiquidityFindings(pairs),
@@ -1007,6 +1151,7 @@ export async function runOnchainAgent(input: OnchainAgentInput, providers: Oncha
       market: getMarketRawSignals(pairs),
       holders: getHolderRawSignals(security),
       lp: {
+        lockProvider: getLiquidityLockReport(security),
         holders: getLpHolders(security).map((holder) => ({
           address: holder.address,
           percent: holder.percent,
@@ -1014,8 +1159,12 @@ export async function runOnchainAgent(input: OnchainAgentInput, providers: Oncha
           burned: isBurnAddress(holder.address),
         })),
       },
+      holderExclusions: getHolderExclusionReport(security),
       creator: creatorActivity,
       simulation: simulationSignals,
+      simulationPrecedence: getSimulationPrecedence(simulationSignals),
+      privilegedFunctions: getPrivilegedFunctionFlags(security),
+      marketManipulation: getMarketManipulationFlags(pairs),
       scoreBreakdown,
     },
   });
