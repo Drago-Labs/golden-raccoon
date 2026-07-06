@@ -1,5 +1,7 @@
 import { runNewsAgent } from "../src/server/agents/news";
 import { runOnchainAgent } from "../src/server/agents/onchain";
+import { runDecisionAgent } from "../src/server/agents/decision";
+import { runSocialAgent } from "../src/server/agents/social";
 import type { AgentResult } from "../src/server/types";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -198,9 +200,185 @@ async function runNewsChecks() {
   assert(unavailable.status === "unavailable", "Unavailable news sources must be visible in agent status.");
 }
 
+function socialMetadata(url: string, text: string, links: string[] = []) {
+  return {
+    url,
+    title: text,
+    description: text,
+    reachable: true,
+    links,
+    text,
+  };
+}
+
+function socialPost(text: string, links: string[] = []) {
+  return {
+    text,
+    links,
+    createdAt: "2026-07-05T12:00:00.000Z",
+    likeCount: 10,
+    replyCount: 2,
+    repostCount: 1,
+    viewCount: 1000,
+  };
+}
+
+async function runSocialChecks() {
+  const directX = await runSocialAgent(
+    {
+      symbol: "GOAT",
+      tokenName: "Goat Token",
+      websiteUrl: "https://goat.example",
+      twitterUrl: "https://x.com/official_goat",
+    },
+    {
+      now,
+      fetchMetadata: async (url) => socialMetadata(url, "Goat docs audit github roadmap", ["https://x.com/official_goat"]),
+      fetchSocialData: async () => ({
+        providerLabel: "Fixture Social",
+        account: {
+          handle: "official_goat",
+          bio: "Official Goat Token. Website https://goat.example. Docs and audit available.",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          followers: 12000,
+          following: 120,
+          postCount: 520,
+          profileUrl: "https://x.com/official_goat",
+          websiteUrl: "https://goat.example",
+        },
+        officialPosts: [socialPost("Goat Token roadmap update docs audit github https://goat.example")],
+      }),
+    },
+  );
+  assert(getRaw<{ handle?: string }>(directX, "identity").handle === "official_goat", "User X link must be analyzed directly.");
+  assert(getRaw<number>(directX, "officialAccountConfidence") >= 0.75, "Direct official X link with website match must produce high identity confidence.");
+
+  const symbolOnly = await runSocialAgent(
+    { symbol: "GOAT" },
+    {
+      now,
+      fetchMetadata: async (url) => socialMetadata(url, "unused"),
+      fetchSocialData: async () => ({
+        providerLabel: "Fixture Social",
+        searchPosts: [socialPost("$GOAT community update")],
+      }),
+    },
+  );
+  assert(getRaw<number>(symbolOnly, "officialAccountConfidence") < 0.35, "Symbol-only social input must keep identity confidence low.");
+
+  const fakeOfficial = await runSocialAgent(
+    {
+      symbol: "GOAT",
+      tokenName: "Goat Token",
+      websiteUrl: "https://goat.example",
+      twitterUrl: "https://x.com/goat_airdrop_claim",
+    },
+    {
+      now,
+      fetchMetadata: async (url) => socialMetadata(url, "Goat community", ["https://x.com/goat_airdrop_claim"]),
+      fetchSocialData: async () => ({
+        providerLabel: "Fixture Social",
+        account: {
+          handle: "goat_airdrop_claim",
+          bio: "Official GOAT airdrop. Claim free tokens now.",
+          createdAt: "2026-06-25T00:00:00.000Z",
+          followers: 80,
+          following: 5,
+          postCount: 6,
+          profileUrl: "https://x.com/goat_airdrop_claim",
+          websiteUrl: "https://claim-goat.example",
+        },
+        officialPosts: [socialPost("Claim free GOAT airdrop, connect wallet now", ["https://claim-goat.example/connect"])],
+        replies: [
+          { text: "scam fake airdrop", authorCreatedAt: "2026-07-01T00:00:00.000Z" },
+          { text: "scam fake airdrop", authorCreatedAt: "2026-07-01T00:00:00.000Z" },
+          { text: "scam fake airdrop", authorCreatedAt: "2026-07-01T00:00:00.000Z" },
+        ],
+      }),
+    },
+  );
+  assert(fakeOfficial.riskScore >= 50, "Fake official account fixture must return high social risk.");
+  assert(fakeOfficial.recommendedAction === "manual_review" || fakeOfficial.recommendedAction === "avoid", "Fake official account fixture must not recommend hold.");
+
+  const phishing = await runSocialAgent(
+    {
+      symbol: "PHISH",
+      tokenName: "Phish Token",
+      websiteUrl: "https://phish.example",
+      twitterUrl: "https://x.com/phish_official",
+    },
+    {
+      now,
+      fetchMetadata: async (url) => socialMetadata(url, "Phish docs", ["https://x.com/phish_official"]),
+      fetchSocialData: async () => ({
+        providerLabel: "Fixture Social",
+        account: {
+          handle: "phish_official",
+          bio: "Official Phish Token https://phish.example",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          followers: 5000,
+          following: 80,
+          postCount: 300,
+          profileUrl: "https://x.com/phish_official",
+          websiteUrl: "https://phish.example",
+        },
+        officialPosts: [socialPost("Claim migration, connect wallet", ["https://phish-drainer.example/claim"])],
+      }),
+    },
+  );
+  assert(phishing.findings.some((finding) => finding.label === "Phishing and giveaway language" && (finding.severity === "critical" || finding.severity === "high")), "Phishing claim link fixture must be critical/high.");
+
+  const noProvider = await runSocialAgent(
+    {
+      symbol: "NOP",
+      tokenName: "No Provider Token",
+      websiteUrl: "https://nop.example",
+    },
+    {
+      now,
+      fetchMetadata: async (url) => socialMetadata(url, "No Provider docs audit", []),
+      fetchSocialData: async () => undefined,
+    },
+  );
+  assert(getRaw<{ available?: boolean }>(noProvider, "engagement").available === false, "Provider-unavailable fixture must not invent engagement metrics.");
+  assert(getRaw<boolean>(noProvider, "providerDataAvailable") === false, "Provider-unavailable fixture must expose missing provider data.");
+
+  const decision = runDecisionAgent({ results: [blueChipLikeResult(), fakeOfficial] });
+  assert(decision.recommendedAction === "watch" || decision.recommendedAction === "manual_review" || decision.recommendedAction === "avoid", "Decision Agent must include Social Agent as a supporting weighted signal.");
+}
+
+function blueChipLikeResult(): AgentResult {
+  return {
+    agent: "onchain",
+    status: "complete",
+    riskScore: 18,
+    score: 18,
+    riskLevel: "low",
+    verdict: "No major onchain flags",
+    summary: "Fixture low-risk onchain result.",
+    findings: [{ label: "Fixture onchain clean", severity: "low", detail: "No blocker." }],
+    sources: [{ label: "Fixture source", status: "connected" }],
+    dataQuality: {
+      mode: "live",
+      connectedSources: 1,
+      unavailableSources: 0,
+      mockSources: 0,
+      sourceCount: 1,
+      reliability: 0.8,
+      detail: "Fixture source.",
+    },
+    confidence: 0.78,
+    recommendedAction: "hold",
+    blockingReasons: [],
+    missingData: [],
+    createdAt: now.toISOString(),
+  };
+}
+
 async function main() {
   await runOnchainChecks();
   await runNewsChecks();
+  await runSocialChecks();
 
   console.log("Agent fixture checks passed.");
 }

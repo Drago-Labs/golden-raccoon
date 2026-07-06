@@ -8,9 +8,13 @@ const bodySchema = z.object({
   query: z.string().optional(),
   symbol: z.string().optional(),
   tokenName: z.string().optional(),
+  contractAddress: z.string().optional(),
   websiteUrl: z.string().optional(),
   twitterUrl: z.string().optional(),
   telegramUrl: z.string().optional(),
+  discordUrl: z.string().optional(),
+  dexScreenerPairUrl: z.string().optional(),
+  coingeckoId: z.string().optional(),
 });
 
 export async function POST(request: Request) {

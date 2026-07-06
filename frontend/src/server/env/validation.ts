@@ -82,7 +82,7 @@ export function getAgentReadiness() {
     social: {
       status: socialProviderReady ? "partial" : "unavailable",
       detail: socialProviderReady
-        ? "A social data provider is configured, but engagement ingestion still needs provider-specific wiring."
+        ? "A social data provider is configured for account, post, reply, engagement or search-based ingestion."
         : "Public metadata can be checked, but follower/reply/bot metrics require X API, Apify, Tavily or another provider.",
     },
     decision: {

@@ -63,8 +63,10 @@ async function runTokenSpecialists(identity: ReturnType<typeof resolveTokenIdent
       runSocialAgent({
         tokenName: identity.tokenName,
         symbol: identity.symbol,
+        contractAddress: identity.contractAddress,
         websiteUrl: identity.websiteUrl,
         twitterUrl: identity.twitterUrl,
+        telegramUrl: identity.telegramUrl,
       }),
     ),
   ]);
