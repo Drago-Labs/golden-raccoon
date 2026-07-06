@@ -76,7 +76,7 @@ export function TransactionPreview({ preview }: { preview: Preview }) {
       ) : null}
       {preview.audit ? (
         <div className="mt-3 rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white/48">
-          Server signing is disabled. {preview.audit.approvalRequired ? "Wallet approval is required." : "No wallet approval is required."}
+          Server cannot sign transactions. {preview.audit.approvalRequired ? "User wallet approval required before broadcast." : "No user wallet approval is required for this non-executable action."}
         </div>
       ) : null}
     </section>

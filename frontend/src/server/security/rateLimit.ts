@@ -6,6 +6,14 @@ type RateLimitOptions = {
   namespace: string;
 };
 
+export const rateLimitProfiles = {
+  tokenScan: { namespace: "scan:token", limit: 25, windowMs: 60_000 },
+  portfolioReview: { namespace: "agent:portfolio", limit: 30, windowMs: 60_000 },
+  executionPrepare: { namespace: "execute:prepare", limit: 20, windowMs: 60_000 },
+  historyRead: { namespace: "history", limit: 80, windowMs: 60_000 },
+  expensiveProviderCall: { namespace: "provider:expensive", limit: 10, windowMs: 60_000 },
+} satisfies Record<string, RateLimitOptions>;
+
 const buckets = globalThis as typeof globalThis & {
   __goldenRaccoonRateLimit?: Map<string, { count: number; resetAt: number }>;
 };
@@ -51,4 +59,8 @@ export function checkRateLimit(request: Request | NextRequest, options: RateLimi
   bucket.count += 1;
 
   return null;
+}
+
+export function checkRateLimitProfile(request: Request | NextRequest, profile: keyof typeof rateLimitProfiles) {
+  return checkRateLimit(request, rateLimitProfiles[profile]);
 }

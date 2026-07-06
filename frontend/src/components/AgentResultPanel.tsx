@@ -29,6 +29,13 @@ function getRawPreview(rawSignals?: Record<string, unknown>) {
     });
 }
 
+function getCriticalBlockers(result: AgentResult) {
+  return [
+    ...result.blockingReasons,
+    ...result.findings.filter((finding) => finding.severity === "critical").map((finding) => `${finding.label}: ${finding.detail}`),
+  ].slice(0, 4);
+}
+
 export function AgentResultPanel({ result }: { result: AgentResult }) {
   if (!isAgentResultForUi(result)) {
     return (
@@ -48,6 +55,9 @@ export function AgentResultPanel({ result }: { result: AgentResult }) {
     | undefined;
   const topFindings = result.findings.slice(0, 5);
   const rawPreview = getRawPreview(result.rawSignals);
+  const criticalBlockers = getCriticalBlockers(result);
+  const hasMockData = result.dataQuality.mockSources > 0 || result.sources.some((source) => source.status === "mock");
+  const manualReview = result.recommendedAction === "manual_review" || result.status === "manual_review_required";
 
   return (
     <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -58,6 +68,7 @@ export function AgentResultPanel({ result }: { result: AgentResult }) {
         </div>
         <div className="flex flex-wrap gap-2">
           <span className="rounded-full border border-white/10 px-3 py-1 text-sm text-white/58">{result.score}/100</span>
+          <span className="rounded-full border border-white/10 px-3 py-1 text-sm capitalize text-white/58">{result.riskLevel} risk</span>
           <span className="rounded-full border border-white/10 px-3 py-1 text-sm capitalize text-white/58">
             {result.recommendedAction.replaceAll("_", " ")}
           </span>
@@ -67,6 +78,31 @@ export function AgentResultPanel({ result }: { result: AgentResult }) {
         </div>
       </div>
       <div className="mt-3 text-sm leading-6 text-white/56">{result.summary}</div>
+
+      {criticalBlockers.length > 0 ? (
+        <div className="mt-4 rounded-xl border border-red-300/25 bg-red-500/10 p-3">
+          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-red-200">Critical blockers</div>
+          <div className="mt-2 space-y-2">
+            {criticalBlockers.map((item) => (
+              <div key={item} className="text-xs leading-5 text-red-100/82">
+                {item}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {manualReview ? (
+        <div className="mt-4 rounded-xl border border-[#d9a441]/25 bg-[#d9a441]/10 p-3 text-xs leading-5 text-[#f2c86d]">
+          Manual review required. This result shows risks, evidence, missing data and confidence; it is not a buy/sell guarantee.
+        </div>
+      ) : null}
+
+      {hasMockData ? (
+        <div className="mt-4 rounded-xl border border-white/10 bg-white/6 p-3 text-xs leading-5 text-white/56">
+          Demo/mock source data is explicitly marked in the source list and is not hidden.
+        </div>
+      ) : null}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <div className="rounded-xl bg-white/6 p-3">
@@ -85,6 +121,8 @@ export function AgentResultPanel({ result }: { result: AgentResult }) {
             {result.sources.slice(0, 4).map((source) => (
               <div key={source.label} className="text-xs leading-5 text-white/54">
                 {source.label}: {source.status}
+                {source.checkedAt ? `, checked ${source.checkedAt}` : ""}
+                {typeof source.reliability === "number" ? `, ${Math.round(source.reliability * 100)}% confidence` : ""}
               </div>
             ))}
           </div>
@@ -106,6 +144,12 @@ export function AgentResultPanel({ result }: { result: AgentResult }) {
       </div>
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <div className="rounded-xl bg-white/6 p-3">
+          <div className="text-xs text-white/38">Risk and confidence</div>
+          <div className="mt-2 text-xs leading-5 text-white/54">
+            Risk: {result.riskScore}/100 ({result.riskLevel}). Confidence: {Math.round(result.confidence * 100)}%. Data quality: {result.dataQuality.mode}.
+          </div>
+        </div>
         <div className="rounded-xl bg-white/6 p-3">
           <div className="text-xs text-white/38">Confidence explanation</div>
           <div className="mt-2 text-xs leading-5 text-white/54">

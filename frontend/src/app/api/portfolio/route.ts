@@ -3,9 +3,10 @@ import { z } from "zod";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { getPortfolioSnapshot } from "@/server/portfolio/getPortfolio";
 import { checkRateLimit } from "@/server/security/rateLimit";
+import { walletAddressSchema } from "@/server/security/inputValidation";
 
 const querySchema = z.object({
-  walletAddress: z.string().optional(),
+  walletAddress: walletAddressSchema,
 });
 
 export async function GET(request: NextRequest) {

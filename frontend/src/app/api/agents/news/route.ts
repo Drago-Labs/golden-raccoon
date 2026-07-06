@@ -3,14 +3,15 @@ import { z } from "zod";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { runNewsAgent } from "@/server/agents/news";
 import { checkRateLimit } from "@/server/security/rateLimit";
+import { chainIdSchema, contractAddressSchema, externalUrlSchema, tokenSymbolSchema } from "@/server/security/inputValidation";
 
 const bodySchema = z.object({
-  tokenName: z.string().optional(),
-  symbol: z.string().optional(),
-  contractAddress: z.string().optional(),
-  projectName: z.string().optional(),
-  websiteUrl: z.string().url().optional(),
-  chain: z.string().optional(),
+  tokenName: z.string().min(1).max(120).optional(),
+  symbol: tokenSymbolSchema,
+  contractAddress: contractAddressSchema,
+  projectName: z.string().min(1).max(120).optional(),
+  websiteUrl: externalUrlSchema,
+  chain: chainIdSchema,
 });
 
 export async function POST(request: Request) {

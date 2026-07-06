@@ -112,6 +112,12 @@ export function AgentsNetwork() {
   const [selectedResult, setSelectedResult] = useState<AgentResult | null>(null);
   const completedCount = Object.keys(results).length;
   const warningCount = Object.values(results).filter((result) => result?.status === "warning").length;
+  const selectedCriticalBlockers = selectedResult
+    ? [
+        ...selectedResult.blockingReasons,
+        ...selectedResult.findings.filter((finding) => finding.severity === "critical").map((finding) => `${finding.label}: ${finding.detail}`),
+      ].slice(0, 4)
+    : [];
 
   async function runAgent(agent: AgentKey) {
     setLoading((current) => ({ ...current, [agent]: true }));
@@ -214,6 +220,11 @@ export function AgentsNetwork() {
                       <div className="text-sm font-semibold">{result.verdict}</div>
                       <div className="text-sm text-white/44">{result.score}/100</div>
                     </div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-white/40">
+                      <span>{result.riskLevel} risk</span>
+                      <span>{Math.round(result.confidence * 100)}% confidence</span>
+                      {result.recommendedAction === "manual_review" ? <span>manual review</span> : null}
+                    </div>
                     <p className="mt-2 line-clamp-2 text-sm leading-6 text-white/46">{result.summary}</p>
                   </button>
                 ) : (
@@ -246,8 +257,9 @@ export function AgentsNetwork() {
 
             <div className="mt-6 grid gap-3 sm:grid-cols-3">
               <div className="rounded-2xl bg-white/[.055] p-4">
-                <div className="text-sm text-white/42">Score</div>
+                <div className="text-sm text-white/42">Risk</div>
                 <div className="mt-1 text-3xl font-semibold">{selectedResult.score}</div>
+                <div className="mt-1 text-xs capitalize text-white/38">{selectedResult.riskLevel}</div>
               </div>
               <div className="rounded-2xl bg-white/[.055] p-4">
                 <div className="text-sm text-white/42">Confidence</div>
@@ -258,6 +270,25 @@ export function AgentsNetwork() {
                 <div className="mt-2 text-sm font-semibold">{selectedResult.recommendedAction.replaceAll("_", " ")}</div>
               </div>
             </div>
+
+            {selectedCriticalBlockers.length > 0 ? (
+              <div className="mt-4 rounded-2xl border border-red-300/25 bg-red-500/10 p-4">
+                <div className="text-sm font-semibold text-red-100">Critical blockers</div>
+                <div className="mt-2 space-y-2">
+                  {selectedCriticalBlockers.map((item) => (
+                    <div key={item} className="text-sm leading-6 text-red-100/78">
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {selectedResult.recommendedAction === "manual_review" ? (
+              <div className="mt-4 rounded-2xl border border-[#d9a441]/25 bg-[#d9a441]/10 p-4 text-sm leading-6 text-[#f2c86d]">
+                Manual review is required. Review blockers, missing data, source freshness and confidence before taking action.
+              </div>
+            ) : null}
 
             {selectedResult.dataQuality ? (
               <div className="mt-4 rounded-2xl border border-white/10 bg-white/[.045] p-4">
@@ -273,6 +304,11 @@ export function AgentsNetwork() {
                   <div className="rounded-xl bg-black/20 p-3 text-sm text-white/52">Unavailable: {selectedResult.dataQuality.unavailableSources}</div>
                   <div className="rounded-xl bg-black/20 p-3 text-sm text-white/52">Mock: {selectedResult.dataQuality.mockSources}</div>
                 </div>
+                {selectedResult.dataQuality.mockSources > 0 ? (
+                  <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/52">
+                    Demo/mock data is visible here and should not be treated as live production evidence.
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -293,6 +329,25 @@ export function AgentsNetwork() {
               </div>
 
               <div>
+                <div className="text-sm uppercase tracking-[0.16em] text-white/34">Missing data</div>
+                <div className="mt-3 space-y-2">
+                  {selectedResult.missingData.length > 0 ? (
+                    selectedResult.missingData.map((item) => (
+                      <div key={`${item.field}-${item.reason}`} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-semibold">{item.field}</div>
+                          <div className="text-xs text-white/38">{item.impact}</div>
+                        </div>
+                        <div className="mt-2 text-sm leading-6 text-white/48">{item.reason}</div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/44">No material missing data reported.</div>
+                  )}
+                </div>
+              </div>
+
+              <div>
                 <div className="text-sm uppercase tracking-[0.16em] text-white/34">Sources</div>
                 <div className="mt-3 space-y-2">
                   {selectedResult.sources.map((source) => (
@@ -302,6 +357,10 @@ export function AgentsNetwork() {
                         <div className="text-xs text-white/38">{source.status}</div>
                       </div>
                       {source.detail ? <div className="mt-2 text-sm leading-6 text-white/48">{source.detail}</div> : null}
+                      <div className="mt-2 text-xs text-white/34">
+                        {source.checkedAt ? `Freshness: checked ${source.checkedAt}` : "Freshness: unknown"}
+                        {typeof source.reliability === "number" ? ` · Confidence: ${Math.round(source.reliability * 100)}%` : ""}
+                      </div>
                     </div>
                   ))}
                 </div>

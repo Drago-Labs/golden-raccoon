@@ -7,6 +7,14 @@ export type UrlSafetyResult = {
   redirectLimit: number;
 };
 
+export const externalFetchSandboxRules = {
+  allowPrivateNetwork: false,
+  allowedProtocols: ["https:", "http:"],
+  redirectLimit: 3,
+  maxResponseBytes: 1_000_000,
+  allowedContentTypes: ["text/html", "application/json", "application/rss+xml", "application/xml", "text/xml"],
+};
+
 const privateIpPatterns = [
   /^127\./,
   /^10\./,
@@ -98,4 +106,20 @@ export function evaluateUrlSafety(value: string, officialHostname?: string, redi
       redirectLimit,
     };
   }
+}
+
+export function assertExternalFetchAllowed(url: string, contentType?: string, responseBytes?: number) {
+  const result = evaluateUrlSafety(url, undefined, externalFetchSandboxRules.redirectLimit);
+  const contentAllowed = !contentType || externalFetchSandboxRules.allowedContentTypes.some((allowed) => contentType.toLowerCase().includes(allowed));
+  const sizeAllowed = typeof responseBytes !== "number" || responseBytes <= externalFetchSandboxRules.maxResponseBytes;
+
+  return {
+    allowed: result.safe && contentAllowed && sizeAllowed,
+    issues: [
+      ...result.issues,
+      ...(contentAllowed ? [] : ["content type not allowed"]),
+      ...(sizeAllowed ? [] : ["response size limit exceeded"]),
+    ],
+    rules: externalFetchSandboxRules,
+  };
 }

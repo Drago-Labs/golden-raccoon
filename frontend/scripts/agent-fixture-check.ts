@@ -10,10 +10,19 @@ import { createAgentRunRecord, getStorageHealth } from "../src/server/storage";
 import { getCachePolicyMetadata } from "../src/server/cache/strategy";
 import { getProviderTimeoutBudget, resolveProviderConflict, runProviderFallbacks } from "../src/server/providers/adapter";
 import { getRuntimeModeHealth } from "../src/server/env/runtimeMode";
-import { evaluateUrlSafety } from "../src/server/security/urlSafety";
+import { assertExternalFetchAllowed, evaluateUrlSafety } from "../src/server/security/urlSafety";
 import { getPortfolioHardeningReport } from "../src/server/portfolio/hardening";
 import { getPortfolioRiskSignals } from "../src/server/portfolio/riskScoring";
 import { createAgentRunId, getRunPartialStatus, markRunCancelled } from "../src/server/agents/orchestrationState";
+import { createAgentLog, redactSecrets } from "../src/server/observability/logging";
+import { evaluateAlertThresholds } from "../src/server/observability/alerts";
+import { getResultMetrics } from "../src/server/observability/metrics";
+import { goldenFixtureSuite, assertGoldenScore } from "../src/server/evaluation/goldenFixtures";
+import { compareReplaySnapshot, createReplaySnapshot } from "../src/server/evaluation/replay";
+import { criticalFindingDoesNotLowerRisk, missingDataDoesNotIncreaseConfidence, noAgentResultRequiresManualReview, reliableSourcesDoNotLowerConfidence } from "../src/server/evaluation/properties";
+import { hashSourceSnapshot } from "../src/server/storage";
+import { rateLimitProfiles } from "../src/server/security/rateLimit";
+import { contractAddressSchema, tokenSymbolSchema, walletAddressSchema } from "../src/server/security/inputValidation";
 import type { AgentResult, PortfolioSnapshot, TokenHolding } from "../src/server/types";
 import { POST as confirmExecution } from "../src/app/api/execute/confirm/route";
 
@@ -670,6 +679,10 @@ async function runExecutionChecks() {
   assert(runRecord.inputSnapshot?.symbol === "MEME", "Agent run history must store input snapshot.");
   assert(Array.isArray(runRecord.sourceStatuses) && runRecord.sourceStatuses.length > 0, "Agent run history must store source status snapshots.");
   assert(Array.isArray(runRecord.inputSnapshot?.resultSnapshots), "Agent run history must store result raw/source snapshots.");
+  assert(
+    Array.isArray(runRecord.inputSnapshot?.resultSnapshots) && typeof runRecord.inputSnapshot.resultSnapshots[0]?.sourceSnapshotHash === "string",
+    "Agent run history must store immutable source snapshot hash.",
+  );
 }
 
 async function runReadinessChecks() {
@@ -680,6 +693,12 @@ async function runReadinessChecks() {
 
   const unsafeUrl = evaluateUrlSafety("http://127.0.0.1/admin");
   assert(unsafeUrl.safe === false && unsafeUrl.issues.includes("private or localhost target blocked"), "URL safety guard must block localhost/private targets.");
+  assert(assertExternalFetchAllowed("file:///etc/passwd").allowed === false, "External fetch sandbox must reject file protocol.");
+  assert(assertExternalFetchAllowed("https://example.com/feed", "application/octet-stream", 12).allowed === false, "External fetch sandbox must reject unsupported content type.");
+  assert(walletAddressSchema.safeParse("0x0000000000000000000000000000000000000001").success, "Wallet validation must accept EVM addresses.");
+  assert(contractAddressSchema.safeParse("not-a-contract").success === false, "Contract validation must reject invalid addresses.");
+  assert(tokenSymbolSchema.safeParse("A".repeat(40)).success === false, "Symbol validation must enforce length.");
+  assert(rateLimitProfiles.tokenScan.namespace !== rateLimitProfiles.executionPrepare.namespace, "Rate limit profiles must be separated by run type.");
 
   const symbolOnlyIdentity = resolveTokenIdentity({ symbol: "GOAT" });
   assert(symbolOnlyIdentity.confidenceLabel === "low", "Symbol-only identity must remain low confidence.");
@@ -777,6 +796,32 @@ async function runReadinessChecks() {
   const partialStatus = getRunPartialStatus([unavailableAgentResult("news"), blueChipLikeResult()]);
   assert(partialStatus.partial === true && partialStatus.userVisible === true, "Orchestration partial status must be user-visible when an agent is unavailable.");
   assert(markRunCancelled(runId).status === "cancelled", "Run cancellation contract must expose cancelled status.");
+
+  const log = createAgentLog(blueChipLikeResult(), "Bearer sk-test API_KEY=secret");
+  assert(log.agent === "onchain" && log.sourceCount > 0, "Structured logging must include agent and source count.");
+  assert(!redactSecrets("Bearer sk-abc123456789012345 api_key=secret").includes("abc123456789012345"), "Secret sanitizer must redact bearer/API key values.");
+
+  const metrics = getResultMetrics([blueChipLikeResult(), unavailableAgentResult("news")]);
+  assert(metrics.providerFailureRate > 0 && metrics.agentSuccessRate > 0, "Metrics must expose provider failure and success rates.");
+  assert(evaluateAlertThresholds({ providerFailureRate: 50, manualReviewRate: 10 }).providerFailureSpike === true, "Alert threshold must flag provider failure spikes.");
+
+  assert(goldenFixtureSuite.includes("honeypot"), "Golden fixture suite must include honeypot case.");
+  assert(assertGoldenScore("honeypot", 88), "Regression snapshot must accept expected honeypot score range.");
+  assert(noAgentResultRequiresManualReview(), "Property test must enforce no result -> manual_review.");
+  assert(criticalFindingDoesNotLowerRisk(blueChipLikeResult(), agentResult({
+    agent: "onchain",
+    riskScore: 82,
+    verdict: "Critical",
+    summary: "Critical fixture.",
+    findings: [{ label: "Critical fixture", severity: "critical", detail: "Critical blocker." }],
+    recommendedAction: "avoid",
+  })), "Critical finding property must not lower risk.");
+  assert(missingDataDoesNotIncreaseConfidence(blueChipLikeResult(), unavailableAgentResult("news")), "Missing data property must not increase confidence.");
+  assert(reliableSourcesDoNotLowerConfidence(unavailableAgentResult("news"), blueChipLikeResult()), "Reliable source property must not lower confidence when conflict-free.");
+
+  const snapshotHash = hashSourceSnapshot({ sources: blueChipLikeResult().sources, rawSignals: blueChipLikeResult().rawSignals });
+  const replaySnapshot = createReplaySnapshot(blueChipLikeResult(), snapshotHash);
+  assert(compareReplaySnapshot(replaySnapshot, blueChipLikeResult()).compatible, "Replay snapshot must compare compatible deterministic results.");
 }
 
 async function runProviderReliabilityChecks() {

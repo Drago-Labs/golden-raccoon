@@ -94,6 +94,32 @@ function createRecordId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
+export function hashSourceSnapshot(value: unknown) {
+  const serialized = stableStringify(value);
+  let hash = 5381;
+
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash = (hash * 33) ^ serialized.charCodeAt(index);
+  }
+
+  return `snap_${(hash >>> 0).toString(16)}`;
+}
+
 export function getStorageHealth(): StorageHealth {
   const supabaseConfigured = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -148,6 +174,12 @@ export function createAgentRunRecord(input: CreateAgentRunInput): AgentRunRecord
     agent: result.agent,
     rawSignals: result.rawSignals ?? {},
     sources: result.sources,
+    sourceSnapshotHash: hashSourceSnapshot({
+      agent: result.agent,
+      sources: result.sources,
+      rawSignals: result.rawSignals ?? {},
+    }),
+    immutable: true,
     decisionExplanation: result.agent === "decision" ? result.rawSignals?.explanation : undefined,
   }));
   const record: AgentRunRecord = {

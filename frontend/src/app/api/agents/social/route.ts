@@ -3,18 +3,19 @@ import { z } from "zod";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { runSocialAgent } from "@/server/agents/social";
 import { checkRateLimit } from "@/server/security/rateLimit";
+import { contractAddressSchema, externalUrlSchema, socialHandleSchema, tokenSymbolSchema } from "@/server/security/inputValidation";
 
 const bodySchema = z.object({
-  query: z.string().optional(),
-  symbol: z.string().optional(),
-  tokenName: z.string().optional(),
-  contractAddress: z.string().optional(),
-  websiteUrl: z.string().optional(),
-  twitterUrl: z.string().optional(),
-  telegramUrl: z.string().optional(),
-  discordUrl: z.string().optional(),
-  dexScreenerPairUrl: z.string().optional(),
-  coingeckoId: z.string().optional(),
+  query: z.union([socialHandleSchema, z.string().min(1).max(80)]).optional(),
+  symbol: tokenSymbolSchema,
+  tokenName: z.string().min(1).max(120).optional(),
+  contractAddress: contractAddressSchema,
+  websiteUrl: externalUrlSchema,
+  twitterUrl: externalUrlSchema,
+  telegramUrl: externalUrlSchema,
+  discordUrl: externalUrlSchema,
+  dexScreenerPairUrl: externalUrlSchema,
+  coingeckoId: z.string().min(1).max(80).optional(),
 });
 
 export async function POST(request: Request) {

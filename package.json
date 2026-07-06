@@ -8,7 +8,9 @@
     "deploy:check": "node scripts/check-deploy-readiness.mjs",
     "test:agents": "npm --prefix frontend run test:agents",
     "smoke": "node scripts/smoke-api.mjs",
-    "verify": "npm run deploy:check && npm run test:agents && npm run lint && npm run build"
+    "quality:gate": "npm run deploy:check && npm run test:agents && npm run lint && npm run build",
+    "quality:gate:full": "npm run quality:gate && npm run smoke",
+    "verify": "npm run quality:gate"
   },
   "dependencies": {
     "next": "16.2.9",

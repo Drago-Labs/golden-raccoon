@@ -3,10 +3,11 @@ import { z } from "zod";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { runOnchainAgent } from "@/server/agents/onchain";
 import { checkRateLimit } from "@/server/security/rateLimit";
+import { chainIdSchema, contractAddressSchema } from "@/server/security/inputValidation";
 
 const bodySchema = z.object({
-  chain: z.string().optional(),
-  contractAddress: z.string().optional(),
+  chain: chainIdSchema,
+  contractAddress: contractAddressSchema,
 });
 
 export async function POST(request: Request) {

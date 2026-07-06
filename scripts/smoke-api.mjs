@@ -23,7 +23,8 @@ const checks = [
     name: "onchain invalid address",
     path: "/api/agents/onchain",
     init: postJson({ chain: "base", contractAddress: "not-a-contract" }),
-    validate: (body) => body.agent === "onchain" && body.recommendedAction === "avoid" && body.riskLevel === "critical",
+    expectedStatus: 400,
+    validate: (body) => Boolean(body.error),
   },
   {
     name: "news symbol-only low confidence",
@@ -67,7 +68,11 @@ const checks = [
 for (const check of checks) {
   const response = await fetch(`${baseUrl}${check.path}`, check.init);
 
-  if (!response.ok) {
+  if (check.expectedStatus && response.status !== check.expectedStatus) {
+    throw new Error(`${check.name} failed with HTTP ${response.status}, expected ${check.expectedStatus}`);
+  }
+
+  if (!check.expectedStatus && !response.ok) {
     throw new Error(`${check.name} failed with HTTP ${response.status}`);
   }
 
