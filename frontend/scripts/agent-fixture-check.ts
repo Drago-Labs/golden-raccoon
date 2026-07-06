@@ -348,16 +348,25 @@ async function runSocialChecks() {
 }
 
 function blueChipLikeResult(): AgentResult {
-  return {
+  return agentResult({
     agent: "onchain",
-    status: "complete",
     riskScore: 18,
-    score: 18,
-    riskLevel: "low",
     verdict: "No major onchain flags",
     summary: "Fixture low-risk onchain result.",
     findings: [{ label: "Fixture onchain clean", severity: "low", detail: "No blocker." }],
-    sources: [{ label: "Fixture source", status: "connected" }],
+    recommendedAction: "hold",
+    confidence: 0.78,
+  });
+}
+
+function agentResult(input: Partial<AgentResult> & Pick<AgentResult, "agent" | "riskScore" | "verdict" | "summary">): AgentResult {
+  const riskScore = input.riskScore;
+  const riskLevel = riskScore >= 75 ? "critical" : riskScore >= 50 ? "high" : riskScore >= 25 ? "medium" : "low";
+
+  return {
+    status: riskScore >= 50 ? "warning" : "complete",
+    findings: [],
+    sources: [{ label: `${input.agent} fixture source`, status: "connected", checkedAt: now.toISOString(), reliability: 0.8 }],
     dataQuality: {
       mode: "live",
       connectedSources: 1,
@@ -367,18 +376,102 @@ function blueChipLikeResult(): AgentResult {
       reliability: 0.8,
       detail: "Fixture source.",
     },
-    confidence: 0.78,
-    recommendedAction: "hold",
+    confidence: 0.72,
+    recommendedAction: riskScore >= 75 ? "avoid" : riskScore >= 50 ? "manual_review" : "hold",
     blockingReasons: [],
     missingData: [],
+    rawSignals: {},
     createdAt: now.toISOString(),
+    ...input,
+    riskScore,
+    score: input.score ?? riskScore,
+    riskLevel: input.riskLevel ?? riskLevel,
   };
+}
+
+function unavailableAgentResult(agent: AgentResult["agent"]): AgentResult {
+  return agentResult({
+    agent,
+    status: "unavailable",
+    riskScore: 42,
+    verdict: `${agent} unavailable`,
+    summary: "Fixture unavailable source.",
+    findings: [{ label: "Missing source", severity: "medium", detail: "Provider unavailable." }],
+    sources: [{ label: `${agent} fixture source`, status: "unavailable", checkedAt: now.toISOString(), reliability: 0.1 }],
+    confidence: 0.18,
+    recommendedAction: "manual_review",
+    missingData: [{ field: "fixture source", reason: "Provider unavailable.", impact: "medium", requiredFor: "fixture coverage" }],
+  });
+}
+
+async function runDecisionChecks() {
+  const noResults = runDecisionAgent({ results: [] });
+  assert(noResults.recommendedAction === "manual_review", "Decision with no agent results must return manual_review.");
+
+  const onchainCritical = runDecisionAgent({
+    results: [
+      agentResult({
+        agent: "onchain",
+        riskScore: 92,
+        verdict: "Critical onchain risk",
+        summary: "Honeypot cannot sell fixture.",
+        findings: [{ label: "Critical contract flags", severity: "critical", detail: "Honeypot and cannot sell." }],
+        blockingReasons: ["Critical finding: Honeypot"],
+        recommendedAction: "avoid",
+      }),
+      agentResult({ agent: "news", riskScore: 12, verdict: "Positive news", summary: "Listing catalyst.", rawSignals: { positiveCatalysts: [{ title: "Listing" }] } }),
+      agentResult({ agent: "social", riskScore: 14, verdict: "Positive community", summary: "Community active." }),
+    ],
+  });
+  assert(onchainCritical.recommendedAction === "avoid" || onchainCritical.recommendedAction === "manual_review", "Onchain critical must force avoid/manual_review.");
+
+  const lowCoverage = runDecisionAgent({
+    results: [unavailableAgentResult("onchain"), unavailableAgentResult("news"), unavailableAgentResult("social")],
+  });
+  assert(lowCoverage.recommendedAction !== "hold", "Low/no data coverage must not return hold.");
+
+  const highExposure = runDecisionAgent({
+    context: {
+      mode: "holding_review",
+      userAlreadyOwnsToken: true,
+      holdingAllocationPercent: 48,
+      stableReservePercent: 4,
+    },
+    results: [
+      agentResult({
+        agent: "portfolio",
+        riskScore: 68,
+        verdict: "High portfolio exposure",
+        summary: "Wallet has high allocation to one risky token.",
+        findings: [{ label: "Largest holding", severity: "high", detail: "Risky token is 48% of wallet." }],
+        rawSignals: { portfolioRisk: { largestHoldingPercent: 48, stableReservePercent: 4 } },
+        recommendedAction: "reduce_exposure",
+      }),
+      agentResult({
+        agent: "onchain",
+        riskScore: 64,
+        verdict: "High onchain risk",
+        summary: "Liquidity exit risk elevated.",
+        findings: [{ label: "Liquidity", severity: "high", detail: "Low liquidity." }],
+        recommendedAction: "manual_review",
+      }),
+    ],
+  });
+  assert(highExposure.recommendedAction === "reduce_exposure" || highExposure.recommendedAction === "swap_to_stable", "High exposure plus high risk must recommend reduce/swap.");
+
+  const explanation = getRaw<{ evidence?: string[]; missingData?: string[] }>(highExposure, "explanation");
+  assert(Array.isArray(explanation.evidence) && explanation.evidence.length > 0, "Decision output must include top reasons/evidence.");
+
+  const missingDataDecision = runDecisionAgent({ results: [blueChipLikeResult()] });
+  const missingData = getRaw<{ missingData?: string[] }>(missingDataDecision, "explanation").missingData;
+  assert(Array.isArray(missingData) && missingData.length > 0, "Decision output must include missing data when specialist agents are absent.");
 }
 
 async function main() {
   await runOnchainChecks();
   await runNewsChecks();
   await runSocialChecks();
+  await runDecisionChecks();
 
   console.log("Agent fixture checks passed.");
 }

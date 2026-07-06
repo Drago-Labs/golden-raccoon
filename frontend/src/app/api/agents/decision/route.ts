@@ -78,6 +78,44 @@ const agentResultSchema = z.object({
 
 const bodySchema = z.object({
   results: z.array(agentResultSchema).optional(),
+  context: z
+    .object({
+      mode: z.enum(["portfolio_review", "token_scan", "pre_buy_check", "holding_review", "execution_prepare"]).optional(),
+      userAlreadyOwnsToken: z.boolean().optional(),
+      targetExposurePercent: z.number().min(0).max(100).optional(),
+      holdingAllocationPercent: z.number().min(0).max(100).optional(),
+      stableReservePercent: z.number().min(0).max(100).optional(),
+      walletAddress: z.string().optional(),
+      tokenSymbol: z.string().optional(),
+    })
+    .optional(),
+  executionReadiness: z
+    .object({
+      feasible: z.boolean().optional(),
+      actionAllowed: z.boolean().optional(),
+      blockedReason: z.string().optional(),
+      simulationStatus: z.enum(["not_required", "pending", "passed", "failed", "unavailable"]).optional(),
+    })
+    .optional(),
+  userRules: z
+    .object({
+      walletAddress: z.string().optional(),
+      maxRiskScore: z.number().min(0).max(100).optional(),
+      maxTradePercent: z.number().min(0).max(100).optional(),
+      maxMemeExposurePercent: z.number().min(0).max(100).optional(),
+      autoExecute: z.boolean().optional(),
+      createdAt: z.string().optional(),
+    })
+    .optional(),
+  userRiskProfile: z
+    .object({
+      mode: z.enum(["conservative", "balanced", "aggressive", "custom"]).optional(),
+      maxRiskScore: z.number().min(0).max(100).optional(),
+      maxPortfolioRiskScore: z.number().min(0).max(100).optional(),
+      maxSingleTokenExposurePercent: z.number().min(0).max(100).optional(),
+      minStableReservePercent: z.number().min(0).max(100).optional(),
+    })
+    .optional(),
 });
 
 export async function POST(request: Request) {
@@ -94,5 +132,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  return withCacheHeaders(NextResponse.json(runDecisionAgent({ results: parsed.data.results as AgentResult[] | undefined })), "decision");
+  return withCacheHeaders(
+    NextResponse.json(
+      runDecisionAgent({
+        results: parsed.data.results as AgentResult[] | undefined,
+        context: parsed.data.context,
+        executionReadiness: parsed.data.executionReadiness,
+        userRules: parsed.data.userRules,
+        userRiskProfile: parsed.data.userRiskProfile,
+      }),
+    ),
+    "decision",
+  );
 }
