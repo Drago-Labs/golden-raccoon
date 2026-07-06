@@ -49,6 +49,31 @@ type TokenHolder = {
   percent?: string | number;
 };
 
+type LpHolder = TokenHolder & {
+  balance?: string | number;
+};
+
+type SimulationSignals = {
+  checked: boolean;
+  provider: "security_flags" | "unavailable";
+  buyTaxPercent?: number;
+  sellTaxPercent?: number;
+  cannotSell?: boolean;
+  liquidityUsd?: number;
+  estimatedSlippageRisk?: "low" | "medium" | "high" | "unavailable";
+  detail: string;
+};
+
+type OnchainScoreBreakdown = {
+  contractSecurity: number;
+  liquidityExit: number;
+  holderConcentration: number;
+  creatorBehavior: number;
+  marketAnomaly: number;
+  sourceQuality: number;
+  finalScore: number;
+};
+
 type CreatorActivity = {
   creatorAddress?: string;
   ownerAddress?: string;
@@ -146,6 +171,15 @@ function parsePercent(value?: string) {
   }
 
   return parsed > 1 ? parsed : parsed * 100;
+}
+
+function severityRiskScore(severity: AgentFinding["severity"]) {
+  return {
+    low: 14,
+    medium: 42,
+    high: 68,
+    critical: 94,
+  }[severity];
 }
 
 function getCreatorAddress(security?: GoPlusTokenSecurity) {
@@ -301,6 +335,7 @@ function buildSecurityFindings(security?: GoPlusTokenSecurity): AgentFinding[] {
     ["Honeypot", getStringField(security, "is_honeypot")],
     ["Cannot sell all", getStringField(security, "cannot_sell_all")],
     ["Blacklist", getStringField(security, "is_blacklisted")],
+    ["Trading paused", getStringField(security, "trading_cooldown")],
     ["Owner balance change", getStringField(security, "owner_change_balance")],
   ].filter(([, value]) => isFlagged(value));
   const permissionFlags = [
@@ -323,7 +358,7 @@ function buildSecurityFindings(security?: GoPlusTokenSecurity): AgentFinding[] {
     },
     {
       label: "Buy/sell tax",
-      severity: buyTax >= 10 || sellTax >= 10 ? "high" : buyTax > 0 || sellTax > 0 ? "medium" : "low",
+      severity: buyTax >= 25 || sellTax >= 25 ? "critical" : buyTax >= 10 || sellTax >= 10 ? "high" : buyTax > 0 || sellTax > 0 ? "medium" : "low",
       detail: `Buy tax ${buyTax.toFixed(2)}%, sell tax ${sellTax.toFixed(2)}%.`,
     },
   ];
@@ -335,6 +370,39 @@ function getHolderPercent(holder: TokenHolder) {
 
 function isLockedOrContractHolder(holder: TokenHolder) {
   return isFlagged(String(holder.is_locked ?? "")) || isFlagged(String(holder.is_contract ?? ""));
+}
+
+function isBurnAddress(address?: string) {
+  const normalized = address?.toLowerCase();
+
+  return (
+    normalized === "0x0000000000000000000000000000000000000000" ||
+    normalized === "0x000000000000000000000000000000000000dead" ||
+    normalized === "0x0000000000000000000000000000000000000001"
+  );
+}
+
+function getLpHolders(security?: GoPlusTokenSecurity) {
+  const rawLpHolders = getArrayField<LpHolder>(security, "lp_holders");
+  const rawDex = getArrayField<{ liquidity?: string | number; pair?: string }>(security, "dex");
+
+  return rawLpHolders
+    .map((holder) => ({
+      ...holder,
+      percent: getHolderPercent(holder),
+    }))
+    .filter((holder): holder is LpHolder & { percent: number } => typeof holder.percent === "number")
+    .sort((a, b) => b.percent - a.percent)
+    .concat(
+      rawDex.length > 0 && rawLpHolders.length === 0
+        ? [
+            {
+              address: rawDex[0]?.pair,
+              percent: 0,
+            },
+          ]
+        : [],
+    );
 }
 
 function buildHolderFindings(security?: GoPlusTokenSecurity): AgentFinding[] {
@@ -376,6 +444,43 @@ function buildHolderFindings(security?: GoPlusTokenSecurity): AgentFinding[] {
         unlockedHolders.length === 0
           ? "Holder list is mostly contract/locked addresses, so concentration needs manual review."
           : `${unlockedHolders.length} unlocked/non-contract holder${unlockedHolders.length === 1 ? "" : "s"} were included in concentration scoring.`,
+    },
+  ];
+}
+
+function buildLpFindings(security?: GoPlusTokenSecurity, pairs?: DexScreenerPair[]): AgentFinding[] {
+  const lpHolders = getLpHolders(security);
+  const bestPair = getBestPair(pairs);
+  const liquidityUsd = bestPair?.liquidity?.usd ?? 0;
+
+  if (lpHolders.length === 0) {
+    return [
+      {
+        label: "LP lock and burn",
+        severity: liquidityUsd > 0 ? "medium" : "high",
+        detail:
+          liquidityUsd > 0
+            ? "DEX liquidity exists, but LP lock/burn holder data is unavailable."
+            : "LP lock/burn data and usable DEX liquidity are unavailable.",
+        interpretation: "Unlocked or unknown LP ownership can increase rug-pull risk and needs manual review.",
+      },
+    ];
+  }
+
+  const lockedPercent = lpHolders.filter((holder) => isLockedOrContractHolder(holder)).reduce((total, holder) => total + holder.percent, 0);
+  const burnedPercent = lpHolders.filter((holder) => isBurnAddress(holder.address)).reduce((total, holder) => total + holder.percent, 0);
+  const protectedPercent = lockedPercent + burnedPercent;
+
+  return [
+    {
+      label: "LP lock and burn",
+      severity: protectedPercent >= 80 ? "low" : protectedPercent >= 50 ? "medium" : "high",
+      detail: `LP protected percent is ${protectedPercent.toFixed(2)}% (${lockedPercent.toFixed(2)}% locked, ${burnedPercent.toFixed(2)}% burned).`,
+      raw: JSON.stringify({ lockedPercent, burnedPercent, protectedPercent, holderCount: lpHolders.length }),
+      interpretation:
+        protectedPercent >= 80
+          ? "Most LP ownership appears locked or burned."
+          : "A meaningful share of LP ownership is not confirmed locked/burned, so liquidity removal risk remains.",
     },
   ];
 }
@@ -452,6 +557,63 @@ function buildMarketAnomalyFindings(pairs?: DexScreenerPair[]): AgentFinding[] {
       label: "New pair risk",
       severity: isVeryNewPair && liquidityUsd < 100_000 ? "high" : isVeryNewPair ? "medium" : "low",
       detail: `Pair age is ${pairAgeDays === null ? "unknown" : `${pairAgeDays} days`} with $${Math.round(liquidityUsd).toLocaleString("en-US")} liquidity.`,
+    },
+  ];
+}
+
+function getSimulationSignals(security?: GoPlusTokenSecurity, pairs?: DexScreenerPair[]): SimulationSignals {
+  const bestPair = getBestPair(pairs);
+  const liquidityUsd = bestPair?.liquidity?.usd;
+  const buyTaxPercent = security ? parseTax(getStringField(security, "buy_tax")) : undefined;
+  const sellTaxPercent = security ? parseTax(getStringField(security, "sell_tax")) : undefined;
+  const cannotSell = security ? isFlagged(getStringField(security, "cannot_sell_all")) || isFlagged(getStringField(security, "is_honeypot")) : undefined;
+
+  if (!security && !bestPair) {
+    return {
+      checked: false,
+      provider: "unavailable",
+      estimatedSlippageRisk: "unavailable",
+      detail: "No transaction simulation provider or security/liquidity fallback data is available.",
+    };
+  }
+
+  return {
+    checked: true,
+    provider: "security_flags",
+    buyTaxPercent,
+    sellTaxPercent,
+    cannotSell,
+    liquidityUsd,
+    estimatedSlippageRisk: typeof liquidityUsd !== "number" ? "unavailable" : liquidityUsd < 25_000 ? "high" : liquidityUsd < 100_000 ? "medium" : "low",
+    detail: "Sellability and tax checks are inferred from security flags and DEX liquidity. A live transaction simulator should still be used before execution.",
+  };
+}
+
+function buildSimulationFindings(signals: SimulationSignals): AgentFinding[] {
+  if (!signals.checked) {
+    return [
+      {
+        label: "Transaction simulation",
+        severity: "medium",
+        detail: signals.detail,
+        interpretation: "Without simulation or fallback data, the token should not be treated as safe to trade.",
+      },
+    ];
+  }
+
+  const highTax = (signals.sellTaxPercent ?? 0) >= 25 || (signals.buyTaxPercent ?? 0) >= 25;
+  const mediumTax = (signals.sellTaxPercent ?? 0) >= 10 || (signals.buyTaxPercent ?? 0) >= 10;
+  const highSlippage = signals.estimatedSlippageRisk === "high";
+
+  return [
+    {
+      label: "Transaction simulation",
+      severity: signals.cannotSell ? "critical" : highTax || highSlippage ? "high" : mediumTax ? "medium" : "low",
+      detail: `Provider-derived check: cannot sell ${signals.cannotSell ? "yes" : "no"}, buy tax ${signals.buyTaxPercent?.toFixed(2) ?? "unknown"}%, sell tax ${signals.sellTaxPercent?.toFixed(2) ?? "unknown"}%, slippage risk ${signals.estimatedSlippageRisk}.`,
+      raw: JSON.stringify(signals),
+      interpretation: signals.cannotSell
+        ? "Cannot-sell or honeypot flags block trading."
+        : "This is not a full transaction simulation; use it as a conservative pre-check.",
     },
   ];
 }
@@ -570,47 +732,115 @@ function getHolderRawSignals(security?: GoPlusTokenSecurity) {
   };
 }
 
-function scoreFindings(findings: AgentFinding[]) {
-  const severityScore = {
-    low: 18,
-    medium: 48,
-    high: 76,
-    critical: 94,
-  };
-  const getFindingWeight = (finding: AgentFinding) => {
+function averageSeverity(findings: AgentFinding[], patterns: string[]) {
+  const matched = findings.filter((finding) => {
     const label = finding.label.toLowerCase();
 
-    if (label.includes("critical") || label.includes("honeypot") || label.includes("creator wallet selling")) {
-      return 1.55;
-    }
+    return patterns.some((pattern) => label.includes(pattern));
+  });
 
-    if (label.includes("fdv") || label.includes("volume/liquidity") || label.includes("liquidity")) {
-      return 1.25;
-    }
+  if (matched.length === 0) {
+    return 42;
+  }
 
-    if (label.includes("holder concentration") || label.includes("top holder")) {
-      return 1.2;
-    }
+  return Math.round(matched.reduce((total, finding) => total + severityRiskScore(finding.severity), 0) / matched.length);
+}
 
-    if (label.includes("tax") || label.includes("permission")) {
-      return 1.15;
-    }
-
-    return 1;
-  };
-  const weighted = findings.reduce(
-    (total, finding) => {
-      const weight = getFindingWeight(finding);
-
-      return {
-        score: total.score + severityScore[finding.severity] * weight,
-        weight: total.weight + weight,
-      };
-    },
-    { score: 0, weight: 0 },
+function getOnchainScoreBreakdown(findings: AgentFinding[], sources: AgentSource[]): OnchainScoreBreakdown {
+  const sourceQuality =
+    sources.length > 0
+      ? Math.round(
+          100 -
+            (sources.reduce((total, source) => {
+              if (source.status === "connected") return total + 82;
+              if (source.status === "mock") return total + 35;
+              return total + 12;
+            }, 0) /
+              sources.length),
+        )
+      : 88;
+  const contractSecurity = averageSeverity(findings, ["critical contract", "owner permissions", "tax", "transaction simulation"]);
+  const liquidityExit = averageSeverity(findings, ["liquidity", "lp lock"]);
+  const holderConcentration = averageSeverity(findings, ["holder"]);
+  const creatorBehavior = averageSeverity(findings, ["creator"]);
+  const marketAnomaly = averageSeverity(findings, ["volume/liquidity", "fdv", "new pair", "market anomaly", "pair age"]);
+  const finalScore = Math.round(
+    contractSecurity * 0.4 +
+      liquidityExit * 0.2 +
+      holderConcentration * 0.15 +
+      creatorBehavior * 0.1 +
+      marketAnomaly * 0.1 +
+      sourceQuality * 0.05,
   );
 
-  return Math.round(weighted.score / weighted.weight);
+  return {
+    contractSecurity,
+    liquidityExit,
+    holderConcentration,
+    creatorBehavior,
+    marketAnomaly,
+    sourceQuality,
+    finalScore,
+  };
+}
+
+function hasAvoidOverride(findings: AgentFinding[]) {
+  return findings.some((finding) => {
+    const label = finding.label.toLowerCase();
+    const detail = finding.detail.toLowerCase();
+
+    return finding.severity === "critical" && (label.includes("critical contract") || label.includes("transaction simulation") || detail.includes("honeypot") || detail.includes("cannot sell"));
+  });
+}
+
+function hasManualReviewOverride(findings: AgentFinding[], sources: AgentSource[]) {
+  const noSecurity = sources.some((source) => source.label === "GoPlus token security" && source.status === "unavailable");
+  const noDex = sources.some((source) => source.label === "DexScreener token pairs" && source.status === "unavailable");
+  const noLiquidity = findings.some((finding) => finding.label === "Liquidity" && finding.severity === "high" && finding.detail.includes("No DexScreener pairs"));
+
+  return (noSecurity && noDex) || noLiquidity;
+}
+
+function getRecommendedAction(score: number, avoidOverride: boolean, manualReviewOverride: boolean) {
+  if (avoidOverride || score >= 75) return "avoid";
+  if (manualReviewOverride || score >= 50) return "manual_review";
+  if (score >= 25) return "watch";
+  return "hold";
+}
+
+function buildOutputSummaryFindings(scoreBreakdown: OnchainScoreBreakdown, blockingReasons: string[]): AgentFinding[] {
+  return [
+    {
+      label: "Contract risk summary",
+      severity: scoreBreakdown.contractSecurity >= 75 ? "critical" : scoreBreakdown.contractSecurity >= 50 ? "high" : scoreBreakdown.contractSecurity >= 25 ? "medium" : "low",
+      scoreImpact: scoreBreakdown.contractSecurity,
+      detail: `Contract security score is ${scoreBreakdown.contractSecurity}/100 including critical flags, permissions, taxes and sellability.`,
+    },
+    {
+      label: "Market/liquidity summary",
+      severity: scoreBreakdown.liquidityExit >= 75 ? "critical" : scoreBreakdown.liquidityExit >= 50 ? "high" : scoreBreakdown.liquidityExit >= 25 ? "medium" : "low",
+      scoreImpact: scoreBreakdown.liquidityExit,
+      detail: `Liquidity/exit score is ${scoreBreakdown.liquidityExit}/100 including DEX liquidity, LP lock/burn and slippage readiness.`,
+    },
+    {
+      label: "Holder concentration summary",
+      severity: scoreBreakdown.holderConcentration >= 75 ? "critical" : scoreBreakdown.holderConcentration >= 50 ? "high" : scoreBreakdown.holderConcentration >= 25 ? "medium" : "low",
+      scoreImpact: scoreBreakdown.holderConcentration,
+      detail: `Holder concentration score is ${scoreBreakdown.holderConcentration}/100 based on top holder, top 5 and top 10 exposure.`,
+    },
+    {
+      label: "Creator/deployer behavior summary",
+      severity: scoreBreakdown.creatorBehavior >= 75 ? "critical" : scoreBreakdown.creatorBehavior >= 50 ? "high" : scoreBreakdown.creatorBehavior >= 25 ? "medium" : "low",
+      scoreImpact: scoreBreakdown.creatorBehavior,
+      detail: `Creator/deployer behavior score is ${scoreBreakdown.creatorBehavior}/100 based on retained supply and DEX transfer activity.`,
+    },
+    {
+      label: "Critical blockers",
+      severity: blockingReasons.length > 0 ? "critical" : "low",
+      scoreImpact: blockingReasons.length > 0 ? 94 : 0,
+      detail: blockingReasons.length > 0 ? blockingReasons.join(" ") : "No critical onchain blocker was detected from connected sources.",
+    },
+  ];
 }
 
 export async function runOnchainAgent(input: OnchainAgentInput): Promise<AgentResult> {
@@ -663,14 +893,16 @@ export async function runOnchainAgent(input: OnchainAgentInput): Promise<AgentRe
   const security = securityResult.status === "fulfilled" ? securityResult.value : undefined;
   const pairs = pairsResult.status === "fulfilled" ? pairsResult.value : undefined;
   const creatorActivity = await fetchCreatorActivity(chainConfig, security, contractAddress, pairs).catch(() => undefined);
+  const simulationSignals = getSimulationSignals(security, pairs);
   const findings = [
     ...buildSecurityFindings(security),
     ...buildHolderFindings(security),
     ...buildLiquidityFindings(pairs),
+    ...buildLpFindings(security, pairs),
     ...buildMarketAnomalyFindings(pairs),
     ...buildCreatorFindings(creatorActivity),
+    ...buildSimulationFindings(simulationSignals),
   ];
-  const score = scoreFindings(findings);
   const checkedAt = new Date().toISOString();
   const sources: AgentSource[] = [
     {
@@ -706,17 +938,35 @@ export async function runOnchainAgent(input: OnchainAgentInput): Promise<AgentRe
       checkedAt,
       reliability: creatorActivity?.checked ? 0.7 : 0.14,
     },
+    {
+      label: "Transaction simulation",
+      status: simulationSignals.checked ? "connected" : "unavailable",
+      detail: simulationSignals.detail,
+      checkedAt,
+      reliability: simulationSignals.checked ? 0.52 : 0.1,
+    },
   ];
+  const scoreBreakdown = getOnchainScoreBreakdown(findings, sources);
+  const score = scoreBreakdown.finalScore;
+  const avoidOverride = hasAvoidOverride(findings);
+  const manualReviewOverride = hasManualReviewOverride(findings, sources);
+  const recommendedAction = getRecommendedAction(score, avoidOverride, manualReviewOverride);
+  const blockingReasons = [
+    ...(avoidOverride ? ["Critical onchain blocker detected: honeypot, cannot-sell, blacklist, or critical simulation/tax flag."] : []),
+    ...(manualReviewOverride ? ["Security and liquidity coverage are insufficient for a hold decision."] : []),
+  ];
+  const outputFindings = [...findings, ...buildOutputSummaryFindings(scoreBreakdown, blockingReasons)];
 
   return buildAgentResult({
     agent: "onchain",
     score,
     verdict: score >= 75 ? "Critical onchain risk" : score >= 50 ? "High onchain risk" : score >= 25 ? "Onchain review needed" : "No major onchain flags",
-    summary: `Checked ${contractAddress} on ${chainConfig.dexScreenerChainId}. Security and liquidity signals produced ${findings.length} findings.`,
-    findings,
+    summary: `Checked ${contractAddress} on ${chainConfig.dexScreenerChainId}. Contract score ${scoreBreakdown.contractSecurity}/100, liquidity score ${scoreBreakdown.liquidityExit}/100, holder score ${scoreBreakdown.holderConcentration}/100.`,
+    findings: outputFindings,
     sources,
     confidence: security && pairs ? 0.74 : security || pairs ? 0.52 : 0.3,
-    recommendedAction: score >= 75 ? "avoid" : score >= 50 ? "manual_review" : score >= 25 ? "watch" : "hold",
+    recommendedAction,
+    blockingReasons,
     rawSignals: {
       chainSupport: {
         requestedChain: chain,
@@ -727,7 +977,17 @@ export async function runOnchainAgent(input: OnchainAgentInput): Promise<AgentRe
       security: getSecurityRawSignals(security),
       market: getMarketRawSignals(pairs),
       holders: getHolderRawSignals(security),
+      lp: {
+        holders: getLpHolders(security).map((holder) => ({
+          address: holder.address,
+          percent: holder.percent,
+          locked: isLockedOrContractHolder(holder),
+          burned: isBurnAddress(holder.address),
+        })),
+      },
       creator: creatorActivity,
+      simulation: simulationSignals,
+      scoreBreakdown,
     },
   });
 }
