@@ -1,13 +1,15 @@
 {
   "name": "gold-raccoon-contracts",
   "private": true,
-  "type": "module",
   "scripts": {
     "compile": "hardhat compile",
     "deploy": "hardhat run scripts/deploy.ts"
   },
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^7.0.0",
-    "hardhat": "^3.9.0"
+    "@nomicfoundation/hardhat-toolbox": "^6.1.2",
+    "@types/node": "^20.19.43",
+    "hardhat": "^2.28.6",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
   }
 }

@@ -1,5 +1,6 @@
 import { apiCacheStrategy } from "@/server/cache/strategy";
 import { getAgentReadiness, getEnvHealth } from "@/server/env/validation";
+import { getReleaseReadinessHealth } from "@/server/operations/releaseReadiness";
 import { getPortfolioProviderHealth } from "@/server/portfolio/getPortfolio";
 import { getStorageHealth, listAgentRunRecords } from "@/server/storage";
 
@@ -29,6 +30,7 @@ export function getProductionHealth() {
     },
     databaseConnectivity: getStorageHealth(),
     cacheStatus: apiCacheStrategy,
+    releaseReadiness: getReleaseReadinessHealth(),
     lastSuccessfulProviderCall: getLastSuccessfulProviderCall(),
   };
 }

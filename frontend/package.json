@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "deploy:check": "node ../scripts/check-deploy-readiness.mjs",
     "lint": "eslint",
     "test:agents": "tsx --tsconfig tsconfig.json scripts/agent-fixture-check.ts",
     "verify": "npm run test:agents && npm run lint && npm run build"

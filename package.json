@@ -8,6 +8,7 @@
     "deploy:check": "node scripts/check-deploy-readiness.mjs",
     "test:agents": "npm --prefix frontend run test:agents",
     "smoke": "node scripts/smoke-api.mjs",
+    "monitor:production": "node scripts/monitor-production.mjs",
     "quality:gate": "npm run deploy:check && npm run test:agents && npm run lint && npm run build",
     "quality:gate:full": "npm run quality:gate && npm run smoke",
     "verify": "npm run quality:gate"

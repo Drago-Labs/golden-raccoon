@@ -10,6 +10,7 @@ const navItems = [
   { href: "/scan", label: "Scan" },
   { href: "/strategy", label: "Strategy" },
   { href: "/history", label: "History" },
+  { href: "/operations", label: "Ops" },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
