@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isAddress } from "viem";
 import type { AgentFinding, AgentResult, AgentSource } from "@/server/types";
 import { buildAgentResult } from "@/server/agents/shared";
@@ -19,6 +20,20 @@ type GoPlusTokenSecurityResponse = {
   code?: number;
   message?: string;
   result?: Record<string, GoPlusTokenSecurity>;
+};
+
+type GoPlusAccessTokenResponse = {
+  code?: number;
+  message?: string;
+  access_token?: string;
+  expires_in?: number;
+  result?:
+    | string
+    | {
+        access_token?: string;
+        token?: string;
+        expires_in?: number;
+      };
 };
 
 type DexScreenerPair = {
@@ -83,6 +98,8 @@ type CreatorActivity = {
   dexTransferValueUsd?: number;
   checked: boolean;
 };
+
+let goPlusAccessTokenCache: { token: string; expiresAtMs: number } | undefined;
 
 type CovalentTransferResponse = {
   data?: {
@@ -213,12 +230,77 @@ function getBestPair(pairs?: DexScreenerPair[]) {
   return [...pairs].sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
 }
 
+function normalizeBearerToken(token: string) {
+  return token.replace(/^Bearer\s+/i, "").trim();
+}
+
+function extractGoPlusAccessToken(payload: GoPlusAccessTokenResponse) {
+  if (typeof payload.result === "string") {
+    return { token: payload.result, expiresIn: payload.expires_in };
+  }
+
+  return {
+    token: payload.access_token ?? payload.result?.access_token ?? payload.result?.token,
+    expiresIn: payload.expires_in ?? payload.result?.expires_in,
+  };
+}
+
+async function getGoPlusAccessToken() {
+  const staticToken = process.env.GOPLUS_API_KEY;
+
+  if (staticToken) {
+    return normalizeBearerToken(staticToken);
+  }
+
+  const appKey = process.env.GOPLUS_APP_KEY;
+  const appSecret = process.env.GOPLUS_APP_SECRET;
+
+  if (!appKey || !appSecret) {
+    return undefined;
+  }
+
+  if (goPlusAccessTokenCache && goPlusAccessTokenCache.expiresAtMs > Date.now() + 30_000) {
+    return goPlusAccessTokenCache.token;
+  }
+
+  const time = Math.floor(Date.now() / 1000);
+  const sign = createHash("sha1").update(`${appKey}${time}${appSecret}`).digest("hex");
+  const response = await fetch("https://api.gopluslabs.io/api/v1/token", {
+    method: "POST",
+    headers: {
+      accept: "*/*",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ app_key: appKey, sign, time }),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`GoPlus access token request failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as GoPlusAccessTokenResponse;
+  const { token, expiresIn } = extractGoPlusAccessToken(payload);
+
+  if (!token) {
+    throw new Error(payload.message || "GoPlus access token response did not include a token");
+  }
+
+  const ttlSeconds = Math.max(60, (expiresIn ?? 3_600) - 60);
+  goPlusAccessTokenCache = {
+    token: normalizeBearerToken(token),
+    expiresAtMs: Date.now() + ttlSeconds * 1_000,
+  };
+
+  return goPlusAccessTokenCache.token;
+}
+
 async function fetchGoPlusSecurity(chainId: string, contractAddress: string) {
   const url = new URL(`https://api.gopluslabs.io/api/v1/token_security/${chainId}`);
   url.searchParams.set("contract_addresses", contractAddress);
 
   const headers: HeadersInit = {};
-  const apiKey = process.env.GOPLUS_API_KEY;
+  const apiKey = await getGoPlusAccessToken();
 
   if (apiKey) {
     headers.Authorization = `Bearer ${apiKey}`;

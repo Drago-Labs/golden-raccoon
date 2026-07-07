@@ -9,6 +9,8 @@ const serverEnvKeys = [
   "GOLDRUSH_API_KEY",
   "COVALENT_API_KEY",
   "GOPLUS_API_KEY",
+  "GOPLUS_APP_KEY",
+  "GOPLUS_APP_SECRET",
   "ALCHEMY_API_KEY",
   "GOAT_RPC_URL",
   "SUPABASE_URL",
@@ -18,6 +20,7 @@ const serverEnvKeys = [
 const publicEnvKeys = ["NEXT_PUBLIC_GOAT_RPC_URL"] as const;
 
 export function getEnvHealth() {
+  const goPlusReady = Boolean(process.env.GOPLUS_API_KEY || (process.env.GOPLUS_APP_KEY && process.env.GOPLUS_APP_SECRET));
   const checks: EnvCheck[] = [
     ...serverEnvKeys.map((key) => ({
       key,
@@ -33,8 +36,11 @@ export function getEnvHealth() {
     })),
   ];
 
-  const requiredForLiveMvp = ["GOLDRUSH_API_KEY", "COVALENT_API_KEY", "GOPLUS_API_KEY"];
-  const configuredLiveSources = requiredForLiveMvp.filter((key) => Boolean(process.env[key]));
+  const configuredLiveSources = [
+    Boolean(process.env.GOLDRUSH_API_KEY),
+    Boolean(process.env.COVALENT_API_KEY),
+    goPlusReady,
+  ].filter(Boolean);
 
   return {
     checks,
@@ -43,7 +49,7 @@ export function getEnvHealth() {
     mockFallbacksEnabled: false,
     realDataReadiness: {
       portfolio: Boolean(process.env.GOLDRUSH_API_KEY ?? process.env.COVALENT_API_KEY ?? process.env.ALCHEMY_API_KEY),
-      onchain: Boolean(process.env.GOPLUS_API_KEY) || true,
+      onchain: goPlusReady,
       news: true,
       social: false,
       execution: true,
@@ -57,7 +63,7 @@ export function getEnvHealth() {
 
 export function getAgentReadiness() {
   const portfolioReady = Boolean(process.env.GOLDRUSH_API_KEY ?? process.env.COVALENT_API_KEY ?? process.env.ALCHEMY_API_KEY);
-  const onchainReady = true;
+  const onchainReady = Boolean(process.env.GOPLUS_API_KEY || (process.env.GOPLUS_APP_KEY && process.env.GOPLUS_APP_SECRET));
   const newsReady = true;
   const socialProviderReady = Boolean(
     process.env.SOCIAL_DATA_PROVIDER_URL ||
@@ -73,7 +79,9 @@ export function getAgentReadiness() {
     },
     onchain: {
       status: onchainReady ? "partial" : "unavailable",
-      detail: "DexScreener is public; GoPlus and creator transfer checks may still be unavailable without provider support.",
+      detail: onchainReady
+        ? "DexScreener is public and GoPlus credentials are configured for token security checks."
+        : "DexScreener is public; GoPlus security checks remain unavailable until credentials are configured.",
     },
     news: {
       status: newsReady ? "live" : "unavailable",

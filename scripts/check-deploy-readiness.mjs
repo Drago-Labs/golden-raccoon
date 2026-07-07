@@ -185,9 +185,9 @@ function checkProductionEnvironment() {
     "SUPABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY",
     "GOAT_RPC_URL",
-    "GOPLUS_API_KEY",
   ];
   const missing = requiredEnv.filter((key) => !process.env[key]);
+  const goPlusConfigured = Boolean(process.env.GOPLUS_API_KEY || (process.env.GOPLUS_APP_KEY && process.env.GOPLUS_APP_SECRET));
   const portfolioProviderConfigured = Boolean(process.env.GOLDRUSH_API_KEY || process.env.COVALENT_API_KEY || process.env.ALCHEMY_API_KEY);
   const socialProviderConfigured = Boolean(
     process.env.SOCIAL_DATA_PROVIDER_URL ||
@@ -200,6 +200,12 @@ function checkProductionEnvironment() {
     const message = `production deploy env is incomplete: ${missing.join(", ")}`;
 
     strictProductionDeploy ? fail(message) : warn(`${message}. Set PRODUCTION_DEPLOY=1 or RELEASE_TARGET=production to enforce this as a hard release gate.`);
+  }
+
+  if (!goPlusConfigured) {
+    const message = "production deploy requires GOPLUS_API_KEY or both GOPLUS_APP_KEY and GOPLUS_APP_SECRET for Contract Guard security checks";
+
+    strictProductionDeploy ? fail(message) : warn(message);
   }
 
   if (!portfolioProviderConfigured) {

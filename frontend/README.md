@@ -27,7 +27,11 @@ PORTFOLIO_CHAIN=
 
 # Server-only RPC/provider config.
 GOAT_RPC_URL=https://rpc.goat.network
+# Either provide a manually generated access token:
 GOPLUS_API_KEY=
+# Or provide app credentials; the server will request and cache access tokens:
+GOPLUS_APP_KEY=
+GOPLUS_APP_SECRET=
 ```
 
 First, run the development server:
