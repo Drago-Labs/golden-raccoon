@@ -215,9 +215,7 @@ function checkProductionEnvironment() {
   }
 
   if (!socialProviderConfigured) {
-    const message = "production deploy requires a social/search provider key or SOCIAL_DATA_PROVIDER_URL so Social Agent limits are explicit and measurable";
-
-    strictProductionDeploy ? fail(message) : warn(message);
+    warn("social provider key is not configured; V1 Social Agent will run in metadata-only mode and will not generate fake follower, engagement, or bot scores");
   }
 
   if (process.env.NEXT_PUBLIC_APP_URL?.includes("localhost")) {

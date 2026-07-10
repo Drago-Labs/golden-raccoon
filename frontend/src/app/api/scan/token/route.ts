@@ -7,6 +7,7 @@ import { checkRateLimit } from "@/server/security/rateLimit";
 const bodySchema = z.object({
   query: z.string().min(1).max(260),
   chain: z.string().min(1).max(40).optional(),
+  walletAddress: z.string().min(1).max(80).optional(),
 });
 
 export async function POST(request: Request) {
@@ -23,5 +24,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  return withCacheHeaders(NextResponse.json(await runTokenScan(parsed.data.query, parsed.data.chain)), "scan");
+  return withCacheHeaders(NextResponse.json(await runTokenScan(parsed.data.query, parsed.data.chain, parsed.data.walletAddress)), "scan");
 }

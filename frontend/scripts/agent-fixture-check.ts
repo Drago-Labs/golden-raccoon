@@ -897,6 +897,76 @@ async function runReadinessChecks() {
   assert(riskReport.agentCards.some((card) => card.displayName === "Contract Guard"), "Risk report must expose UI-ready Contract Guard card.");
   assert(riskReport.agentCards.some((card) => card.factors.length > 0), "Risk report must expose score factors.");
 
+  const newsCardFixture = agentResult({
+    agent: "news",
+    riskScore: 34,
+    verdict: "News review needed",
+    summary: "Fixture news result with catalysts and source credibility.",
+    findings: [{ label: "Positive catalysts", severity: "low", detail: "One listing catalyst." }],
+    rawSignals: {
+      matchedArticles: [{ title: "Fixture Token listing", source: "Fixture Exchange", identityMatchConfidence: 0.82 }],
+      positiveCatalysts: [{ type: "positive_catalyst", severity: "low", source: "Fixture Exchange" }],
+      negativeCatalysts: [],
+      sourceCredibility: [{ source: "Fixture Exchange", historicalReliability: 0.78 }],
+      eventTimeline: { independentSourceCount: 1, lastSeen: now.toISOString() },
+      sourceReliability: 0.78,
+      identityMatchConfidence: 0.82,
+    },
+  });
+  const portfolioCardFixture = agentResult({
+    agent: "portfolio",
+    riskScore: 46,
+    verdict: "Portfolio exposure watch",
+    summary: "Target token exposure is visible.",
+    findings: [{ label: "Target token exposure", severity: "medium", detail: "Target is 18% of wallet." }],
+    rawSignals: {
+      targetTokenExposurePercent: 18,
+      portfolioRisk: {
+        concentrationRisk: 38,
+        liquidityExitRisk: 44,
+        stableReserveRisk: 42,
+        assetQualityRisk: 34,
+        chainExecutionRisk: 28,
+        largestHoldingPercent: 32,
+        top3HoldingPercent: 72,
+        stableReservePercent: 24,
+        lowLiquidityExposurePercent: 18,
+        unknownPriceExposurePercent: 4,
+        unverifiedExposurePercent: 9,
+        hasNativeGasToken: true,
+        dominantChainPercent: 58,
+      },
+    },
+  });
+  const richDecision = runDecisionAgent({ results: [onchainFixture, newsCardFixture, socialFixture, portfolioCardFixture] });
+  const richRiskReport = buildRiskReport({
+    query: "0x3333333333333333333333333333333333333333",
+    requestedChain: "base",
+    normalized: {
+      chain: "base",
+      contractAddress: "0x3333333333333333333333333333333333333333",
+      symbol: "FIX",
+      name: "Fixture Token",
+      source: "contract_address",
+    },
+    results: [onchainFixture, newsCardFixture, socialFixture, portfolioCardFixture, richDecision],
+    decision: richDecision,
+    createdAt: now.toISOString(),
+  });
+  const newsCard = richRiskReport.agentCards.find((card) => card.agent === "news");
+  assert(newsCard?.secondaryScores?.some((score) => score.label === "News Signal"), "News Oracle must expose News Signal subscore.");
+  assert(newsCard?.factors.some((factor) => factor.label === "Positive catalyst score"), "News Oracle must expose positive catalyst percentage factor.");
+  assert(newsCard?.factors.some((factor) => factor.label === "Source reliability"), "News Oracle must expose source reliability factor.");
+  assert(newsCard?.factors.some((factor) => factor.label === "Matched article list"), "News Oracle must expose simplified article list factor.");
+  const portfolioCard = richRiskReport.agentCards.find((card) => card.agent === "portfolio");
+  assert(portfolioCard?.secondaryScores?.some((score) => score.label === "Token Exposure"), "Portfolio Keeper must expose token exposure subscore.");
+  assert(portfolioCard?.factors.some((factor) => factor.label === "Stable reserve"), "Portfolio Keeper must expose stable reserve factor.");
+  assert(portfolioCard?.factors.some((factor) => factor.label === "Native gas readiness"), "Portfolio Keeper must expose native gas readiness factor.");
+  const decisionCard = richRiskReport.agentCards.find((card) => card.agent === "decision");
+  assert(decisionCard?.secondaryScores?.some((score) => score.label === "Final Buy Risk"), "Decision Core must expose final buy risk subscore.");
+  assert(decisionCard?.factors.some((factor) => factor.label === "Critical blocker matrix"), "Decision Core must expose critical blocker matrix factor.");
+  assert(decisionCard?.factors.some((factor) => factor.label === "What would change this decision"), "Decision Core must expose what-would-change factor.");
+
   const runId = createAgentRunId("fixture_run");
   assert(runId.startsWith("fixture_run_"), "Agent run id helper must create stable-prefixed run ids.");
   const partialStatus = getRunPartialStatus([unavailableAgentResult("news"), blueChipLikeResult()]);

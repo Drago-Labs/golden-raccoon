@@ -51,7 +51,7 @@ export function getEnvHealth() {
       portfolio: Boolean(process.env.GOLDRUSH_API_KEY ?? process.env.COVALENT_API_KEY ?? process.env.ALCHEMY_API_KEY),
       onchain: goPlusReady,
       news: true,
-      social: false,
+      social: true,
       execution: true,
     },
     detail:
@@ -88,10 +88,10 @@ export function getAgentReadiness() {
       detail: "RSS-based news sources are available without API keys.",
     },
     social: {
-      status: socialProviderReady ? "partial" : "unavailable",
+      status: "partial",
       detail: socialProviderReady
         ? "A social data provider is configured for account, post, reply, engagement or search-based ingestion."
-        : "Public metadata can be checked, but follower/reply/bot metrics require X API, Apify, Tavily or another provider.",
+        : "V1 metadata-only mode is active: website and public social links are checked, but follower, reply, engagement and bot scores are marked unavailable instead of fabricated.",
     },
     decision: {
       status: "live",

@@ -540,9 +540,256 @@ function buildSocialRawFactors(result: AgentResult): ScoreFactor[] {
   return factors;
 }
 
+function buildNewsRawFactors(result: AgentResult): ScoreFactor[] {
+  const raw = result.rawSignals;
+  const matchedArticles = Array.isArray(raw?.matchedArticles) ? raw.matchedArticles : [];
+  const positiveCatalysts = Array.isArray(raw?.positiveCatalysts) ? raw.positiveCatalysts : [];
+  const negativeCatalysts = Array.isArray(raw?.negativeCatalysts) ? raw.negativeCatalysts : [];
+  const sourceCredibility = Array.isArray(raw?.sourceCredibility) ? raw.sourceCredibility : [];
+  const timeline = nestedRecord(raw, "eventTimeline");
+  const sourceReliability = asNumber(raw?.sourceReliability);
+  const identityConfidence = asNumber(raw?.identityMatchConfidence);
+  const totalEvents = positiveCatalysts.length + negativeCatalysts.length;
+  const positivePercent = totalEvents > 0 ? (positiveCatalysts.length / totalEvents) * 100 : 0;
+  const negativePercent = totalEvents > 0 ? (negativeCatalysts.length / totalEvents) * 100 : 0;
+  const criticalEvents = negativeCatalysts.filter((event) => asRecord(event)?.severity === "critical" || ["scam_or_rug", "regulatory"].includes(String(asRecord(event)?.type ?? "")));
+
+  return [
+    factorFromRaw({
+      label: "Positive catalyst score",
+      category: "news_catalyst",
+      impact: positiveCatalysts.length > 0 ? -Math.min(18, positiveCatalysts.length * 6) : 8,
+      severity: "low",
+      detail: `${positiveCatalysts.length} positive catalyst${positiveCatalysts.length === 1 ? "" : "s"} found; positive share is ${positivePercent.toFixed(0)}% of classified events.`,
+      sourceLabel: "News sources",
+      direction: positiveCatalysts.length > 0 ? "risk_decrease" : "neutral",
+      meta: { positiveCatalystCount: positiveCatalysts.length, positivePercent },
+    }),
+    factorFromRaw({
+      label: "Negative news risk",
+      category: "news_risk",
+      impact: negativePercent >= 75 ? 78 : negativePercent >= 40 ? 52 : negativeCatalysts.length > 0 ? 30 : 8,
+      severity: criticalEvents.length > 0 ? "critical" : negativePercent >= 75 ? "high" : negativeCatalysts.length > 0 ? "medium" : "low",
+      detail: `${negativeCatalysts.length} negative/scam/regulatory event${negativeCatalysts.length === 1 ? "" : "s"} found; negative share is ${negativePercent.toFixed(0)}%.`,
+      sourceLabel: "News sources",
+      meta: { negativeCatalystCount: negativeCatalysts.length, negativePercent, criticalEventCount: criticalEvents.length },
+    }),
+    factorFromRaw({
+      label: "Source reliability",
+      category: "news_catalyst",
+      impact: sourceReliability === undefined ? 34 : sourceReliability >= 0.8 ? -12 : sourceReliability >= 0.6 ? 22 : 55,
+      severity: sourceReliability === undefined ? "medium" : sourceReliability >= 0.8 ? "low" : sourceReliability >= 0.6 ? "medium" : "high",
+      detail: `Average matched-source reliability is ${sourceReliability === undefined ? "unknown" : `${Math.round(sourceReliability * 100)}%`}; ${sourceCredibility.length} credibility profile${sourceCredibility.length === 1 ? "" : "s"} evaluated.`,
+      sourceLabel: "News source registry",
+      direction: sourceReliability !== undefined && sourceReliability >= 0.8 ? "risk_decrease" : "risk_increase",
+      meta: { sourceReliability, sourceProfileCount: sourceCredibility.length },
+    }),
+    factorFromRaw({
+      label: "Identity match confidence",
+      category: "news_catalyst",
+      impact: identityConfidence === undefined ? 44 : identityConfidence >= 0.75 ? -14 : identityConfidence >= 0.45 ? 24 : 64,
+      severity: identityConfidence === undefined ? "medium" : identityConfidence >= 0.75 ? "low" : identityConfidence >= 0.45 ? "medium" : "high",
+      detail: `News identity match confidence is ${identityConfidence === undefined ? "unknown" : `${Math.round(identityConfidence * 100)}%`}. Symbol-only matches stay low confidence.`,
+      sourceLabel: "News identity resolver",
+      direction: identityConfidence !== undefined && identityConfidence >= 0.75 ? "risk_decrease" : "risk_increase",
+      meta: { identityMatchConfidence: identityConfidence },
+    }),
+    factorFromRaw({
+      label: "Matched article list",
+      category: "news_catalyst",
+      impact: matchedArticles.length > 0 ? 8 : 36,
+      severity: matchedArticles.length > 0 ? "low" : "medium",
+      detail:
+        matchedArticles.length > 0
+          ? `${matchedArticles.length} deduped recent article${matchedArticles.length === 1 ? "" : "s"} matched the token identity.`
+          : "No matching news article was found; this lowers confidence but is not a critical risk by itself.",
+      sourceLabel: "News sources",
+      meta: {
+        matchedArticleCount: matchedArticles.length,
+        independentSourceCount: asNumber(timeline?.independentSourceCount),
+        lastSeen: typeof timeline?.lastSeen === "string" ? timeline.lastSeen : undefined,
+      },
+    }),
+    factorFromRaw({
+      label: "Critical news warning",
+      category: "news_risk",
+      impact: criticalEvents.length > 0 ? 92 : 0,
+      severity: criticalEvents.length > 0 ? "critical" : "low",
+      detail:
+        criticalEvents.length > 0
+          ? `${criticalEvents.length} critical news event${criticalEvents.length === 1 ? "" : "s"} detected: hack, exploit, scam, rug, phishing, regulatory or security warning context.`
+          : "No critical hack, exploit, scam, rug, phishing, regulatory or security warning event was found.",
+      sourceLabel: "News classifier",
+      direction: criticalEvents.length > 0 ? "risk_increase" : "neutral",
+      meta: { criticalEventCount: criticalEvents.length },
+    }),
+  ];
+}
+
+function buildPortfolioRawFactors(result: AgentResult): ScoreFactor[] {
+  const raw = result.rawSignals;
+  const portfolioRisk = nestedRecord(raw, "portfolioRisk");
+  const targetExposure = asNumber(raw?.targetTokenExposurePercent);
+  const emptyState = typeof raw?.emptyState === "string" ? raw.emptyState : undefined;
+
+  if (emptyState) {
+    return [
+      factorFromRaw({
+        label: emptyState === "wallet_not_connected" ? "Wallet not connected" : "Portfolio unavailable",
+        category: "source_coverage",
+        impact: emptyState === "wallet_not_connected" ? 24 : 58,
+        severity: emptyState === "wallet_not_connected" ? "medium" : "high",
+        detail:
+          emptyState === "wallet_not_connected"
+            ? "No wallet address was supplied. Portfolio exposure is visible as not connected and is not weighted into the token decision."
+            : "Portfolio provider did not return usable holdings. No mock portfolio was generated.",
+        sourceLabel: "Portfolio source",
+        meta: { emptyState },
+      }),
+    ];
+  }
+
+  return [
+    factorFromRaw({
+      label: "Target token exposure",
+      category: "portfolio_exposure",
+      impact: targetExposure === undefined ? 18 : targetExposure >= 40 ? 72 : targetExposure >= 15 ? 42 : 8,
+      severity: targetExposure === undefined ? "medium" : targetExposure >= 40 ? "high" : targetExposure >= 15 ? "medium" : "low",
+      detail: `Target token exposure is ${formatPercentValue(targetExposure)} of the connected wallet.`,
+      sourceLabel: "Wallet portfolio API",
+      meta: { targetTokenExposurePercent: targetExposure },
+    }),
+    factorFromRaw({
+      label: "Largest/top holdings",
+      category: "portfolio_exposure",
+      impact: asNumber(portfolioRisk?.concentrationRisk) ?? 42,
+      detail: `Largest holding ${formatPercentValue(asNumber(portfolioRisk?.largestHoldingPercent))}; top 3 ${formatPercentValue(asNumber(portfolioRisk?.top3HoldingPercent))}.`,
+      sourceLabel: "Wallet portfolio API",
+      meta: {
+        largestHoldingPercent: asNumber(portfolioRisk?.largestHoldingPercent),
+        top3HoldingPercent: asNumber(portfolioRisk?.top3HoldingPercent),
+      },
+    }),
+    factorFromRaw({
+      label: "Stable reserve",
+      category: "portfolio_exposure",
+      impact: asNumber(portfolioRisk?.stableReserveRisk) ?? 42,
+      detail: `Verified stable reserve is ${formatPercentValue(asNumber(portfolioRisk?.stableReservePercent))}.`,
+      sourceLabel: "Wallet portfolio API",
+      meta: { stableReservePercent: asNumber(portfolioRisk?.stableReservePercent) },
+    }),
+    factorFromRaw({
+      label: "Low-liquidity exposure",
+      category: "portfolio_exposure",
+      impact: asNumber(portfolioRisk?.liquidityExitRisk) ?? 42,
+      detail: `${formatPercentValue(asNumber(portfolioRisk?.lowLiquidityExposurePercent))} of the wallet carries elevated liquidity exit risk.`,
+      sourceLabel: "Wallet portfolio API",
+      meta: { lowLiquidityExposurePercent: asNumber(portfolioRisk?.lowLiquidityExposurePercent) },
+    }),
+    factorFromRaw({
+      label: "Unknown price exposure",
+      category: "portfolio_exposure",
+      impact: asNumber(portfolioRisk?.assetQualityRisk) ?? 42,
+      detail: `${formatPercentValue(asNumber(portfolioRisk?.unknownPriceExposurePercent))} of wallet value has unknown/no-price exposure.`,
+      sourceLabel: "Wallet portfolio API",
+      meta: {
+        unknownPriceExposurePercent: asNumber(portfolioRisk?.unknownPriceExposurePercent),
+        unverifiedExposurePercent: asNumber(portfolioRisk?.unverifiedExposurePercent),
+      },
+    }),
+    factorFromRaw({
+      label: "Native gas readiness",
+      category: "portfolio_exposure",
+      impact: asNumber(portfolioRisk?.chainExecutionRisk) ?? 42,
+      detail: portfolioRisk?.hasNativeGasToken === true ? "Native gas token was detected for execution readiness." : "Native gas token was not detected; exits may require funding gas first.",
+      sourceLabel: "Wallet portfolio API",
+      meta: {
+        hasNativeGasToken: portfolioRisk?.hasNativeGasToken === true,
+        dominantChainPercent: asNumber(portfolioRisk?.dominantChainPercent),
+      },
+    }),
+  ];
+}
+
+function buildDecisionRawFactors(result: AgentResult): ScoreFactor[] {
+  const raw = result.rawSignals;
+  const confidenceFormula = nestedRecord(raw, "confidenceFormula");
+  const sourceCoverage = nestedRecord(raw, "sourceCoverage");
+  const explanation = nestedRecord(raw, "explanation");
+  const blockers = Array.isArray(raw?.blockers) ? raw.blockers : [];
+  const conflicts = Array.isArray(raw?.conflicts) ? raw.conflicts : [];
+  const weightedScore = nestedRecord(raw, "weightedScore");
+  const details = Array.isArray(weightedScore?.details) ? weightedScore.details : [];
+  const whatWouldChange = Array.isArray(explanation?.whatWouldChangeDecision) ? explanation.whatWouldChangeDecision : [];
+
+  return [
+    factorFromRaw({
+      label: "Final buy risk formula",
+      category: "decision_logic",
+      impact: result.riskScore,
+      severity: result.riskLevel,
+      detail: `Final buy risk is ${result.riskScore}/100 from weighted specialist agents.`,
+      sourceLabel: "Decision Core",
+      meta: { weightedAgentCount: details.length },
+    }),
+    factorFromRaw({
+      label: "Critical blocker matrix",
+      category: "decision_logic",
+      impact: blockers.length > 0 ? 92 : 0,
+      severity: blockers.some((blocker) => asRecord(blocker)?.severity === "critical") ? "critical" : blockers.length > 0 ? "high" : "low",
+      detail: blockers.length > 0 ? `${blockers.length} deterministic blocker${blockers.length === 1 ? "" : "s"} affected the decision.` : "No deterministic critical blocker affected the decision.",
+      sourceLabel: "Decision Core",
+      direction: blockers.length > 0 ? "risk_increase" : "neutral",
+      meta: { blockerCount: blockers.length, conflictCount: conflicts.length },
+    }),
+    factorFromRaw({
+      label: "What would change this decision",
+      category: "decision_logic",
+      impact: 0,
+      severity: "low",
+      detail: whatWouldChange.length > 0 ? whatWouldChange.slice(0, 3).join(" ") : "No change conditions were produced.",
+      sourceLabel: "Decision Core",
+      direction: "neutral",
+      meta: { itemCount: whatWouldChange.length },
+    }),
+    factorFromRaw({
+      label: "Decision confidence breakdown",
+      category: "decision_logic",
+      impact: clampScore((1 - result.confidence) * 100),
+      severity: result.confidence >= 0.65 ? "low" : result.confidence >= 0.42 ? "medium" : "high",
+      detail: `Confidence uses agent confidence, source coverage, identity confidence, provider freshness, agreement and conflict penalty.`,
+      sourceLabel: "Decision Core",
+      meta: {
+        agentConfidence: asNumber(confidenceFormula?.agentConfidence),
+        sourceCoverage: asNumber(confidenceFormula?.sourceCoverage),
+        identityConfidence: asNumber(confidenceFormula?.identityConfidence),
+        providerFreshness: asNumber(confidenceFormula?.providerFreshness),
+        crossAgentAgreement: asNumber(confidenceFormula?.crossAgentAgreement),
+        conflictPenalty: asNumber(confidenceFormula?.conflictPenalty),
+      },
+    }),
+    factorFromRaw({
+      label: "Source coverage",
+      category: "source_coverage",
+      impact: asNumber(sourceCoverage?.connected) === 0 ? 72 : asNumber(sourceCoverage?.ratio) !== undefined && (asNumber(sourceCoverage?.ratio) ?? 0) < 0.5 ? 42 : 8,
+      severity: asNumber(sourceCoverage?.connected) === 0 ? "high" : asNumber(sourceCoverage?.ratio) !== undefined && (asNumber(sourceCoverage?.ratio) ?? 0) < 0.5 ? "medium" : "low",
+      detail: `${asNumber(sourceCoverage?.connected) ?? 0} connected and ${asNumber(sourceCoverage?.unavailable) ?? 0} unavailable sources contributed to the final decision.`,
+      sourceLabel: "Decision Core",
+      meta: {
+        connected: asNumber(sourceCoverage?.connected),
+        unavailable: asNumber(sourceCoverage?.unavailable),
+        ratio: asNumber(sourceCoverage?.ratio),
+      },
+    }),
+  ];
+}
+
 function buildRawFactors(result: AgentResult): ScoreFactor[] {
   if (result.agent === "onchain") return buildOnchainRawFactors(result);
   if (result.agent === "social") return buildSocialRawFactors(result);
+  if (result.agent === "news") return buildNewsRawFactors(result);
+  if (result.agent === "portfolio") return buildPortfolioRawFactors(result);
+  if (result.agent === "decision") return buildDecisionRawFactors(result);
 
   return [];
 }
@@ -594,6 +841,78 @@ function getSecondaryScores(result: AgentResult): AgentScoreCard["secondaryScore
         label: "Holder Risk",
         score: clampScore(asNumber(scoreBreakdown.holderConcentration) ?? result.riskScore),
         detail: "Top holder, top 5 and top 10 concentration.",
+      },
+    ];
+  }
+
+  if (result.agent === "news") {
+    const raw = result.rawSignals;
+    const positiveCatalysts = Array.isArray(raw?.positiveCatalysts) ? raw.positiveCatalysts : [];
+    const negativeCatalysts = Array.isArray(raw?.negativeCatalysts) ? raw.negativeCatalysts : [];
+    const totalEvents = positiveCatalysts.length + negativeCatalysts.length;
+    const positivePercent = totalEvents > 0 ? (positiveCatalysts.length / totalEvents) * 100 : 0;
+    const negativePercent = totalEvents > 0 ? (negativeCatalysts.length / totalEvents) * 100 : 0;
+
+    return [
+      {
+        label: "News Signal",
+        score: clampScore(100 - result.riskScore),
+        detail: "Positive catalysts, negative incidents, identity confidence and source reliability.",
+      },
+      {
+        label: "Positive Catalyst",
+        score: clampScore(positivePercent),
+        detail: `${positiveCatalysts.length} positive catalyst${positiveCatalysts.length === 1 ? "" : "s"} matched.`,
+      },
+      {
+        label: "News Risk",
+        score: clampScore(negativePercent || result.riskScore),
+        detail: `${negativeCatalysts.length} negative/scam/regulatory event${negativeCatalysts.length === 1 ? "" : "s"} matched.`,
+      },
+    ];
+  }
+
+  if (result.agent === "portfolio") {
+    const portfolioRisk = nestedRecord(result.rawSignals, "portfolioRisk");
+    const targetExposure = asNumber(result.rawSignals?.targetTokenExposurePercent);
+
+    return [
+      {
+        label: "Token Exposure",
+        score: clampScore(targetExposure ?? 0),
+        detail: "Target token allocation inside the connected wallet.",
+      },
+      {
+        label: "Stable Reserve",
+        score: clampScore(asNumber(portfolioRisk?.stableReservePercent) ?? 0),
+        detail: "Verified stablecoin reserve available for defensive flexibility.",
+      },
+      {
+        label: "Exit Risk",
+        score: clampScore(asNumber(portfolioRisk?.liquidityExitRisk) ?? result.riskScore),
+        detail: "Low-liquidity exposure and allocation-weighted exit fragility.",
+      },
+    ];
+  }
+
+  if (result.agent === "decision") {
+    const sourceCoverage = nestedRecord(result.rawSignals, "sourceCoverage");
+
+    return [
+      {
+        label: "Final Buy Risk",
+        score: clampScore(result.riskScore),
+        detail: "Weighted deterministic decision from specialist agents.",
+      },
+      {
+        label: "Decision Confidence",
+        score: clampScore(result.confidence * 100),
+        detail: "Agent confidence, source coverage, identity, freshness and agreement.",
+      },
+      {
+        label: "Source Coverage",
+        score: clampScore((asNumber(sourceCoverage?.ratio) ?? 0) * 100),
+        detail: "Connected source share in the final decision.",
       },
     ];
   }

@@ -81,6 +81,7 @@ function factorMetaEntries(factor: ScoreFactor) {
 export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: string }) {
   const [query, setQuery] = useState(initialQuery || "MEME");
   const [chain, setChain] = useState("base");
+  const [walletAddress, setWalletAddress] = useState("");
   const [scan, setScan] = useState<TokenScanResult | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const report = scan?.riskReport;
@@ -91,7 +92,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
     const response = await fetch("/api/scan/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, chain }),
+      body: JSON.stringify({ query, chain, walletAddress: walletAddress.trim() || undefined }),
     });
     const data = (await response.json()) as TokenScanResult;
     setScan(data);
@@ -131,6 +132,12 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
               {isScanning ? "Scanning..." : "Run Scan"}
             </button>
           </div>
+          <input
+            value={walletAddress}
+            onChange={(event) => setWalletAddress(event.target.value)}
+            placeholder="Optional wallet address for portfolio exposure"
+            className="mt-3 h-12 w-full rounded-full border border-white/10 bg-white/7 px-5 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#d9a441]/60"
+          />
           <div className="mt-4 rounded-2xl border border-[#d9a441]/20 bg-[#d9a441]/8 p-4 text-sm text-white/54">
             Deep scan: x402 premium
           </div>

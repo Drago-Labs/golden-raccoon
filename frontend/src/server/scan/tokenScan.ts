@@ -1,5 +1,6 @@
 import type { AgentFinding, AgentResult, RiskBreakdownItem, RiskLevel, TokenScanResult } from "@/server/types";
 import { runDecisionAgent } from "@/server/agents/decision";
+import { runPortfolioAgent } from "@/server/agents/portfolio";
 import { runAgentSafely, scoreToRiskLevel } from "@/server/agents/shared";
 import { runNewsAgent } from "@/server/agents/news";
 import { runOnchainAgent } from "@/server/agents/onchain";
@@ -204,14 +205,14 @@ function buildUnresolvedTokenScan(query: string, chain?: string): TokenScanResul
   };
 }
 
-export async function runTokenScan(query: string, chain?: string): Promise<TokenScanResult> {
+export async function runTokenScan(query: string, chain?: string, walletAddress?: string): Promise<TokenScanResult> {
   const normalized = await normalizeTokenInput(query, chain);
 
   if (!normalized) {
     return buildUnresolvedTokenScan(query, chain);
   }
 
-  const [onchainResult, newsResult, socialResult] = await Promise.all([
+  const [onchainResult, newsResult, socialResult, portfolioResult] = await Promise.all([
     runAgentSafely("onchain", () =>
       runOnchainAgent({
         chain: normalized.chain,
@@ -235,10 +236,29 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
         telegramUrl: normalized.links?.telegramUrl,
       }),
     ),
+    runAgentSafely("portfolio", () =>
+      runPortfolioAgent(walletAddress, {
+        contractAddress: normalized.contractAddress,
+        symbol: normalized.symbol,
+      }),
+    ),
   ]);
-  const decisionResult = runDecisionAgent({ results: [onchainResult, newsResult, socialResult] });
+  const specialistResults = walletAddress ? [onchainResult, newsResult, socialResult, portfolioResult] : [onchainResult, newsResult, socialResult];
+  const targetExposure = typeof portfolioResult.rawSignals?.targetTokenExposurePercent === "number" ? portfolioResult.rawSignals.targetTokenExposurePercent : 0;
+  const stableReserve = portfolioResult.rawSignals?.portfolioRisk as { stableReservePercent?: unknown } | undefined;
+  const decisionResult = runDecisionAgent({
+    results: specialistResults,
+    context: {
+      mode: "token_scan",
+      walletAddress,
+      tokenSymbol: normalized.symbol,
+      userAlreadyOwnsToken: Boolean(walletAddress && targetExposure > 0),
+      holdingAllocationPercent: targetExposure,
+      stableReservePercent: typeof stableReserve?.stableReservePercent === "number" ? stableReserve.stableReservePercent : undefined,
+    },
+  });
   const overallRiskScore = decisionResult.score;
-  const combinedFindings = [...decisionResult.findings, ...onchainResult.findings, ...newsResult.findings, ...socialResult.findings];
+  const combinedFindings = [...decisionResult.findings, ...onchainResult.findings, ...newsResult.findings, ...socialResult.findings, ...portfolioResult.findings];
   const riskBreakdown = combinedFindings.map(mapFindingToBreakdown);
 
   const sources: TokenScanResult["sources"] = [
@@ -262,6 +282,11 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
       status: source.status,
       detail: source.detail ?? "",
     })),
+    ...portfolioResult.sources.map((source) => ({
+      label: source.label,
+      status: source.status,
+      detail: source.detail ?? "",
+    })),
     ...decisionResult.sources.map((source) => ({
       label: source.label,
       status: source.status,
@@ -274,7 +299,7 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
     query,
     requestedChain: chain,
     normalized,
-    results: [onchainResult, newsResult, socialResult, decisionResult],
+    results: [onchainResult, newsResult, socialResult, portfolioResult, decisionResult],
     decision: decisionResult,
     dataQuality,
     createdAt: scannedAt,
@@ -289,7 +314,7 @@ export async function runTokenScan(query: string, chain?: string): Promise<Token
     overallRiskScore,
     opportunityScore: Math.max(0, 100 - overallRiskScore),
     verdict: verdictFromScore(overallRiskScore),
-    summary: `${decisionResult.summary} ${onchainResult.summary} ${newsResult.summary} ${socialResult.summary}`,
+    summary: `${decisionResult.summary} ${onchainResult.summary} ${newsResult.summary} ${socialResult.summary} ${portfolioResult.summary}`,
     reasons: combinedFindings.map((finding) => finding.detail).slice(0, 10),
     suggestedAction: suggestedActionFromDecision(decisionResult),
     riskBreakdown: riskBreakdown.length > 0

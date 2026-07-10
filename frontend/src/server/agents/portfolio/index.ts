@@ -57,16 +57,40 @@ function getRecommendedAction(portfolio: PortfolioSnapshot, riskSignals: ReturnT
   return "watch";
 }
 
-function analyzePortfolioSnapshot(portfolio: PortfolioSnapshot, source: PortfolioSnapshotSource): AgentResult {
+type PortfolioTargetToken = {
+  contractAddress?: string;
+  symbol?: string;
+};
+
+function findTargetHolding(portfolio: PortfolioSnapshot, target?: PortfolioTargetToken) {
+  const contractAddress = target?.contractAddress?.toLowerCase();
+  const symbol = target?.symbol?.toUpperCase();
+
+  if (!contractAddress && !symbol) {
+    return undefined;
+  }
+
+  return portfolio.holdings.find((holding) => {
+    if (contractAddress && holding.tokenAddress.toLowerCase() === contractAddress) return true;
+    return Boolean(symbol && holding.symbol.toUpperCase() === symbol);
+  });
+}
+
+function analyzePortfolioSnapshot(portfolio: PortfolioSnapshot, source: PortfolioSnapshotSource, target?: PortfolioTargetToken): AgentResult {
+  const targetHolding = findTargetHolding(portfolio, target);
+  const targetExposurePercent = targetHolding?.allocationPercent ?? 0;
+
   if (portfolio.holdings.length === 0) {
-    const emptyState = source.status === "connected" ? "empty_wallet" : "provider_unavailable";
+    const emptyState = portfolio.walletAddress === "unconnected" ? "wallet_not_connected" : source.status === "connected" ? "empty_wallet" : "provider_unavailable";
 
     return buildAgentResult({
       agent: "portfolio",
-      score: 58,
-      verdict: emptyState === "empty_wallet" ? "Empty wallet" : "Portfolio source unavailable",
+      score: emptyState === "wallet_not_connected" ? 42 : 58,
+      verdict: emptyState === "wallet_not_connected" ? "Wallet not connected" : emptyState === "empty_wallet" ? "Empty wallet" : "Portfolio source unavailable",
       summary:
-        emptyState === "empty_wallet"
+        emptyState === "wallet_not_connected"
+          ? "Wallet is not connected. Portfolio exposure is not included in the final token decision."
+          : emptyState === "empty_wallet"
           ? "Portfolio provider connected and returned no holdings. This is treated as an empty wallet, not a provider failure."
           : "Portfolio Agent could not read live wallet holdings. No mock holdings were generated.",
       findings: [
@@ -95,6 +119,8 @@ function analyzePortfolioSnapshot(portfolio: PortfolioSnapshot, source: Portfoli
       rawSignals: {
         emptyState,
         liveModeUsesMockData: false,
+        targetTokenExposurePercent: 0,
+        targetToken: target,
       },
     });
   }
@@ -140,8 +166,24 @@ function analyzePortfolioSnapshot(portfolio: PortfolioSnapshot, source: Portfoli
     agent: "portfolio",
     score: portfolio.riskScore,
     verdict: portfolio.riskScore >= 75 ? "Critical portfolio risk" : portfolio.riskScore >= 50 ? "High portfolio risk" : "Portfolio within monitoring range",
-    summary: `${largestHolding.symbol} is ${largestHolding.allocationPercent.toFixed(1)}% of the wallet. Verified stable reserve is ${stablecoinRatio.toFixed(1)}%. Low-liquidity exposure is ${lowLiquidityExposure.toFixed(1)}%.`,
+    summary: `${target?.symbol ?? "Target token"} exposure is ${targetExposurePercent.toFixed(1)}%. ${largestHolding.symbol} is ${largestHolding.allocationPercent.toFixed(1)}% of the wallet. Verified stable reserve is ${stablecoinRatio.toFixed(1)}%. Low-liquidity exposure is ${lowLiquidityExposure.toFixed(1)}%.`,
     findings: [
+      {
+        label: "Target token exposure",
+        severity: targetExposurePercent >= 40 ? "high" : targetExposurePercent >= 15 ? "medium" : "low",
+        scoreImpact: targetExposurePercent >= 40 ? 72 : targetExposurePercent >= 15 ? 42 : 8,
+        detail:
+          targetHolding
+            ? `${targetHolding.symbol} is ${targetExposurePercent.toFixed(1)}% of the wallet, worth $${targetHolding.valueUsd.toFixed(2)}.`
+            : "Target token was not found in connected wallet holdings.",
+        raw: JSON.stringify({
+          targetToken: target,
+          targetExposurePercent,
+          valueUsd: targetHolding?.valueUsd,
+          holdingSymbol: targetHolding?.symbol,
+        }),
+        interpretation: targetExposurePercent > 0 ? "Existing exposure can harden the final decision even when token-level risk is moderate." : "No existing target exposure was found in the connected wallet.",
+      },
       {
         label: "Dust and spam filter",
         severity: hardening.dustFilter.spamHoldingCount > 0 ? "medium" : "low",
@@ -282,6 +324,17 @@ function analyzePortfolioSnapshot(portfolio: PortfolioSnapshot, source: Portfoli
     rawSignals: {
       portfolioRisk: riskSignals,
       hardening,
+      targetToken: target,
+      targetTokenExposurePercent: targetExposurePercent,
+      targetTokenHolding: targetHolding
+        ? {
+            symbol: targetHolding.symbol,
+            tokenAddress: targetHolding.tokenAddress,
+            allocationPercent: targetHolding.allocationPercent,
+            valueUsd: targetHolding.valueUsd,
+            riskScore: targetHolding.riskScore,
+          }
+        : undefined,
       stablecoinRatio,
       memeExposure,
       unknownExposure,
@@ -292,8 +345,8 @@ function analyzePortfolioSnapshot(portfolio: PortfolioSnapshot, source: Portfoli
   });
 }
 
-export async function runPortfolioAgent(walletAddress?: string): Promise<AgentResult> {
+export async function runPortfolioAgent(walletAddress?: string, target?: PortfolioTargetToken): Promise<AgentResult> {
   const { portfolio, source } = await getPortfolioSnapshot(walletAddress);
 
-  return analyzePortfolioSnapshot(portfolio, source);
+  return analyzePortfolioSnapshot(portfolio, source, target);
 }
