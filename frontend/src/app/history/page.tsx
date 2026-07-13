@@ -1,6 +1,5 @@
 import { AppShell } from "@/components/AppShell";
 import { listAgentRunRecords, listApprovalRecords, listRecommendationRecords, listTransactionRecords } from "@/server/storage";
-import { getMockDecisionHistory } from "@/server/agent";
 
 export const dynamic = "force-dynamic";
 
@@ -9,20 +8,22 @@ export default function HistoryPage() {
   const recommendations = listRecommendationRecords();
   const approvals = listApprovalRecords();
   const transactions = listTransactionRecords();
-  const decisions = getMockDecisionHistory();
 
   return (
     <AppShell>
-      <div className="space-y-8">
-        <section>
-          <div className="text-sm uppercase tracking-[0.2em] text-[#d9a441]">History</div>
-          <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">Agent decisions</h1>
+      <div className="space-y-5">
+        <section className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between">
+          <h1 className="text-3xl font-semibold tracking-tight">History</h1>
+          <div className="flex gap-4 text-sm text-white/46">
+            <span>{recommendations.length} recommendations</span>
+            <span>{approvals.length} approvals</span>
+            <span>{transactions.length} transactions</span>
+          </div>
         </section>
-        <section className="glass-panel rounded-[28px] p-6">
+        <section className="glass-panel rounded-lg p-6">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
             <div>
               <h2 className="text-xl font-semibold">Agent runs</h2>
-              <div className="mt-1 text-sm text-white/42">Dashboard decisions, recommendations and source coverage.</div>
             </div>
             <div className="rounded-full border border-white/10 bg-white/7 px-3 py-1 text-xs text-white/46">
               {agentRuns.length} saved run{agentRuns.length === 1 ? "" : "s"}
@@ -74,8 +75,10 @@ export default function HistoryPage() {
           </div>
         </section>
 
-        <section className="grid gap-5 lg:grid-cols-3">
-          <div className="glass-panel rounded-[28px] p-5">
+        <details className="glass-panel rounded-lg p-5">
+          <summary className="cursor-pointer text-sm font-semibold text-white/72">Recent activity</summary>
+          <div className="mt-5 grid gap-5 lg:grid-cols-3">
+          <div>
             <div className="text-sm uppercase tracking-[0.16em] text-[#d9a441]">Recommendations</div>
             <div className="mt-4 space-y-3">
               {recommendations.length > 0 ? (
@@ -95,7 +98,7 @@ export default function HistoryPage() {
             </div>
           </div>
 
-          <div className="glass-panel rounded-[28px] p-5">
+          <div>
             <div className="text-sm uppercase tracking-[0.16em] text-[#d9a441]">Approvals</div>
             <div className="mt-4 space-y-3">
               {approvals.length > 0 ? (
@@ -112,7 +115,7 @@ export default function HistoryPage() {
             </div>
           </div>
 
-          <div className="glass-panel rounded-[28px] p-5">
+          <div>
             <div className="text-sm uppercase tracking-[0.16em] text-[#d9a441]">Transactions</div>
             <div className="mt-4 space-y-3">
               {transactions.length > 0 ? (
@@ -131,42 +134,8 @@ export default function HistoryPage() {
               )}
             </div>
           </div>
-        </section>
-
-        <section className="glass-panel rounded-[28px] p-6">
-          <h2 className="text-xl font-semibold">Legacy decisions</h2>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-[0.16em] text-white/36">
-                <tr>
-                  <th className="pb-3 font-medium">Decision</th>
-                  <th className="pb-3 font-medium">Risk</th>
-                  <th className="pb-3 font-medium">Status</th>
-                  <th className="pb-3 font-medium">Tx hash</th>
-                  <th className="pb-3 font-medium">Created</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/8">
-                {decisions.map((decision) => (
-                  <tr key={`${decision.createdAt}-${decision.decision}`}>
-                    <td className="py-4">
-                      <div className="font-semibold">{decision.decision}</div>
-                      <div className="mt-1 max-w-xl text-xs text-white/42">{decision.summary}</div>
-                    </td>
-                    <td className="py-4 text-white/70">{decision.riskScore}/100</td>
-                    <td className="py-4">
-                      <span className="rounded-full border border-white/10 bg-white/7 px-3 py-1 text-xs capitalize">
-                        {decision.status}
-                      </span>
-                    </td>
-                    <td className="py-4 text-white/58">{decision.txHash ?? "No transaction"}</td>
-                    <td className="py-4 text-white/58">{new Date(decision.createdAt).toLocaleString("en-US")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
-        </section>
+        </details>
       </div>
     </AppShell>
   );

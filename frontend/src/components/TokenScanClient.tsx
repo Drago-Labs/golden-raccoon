@@ -1,13 +1,51 @@
 "use client";
 
-import { Lock } from "lucide-react";
-import { useState } from "react";
+import { CheckCircle2, CreditCard, Lock } from "lucide-react";
+import { useEffect, useState } from "react";
+import { x402Client, x402HTTPClient } from "@x402/core/client";
+import type { PaymentRequired } from "@x402/core/types";
+import { toClientEvmSigner } from "@x402/evm";
+import { registerExactEvmScheme } from "@x402/evm/exact/client";
+import { useAccount, usePublicClient, useSwitchChain, useWalletClient } from "wagmi";
 import type { RiskReportVerdict, ScoreFactor, TokenScanResult, TransactionPreview } from "@/server/types";
 import { NoDataState } from "@/components/NoDataState";
 import { RiskBreakdownCard } from "@/components/RiskBreakdownCard";
+import { WalletConnectButton } from "@/components/WalletConnectButton";
 
-const checks = ["Contract Guard", "Social Scout", "News Oracle", "Portfolio Keeper", "Decision Core", "Execution Pilot"];
-const loadingSteps = ["Contract Guard", "Social Scout", "News Oracle", "Portfolio Keeper", "Decision Core"];
+const paymentStatusLabels: Record<PaymentStage, { title: string; detail: string }> = {
+  idle: {
+    title: "Payment required",
+    detail: "Detailed Scan starts the x402 payment first. The premium report is generated only after payment verification.",
+  },
+  wallet_required: {
+    title: "Connect wallet",
+    detail: "Connect an EVM wallet to sign the x402 payment and run the scan.",
+  },
+  requesting: {
+    title: "Preparing payment",
+    detail: "Fetching the x402 payment requirement for this detailed scan.",
+  },
+  payment_required: {
+    title: "Payment required",
+    detail: "The API returned HTTP 402. Your wallet will sign the x402 payment next.",
+  },
+  signing: {
+    title: "Sign payment",
+    detail: "Confirm the typed-data signature in your wallet. The detailed scan will start after verification.",
+  },
+  verifying: {
+    title: "Verifying payment",
+    detail: "Submitting the signed payment to the protected detailed scan endpoint.",
+  },
+  verified: {
+    title: "Payment verified",
+    detail: "Payment was accepted and the AI Risk Report is unlocked.",
+  },
+  failed: {
+    title: "Payment failed",
+    detail: "Payment could not be completed. Check wallet/network state and retry.",
+  },
+};
 const chains = [
   { value: "base", label: "Base" },
   { value: "goat", label: "GOAT" },
@@ -18,6 +56,21 @@ const chains = [
   { value: "optimism", label: "Optimism" },
   { value: "solana", label: "Solana later", disabled: true },
 ];
+
+type PaymentStage = "idle" | "wallet_required" | "requesting" | "payment_required" | "signing" | "verifying" | "verified" | "failed";
+type PaymentTerms = {
+  priceUsd: string;
+  network: string;
+  asset: string;
+  payTo: string;
+  available: boolean;
+};
+
+function shortenAddress(value?: string) {
+  if (!value || value.length < 12) return value ?? "Shown before signature";
+
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
 
 function formatUsd(value?: number) {
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -37,10 +90,6 @@ function formatPercent(value?: number) {
   }
 
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
-}
-
-function findBreakdown(scan: TokenScanResult, labels: string[]) {
-  return scan.riskBreakdown.filter((item) => labels.some((label) => item.label.toLowerCase().includes(label) || item.key.toLowerCase().includes(label))).slice(0, 3);
 }
 
 function verdictLabel(verdict?: RiskReportVerdict) {
@@ -79,22 +128,95 @@ function factorMetaEntries(factor: ScoreFactor) {
     .slice(0, 4);
 }
 
+function buildDeepScanUrl(query: string, chain: string, walletAddress: string) {
+  const params = new URLSearchParams({
+    query,
+    chain,
+  });
+
+  if (walletAddress.trim()) {
+    params.set("walletAddress", walletAddress.trim());
+  }
+
+  return `/api/x402/deep-scan?${params.toString()}`;
+}
+
+function getPaymentOption(paymentRequirement: PaymentRequired | null) {
+  const option = paymentRequirement?.accepts[0];
+
+  if (!option) {
+    return null;
+  }
+
+  const optionRecord = option as unknown as Record<string, string>;
+  const amount = optionRecord.amount ?? optionRecord.maxAmountRequired;
+
+  return {
+    amount,
+    asset: optionRecord.asset,
+    network: optionRecord.network,
+    payTo: optionRecord.payTo,
+  };
+}
+
+function getPaymentChainId(paymentRequirement: PaymentRequired | null) {
+  const network = getPaymentOption(paymentRequirement)?.network;
+
+  if (!network?.startsWith("eip155:")) {
+    return null;
+  }
+
+  const chainId = Number(network.replace("eip155:", ""));
+  return Number.isInteger(chainId) ? chainId : null;
+}
+
 export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: string }) {
+  const { address, chainId, isConnected } = useAccount();
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient();
+  const { switchChainAsync } = useSwitchChain();
   const [query, setQuery] = useState(initialQuery || "MEME");
   const [chain, setChain] = useState("base");
   const [walletAddress, setWalletAddress] = useState("");
   const [scan, setScan] = useState<TokenScanResult | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [premiumStatus, setPremiumStatus] = useState<PaymentStage>("idle");
+  const [premiumDetail, setPremiumDetail] = useState<string | null>(null);
+  const [paymentRequirement, setPaymentRequirement] = useState<PaymentRequired | null>(null);
+  const [paymentTerms, setPaymentTerms] = useState<PaymentTerms | null>(null);
+  const [isPreparingPremium, setIsPreparingPremium] = useState(false);
   const report = scan?.riskReport;
   const normalizedInput = report?.input ?? scan?.normalizedInput;
   const executionPreview = report?.executionPreview as TransactionPreview | undefined;
   const decisionCard = report?.agentCards.find((card) => card.agent === "decision");
   const whatWouldChange = decisionCard?.factors.find((factor) => factor.label === "What would change this decision");
+  const paymentOption = getPaymentOption(paymentRequirement);
+  const isPaymentWorking = premiumStatus === "requesting" || premiumStatus === "signing" || premiumStatus === "verifying" || isPreparingPremium;
+  const isBusy = isScanning || isPaymentWorking;
+  const showPaymentPanel = premiumStatus !== "idle";
+
+  useEffect(() => {
+    let active = true;
+
+    fetch("/api/x402/terms", { headers: { Accept: "application/json" } })
+      .then((response) => (response.ok ? (response.json() as Promise<PaymentTerms>) : null))
+      .then((terms) => {
+        if (active && terms) setPaymentTerms(terms);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function runScan() {
     setIsScanning(true);
     setScanError(null);
+    setPremiumStatus("idle");
+    setPremiumDetail(null);
+    setPaymentRequirement(null);
 
     try {
       const response = await fetch("/api/scan/token", {
@@ -104,26 +226,148 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
       });
 
       if (!response.ok) {
-        throw new Error("Scan request failed. Check the input and try again.");
+        throw new Error("Free trial scan failed. Check the input and try again.");
       }
 
       const data = (await response.json()) as TokenScanResult;
       setScan(data);
     } catch (error) {
       setScan(null);
-      setScanError(error instanceof Error ? error.message : "Scan failed.");
+      setScanError(error instanceof Error ? error.message : "Free trial scan failed.");
     } finally {
       setIsScanning(false);
     }
   }
 
+  async function runDetailedScan() {
+    setScanError(null);
+    setPremiumDetail(null);
+
+    if (!query.trim()) {
+      setPremiumStatus("failed");
+      setScanError("Enter a contract address, token symbol, or DexScreener URL before starting detailed scan payment.");
+      return;
+    }
+
+    if (!isConnected || !walletClient || !address) {
+      setScan(null);
+      setPremiumStatus("wallet_required");
+      setPremiumDetail("Connect your wallet, then press Continue detailed scan to sign the x402 payment.");
+      return;
+    }
+
+    setScan(null);
+    setPaymentRequirement(null);
+    setIsPreparingPremium(true);
+    setIsScanning(false);
+    setPremiumStatus("requesting");
+    setPremiumDetail("Requesting x402 payment terms from the protected detailed scan endpoint.");
+
+    try {
+      const url = buildDeepScanUrl(query, chain, walletAddress);
+      const protocolClient = new x402Client();
+      const signer = toClientEvmSigner(
+        {
+          address: address as `0x${string}`,
+          signTypedData: (message) =>
+            walletClient.signTypedData({
+              account: address as `0x${string}`,
+              domain: message.domain,
+              types: message.types,
+              primaryType: message.primaryType,
+              message: message.message,
+            }),
+        },
+        publicClient,
+      );
+      registerExactEvmScheme(protocolClient, { signer });
+      const httpClient = new x402HTTPClient(protocolClient);
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+
+      if (response.status === 402) {
+        const body = (await response.json().catch(() => null)) as unknown;
+        const required = httpClient.getPaymentRequiredResponse((name) => response.headers.get(name), body);
+        setPaymentRequirement(required);
+        setPremiumStatus("payment_required");
+        setPremiumDetail("Payment is required for Detailed Scan. Confirm the wallet signature to continue.");
+
+        const requiredChainId = getPaymentChainId(required);
+
+        if (requiredChainId && chainId !== requiredChainId) {
+          setPremiumDetail(`Switching wallet network to eip155:${requiredChainId} for x402 payment.`);
+          await switchChainAsync({ chainId: requiredChainId });
+        }
+
+        setPremiumStatus("signing");
+        setPremiumDetail("Wallet signature is open. Sign the x402 payment authorization.");
+        const paymentPayload = await httpClient.createPaymentPayload(required);
+        const paymentHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
+
+        setPremiumStatus("verifying");
+        setPremiumDetail("Submitting signed payment and generating the detailed AI Risk Report.");
+        setIsScanning(true);
+        const paidResponse = await fetch(url, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            ...paymentHeaders,
+          },
+        });
+
+        if (!paidResponse.ok) {
+          const data = (await paidResponse.json().catch(() => null)) as { detail?: string; error?: string } | null;
+          throw new Error(data?.detail ?? data?.error ?? "Paid scan request failed after payment signature.");
+        }
+
+        const data = (await paidResponse.json()) as { premium?: { receiptId?: string; note?: string }; scan?: TokenScanResult };
+
+        if (!data.scan) {
+          throw new Error("Detailed scan completed without a report payload.");
+        }
+
+        setScan(data.scan);
+        setPremiumStatus("verified");
+        setPremiumDetail(`Payment verified. Receipt: ${data.premium?.receiptId ?? "recorded"}.`);
+        return;
+      }
+
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as { detail?: string; error?: string } | null;
+        throw new Error(data?.detail ?? data?.error ?? "Detailed scan request failed.");
+      }
+
+      const data = (await response.json()) as { premium?: { receiptId?: string; note?: string }; scan?: TokenScanResult };
+
+      if (!data.scan) {
+        throw new Error("Scan completed without a report payload.");
+      }
+
+      setScan(data.scan);
+      setPremiumStatus("verified");
+      setPremiumDetail(`Payment verified. Receipt: ${data.premium?.receiptId ?? "recorded"}.`);
+    } catch (error) {
+      setScan(null);
+      setPremiumStatus("failed");
+      setScanError(error instanceof Error ? error.message : "Scan failed.");
+      setPremiumDetail(error instanceof Error ? error.message : "Payment or scan failed.");
+    } finally {
+      setIsScanning(false);
+      setIsPreparingPremium(false);
+    }
+  }
+
+  async function preparePremiumScan() {
+    await runDetailedScan();
+  }
+
   return (
-    <div className="space-y-8">
-      <section className="grid gap-5 lg:grid-cols-[.9fr_1.1fr]">
-        <div className="glass-panel rounded-[28px] p-6">
-          <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Token scan</div>
-          <h1 className="mt-3 text-4xl font-semibold tracking-tight">AI Risk Report</h1>
-          <div className="mt-7 grid gap-3 lg:grid-cols-[9rem_1fr_auto]">
+    <div className="space-y-5">
+      <section className="glass-panel rounded-lg p-5">
+          <h1 className="text-3xl font-semibold tracking-tight">Scan token</h1>
+          <div className="mt-5 grid gap-3 lg:grid-cols-[9rem_1fr_auto_auto]">
             <select
               value={chain}
               onChange={(event) => setChain(event.target.value)}
@@ -144,10 +388,18 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
             <button
               type="button"
               onClick={runScan}
-              disabled={isScanning}
+              disabled={isBusy}
               className="h-12 rounded-full bg-[#d9a441] px-6 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isScanning ? "Scanning..." : "Run Scan"}
+              {isScanning && !isPaymentWorking ? "Scanning..." : "Free Trial"}
+            </button>
+            <button
+              type="button"
+              onClick={runDetailedScan}
+              disabled={isBusy}
+              className="h-12 rounded-full border border-[#d9a441]/45 px-6 text-sm font-semibold text-[#f2c86d] transition hover:border-[#d9a441] hover:bg-[#d9a441]/10 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isPaymentWorking ? "Processing..." : "Detailed Scan"}
             </button>
           </div>
           <input
@@ -156,37 +408,72 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
             placeholder="Optional wallet address for portfolio exposure"
             className="mt-3 h-12 w-full rounded-full border border-white/10 bg-white/7 px-5 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#d9a441]/60"
           />
-          <div className="mt-4 rounded-2xl border border-[#d9a441]/20 bg-[#d9a441]/8 p-4 text-sm text-white/54">
-            V1 scan uses live provider data when available and marks unavailable metrics instead of inventing them.
-          </div>
-        </div>
-        <div className="glass-panel rounded-[28px] p-6">
-          <h2 className="text-2xl font-semibold">Checks</h2>
-          <div className="mt-6 grid gap-3 sm:grid-cols-2">
-            {checks.map((check) => (
-              <div key={check} className="flex items-center justify-between rounded-2xl bg-white/6 p-4">
-                <span className="text-sm font-medium">{check}</span>
-                <span className={scan ? "h-2 w-2 rounded-full bg-emerald-300" : "h-2 w-2 rounded-full bg-[#d9a441]"} />
-              </div>
-            ))}
-          </div>
-        </div>
+          <div className="mt-3 text-xs text-white/42">Free Trial is free. Detailed Scan costs {paymentTerms?.priceUsd ?? "$0.99"}.</div>
       </section>
 
-      {isScanning ? (
-        <section className="glass-panel rounded-[28px] p-6">
-          <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Scanning</div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-5">
-            {loadingSteps.map((step, index) => (
-              <div key={step} className="rounded-2xl border border-[#d9a441]/20 bg-[#d9a441]/8 p-4">
-                <div className="text-xs text-white/42">Step {index + 1}</div>
-                <div className="mt-1 text-sm font-semibold">{step}</div>
-                <div className="mt-3 h-1 rounded-full bg-white/10">
-                  <div className="h-1 w-2/3 animate-pulse rounded-full bg-[#d9a441]" />
+      {showPaymentPanel ? (
+        <section className="overflow-hidden rounded-lg border border-[#d9a441]/25 bg-[#d9a441]/8">
+          <div className="grid gap-0 lg:grid-cols-[1fr_18rem]">
+            <div className="p-6">
+              <div className="flex items-start gap-4">
+                <div className="rounded-2xl bg-[#d9a441]/12 p-3 text-[#d9a441]">
+                  {premiumStatus === "verified" ? <CheckCircle2 className="h-5 w-5" /> : <Lock className="h-5 w-5" />}
+                </div>
+                <div className="min-w-0">
+                  <h2 className="mt-2 text-xl font-semibold">{paymentStatusLabels[premiumStatus].title}</h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-white/58">{premiumDetail ?? paymentStatusLabels[premiumStatus].detail}</p>
                 </div>
               </div>
-            ))}
+
+              {premiumStatus === "wallet_required" ? (
+                <div className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-black/18 p-4">
+                  <WalletConnectButton />
+                  {isConnected ? (
+                    <button
+                      type="button"
+                      onClick={preparePremiumScan}
+                      disabled={isPaymentWorking}
+                      className="inline-flex h-11 items-center justify-center rounded-full bg-[#d9a441] px-5 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Continue detailed scan
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="border-t border-[#d9a441]/18 bg-black/18 p-6 lg:border-l lg:border-t-0">
+              <div className="rounded-2xl bg-black/22 p-4">
+                <div className="flex items-center gap-2 text-sm text-white/52">
+                  <CreditCard className="h-4 w-4 text-[#d9a441]" />
+                  x402 payment
+                </div>
+                <div className="mt-4 text-4xl font-semibold text-white">{paymentTerms?.priceUsd ?? "Price loading"}</div>
+                <div className="mt-1 text-xs uppercase tracking-[0.18em] text-white/36">per detailed scan</div>
+                <div className="mt-4 space-y-2 text-xs leading-5 text-white/48">
+                  <div>Network: {paymentOption?.network ?? paymentTerms?.network ?? "Shown before signature"}</div>
+                  <div>Asset: {paymentOption?.asset ?? paymentTerms?.asset ?? "USDC"}</div>
+                  <div>Recipient: {shortenAddress(paymentOption?.payTo ?? paymentTerms?.payTo)}</div>
+                  {paymentOption?.amount ? <div>Amount: {paymentOption.amount}</div> : null}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={preparePremiumScan}
+                disabled={isPaymentWorking || premiumStatus === "verified"}
+                className="mt-4 h-12 w-full rounded-full bg-[#d9a441] px-5 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {premiumStatus === "verified" ? "Payment verified" : isPaymentWorking ? "Processing..." : "Pay and Run Detailed Scan"}
+              </button>
+            </div>
           </div>
+        </section>
+      ) : null}
+
+      {isScanning ? (
+        <section className="flex items-center gap-3 rounded-lg border border-[#d9a441]/20 bg-[#d9a441]/8 p-4">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-[#d9a441]" />
+          <div className="text-sm text-white/68">Analyzing token risk...</div>
         </section>
       ) : null}
 
@@ -215,18 +502,20 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
               </div>
               <p className="mt-5 max-w-2xl text-sm leading-6 opacity-80">{report?.summary ?? scan.summary}</p>
               {normalizedInput ? (
-                <div className="mt-5 grid gap-2 text-xs text-white/58 sm:grid-cols-2">
+                <details className="mt-4 text-xs text-white/58">
+                  <summary className="cursor-pointer text-white/42">Token details</summary>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   <div className="rounded-2xl bg-black/20 p-3">Chain: {normalizedInput.chain}</div>
                   <div className="rounded-2xl bg-black/20 p-3">Source: {normalizedInput.source.replaceAll("_", " ")}</div>
                   <div className="rounded-2xl bg-black/20 p-3">Contract: {normalizedInput.contractAddress ?? "unresolved"}</div>
                   <div className="rounded-2xl bg-black/20 p-3">Pair: {normalizedInput.pairAddress ?? "N/A"}</div>
-                </div>
+                </div></details>
               ) : null}
             </div>
             <div className="glass-panel rounded-[28px] p-6">
               <h2 className="text-xl font-semibold">Top reasons</h2>
               <div className="mt-4 space-y-3">
-                {(report?.topReasons.length ? report.topReasons : scan.reasons).map((reason) => (
+                {(report?.topReasons.length ? report.topReasons : scan.reasons).slice(0, 3).map((reason) => (
                   <div key={reason} className="rounded-2xl bg-white/6 p-4 text-sm leading-6 text-white/62">
                     {reason}
                   </div>
@@ -234,8 +523,8 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
               </div>
             </div>
             {report?.agentCards.length ? (
-              <div className="glass-panel rounded-[28px] p-6">
-                <h2 className="text-xl font-semibold">Agent cards</h2>
+              <details className="glass-panel rounded-lg p-5">
+                <summary className="cursor-pointer text-sm font-semibold text-white/68">Agent details</summary>
                 <div className="mt-5 grid gap-3">
                   {report.agentCards.map((card) => (
                     <article key={card.agent} className="rounded-2xl bg-white/6 p-4">
@@ -299,23 +588,8 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
                     </article>
                   ))}
                 </div>
-              </div>
+              </details>
             ) : null}
-            <div className="rounded-[28px] border border-[#d9a441]/25 bg-[#d9a441]/8 p-6">
-              <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Final decision</div>
-              <h2 className="mt-2 text-2xl font-semibold capitalize">{verdictLabel(report?.verdict)}</h2>
-              <div className="mt-3 text-sm leading-6 text-white/58">
-                Suggested action: {scan.suggestedAction.type.replaceAll("_", " ")}
-                {scan.suggestedAction.percent ? ` ${scan.suggestedAction.percent}% ${scan.suggestedAction.fromToken} to ${scan.suggestedAction.toToken}` : ""}
-              </div>
-              <div className="mt-4 space-y-2">
-                {scan.reasons.slice(0, 3).map((reason) => (
-                  <div key={reason} className="rounded-2xl bg-black/20 px-4 py-3 text-sm text-white/58">
-                    {reason}
-                  </div>
-                ))}
-              </div>
-            </div>
             {whatWouldChange ? (
               <div className="glass-panel rounded-[28px] p-6">
                 <h2 className="text-xl font-semibold">What would change this decision</h2>
@@ -323,8 +597,8 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
               </div>
             ) : null}
             {executionPreview ? (
-              <div className="glass-panel rounded-[28px] p-6">
-                <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Execution preview</div>
+              <details className="glass-panel rounded-lg p-5">
+                <summary className="cursor-pointer text-sm font-semibold text-white/68">Execution details</summary>
                 <h2 className="mt-2 text-xl font-semibold">{executionPreview.title}</h2>
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   {[
@@ -349,13 +623,13 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
                 <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/58">
                   Auto execute is off. The server cannot sign. Any real blockchain action requires explicit wallet approval.
                 </div>
-              </div>
+              </details>
             ) : null}
             {scan.market ? (
-              <div className="glass-panel rounded-[28px] p-6">
+              <details className="glass-panel rounded-lg p-5">
+                <summary className="cursor-pointer text-sm font-semibold text-white/68">Market details</summary>
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <h2 className="text-xl font-semibold">DexScreener market</h2>
                     <div className="mt-1 text-sm text-white/42">{scan.market.dexId ?? "DEX"} pair data</div>
                   </div>
                   {scan.market.pairUrl ? (
@@ -384,41 +658,16 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
                     </div>
                   ))}
                 </div>
-              </div>
+              </details>
             ) : null}
           </div>
           <div className="space-y-5">
             <RiskBreakdownCard items={scan.riskBreakdown} />
-            <section className="glass-panel rounded-[28px] p-6">
-              <h2 className="text-xl font-semibold">Why this decision</h2>
-              <div className="mt-4 grid gap-3">
-                {[
-                  ["Onchain blockers", findBreakdown(scan, ["contract", "liquidity", "holder"])],
-                  ["News catalysts", findBreakdown(scan, ["news", "catalyst", "regulatory"])],
-                  ["Social identity confidence", findBreakdown(scan, ["social", "phishing", "engagement", "xsentiment"])],
-                ].map(([label, items]) => (
-                  <div key={label as string} className="rounded-2xl bg-white/6 p-4">
-                    <div className="text-sm font-semibold">{label as string}</div>
-                    <div className="mt-2 space-y-2">
-                      {(items as ReturnType<typeof findBreakdown>).length > 0 ? (
-                        (items as ReturnType<typeof findBreakdown>).map((item) => (
-                          <div key={`${label}:${item.label}`} className="text-xs leading-5 text-white/52">
-                            {item.label}: {item.finding}
-                          </div>
-                        ))
-                      ) : (
-                        <div className="text-xs leading-5 text-white/42">No connected signal in this category.</div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
             {scan.dataQuality ? (
-              <section className="glass-panel rounded-[28px] p-6">
+              <details className="glass-panel rounded-lg p-5">
+                <summary className="cursor-pointer text-sm font-semibold text-white/68">Data quality</summary>
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <h2 className="text-xl font-semibold">Data quality</h2>
                     <div className="mt-1 text-sm leading-6 text-white/48">{scan.dataQuality.detail}</div>
                   </div>
                   <span className="rounded-full border border-white/10 bg-white/7 px-3 py-1 text-xs capitalize text-white/54">
@@ -442,10 +691,10 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
                     Demo/mock data is present and explicitly counted here. It must not be treated as live production evidence.
                   </div>
                 ) : null}
-              </section>
+              </details>
             ) : null}
-            <section className="glass-panel rounded-[28px] p-6">
-              <h2 className="text-xl font-semibold">Sources checked</h2>
+            <details className="glass-panel rounded-lg p-5">
+              <summary className="cursor-pointer text-sm font-semibold text-white/68">Sources</summary>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 {scan.sources.map((source) => (
                   <div key={source.label} className="rounded-2xl bg-white/6 p-4">
@@ -454,30 +703,13 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
                   </div>
                 ))}
               </div>
-            </section>
+            </details>
             {scan.dataQuality?.mode === "unavailable" || scan.dataQuality?.connectedSources === 0 ? (
               <NoDataState
                 title="Not enough connected sources"
                 detail="Provider unavailable or token identity could not be resolved. This result is conservative and uses no mock data."
               />
             ) : null}
-            <section className="rounded-[28px] border border-[#d9a441]/25 bg-[#d9a441]/8 p-6">
-              <div className="flex items-start gap-4">
-                <div className="rounded-2xl bg-[#d9a441]/12 p-3 text-[#d9a441]">
-                  <Lock className="h-5 w-5" />
-                </div>
-                <div>
-                  <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">x402 premium</div>
-                  <h2 className="mt-2 text-xl font-semibold">Deep scan locked</h2>
-                  <button
-                    type="button"
-                    className="mt-5 h-11 rounded-full border border-[#d9a441]/35 px-5 text-sm font-semibold text-[#d9a441]"
-                  >
-                    Prepare x402 Payment
-                  </button>
-                </div>
-              </div>
-            </section>
           </div>
         </section>
       ) : null}

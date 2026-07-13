@@ -6,7 +6,7 @@ import { buildAgentResult, scoreToRiskLevel } from "../src/server/agents/shared"
 import { validateAgentResult } from "../src/server/agents/schema";
 import { runSocialAgent } from "../src/server/agents/social";
 import { resolveTokenIdentity } from "../src/server/identity/tokenIdentity";
-import { createAgentRunRecord, getStorageHealth } from "../src/server/storage";
+import { createAgentRunRecord, createX402PaymentReceipt, getStorageHealth, getX402PaymentReceiptByHeaderHash } from "../src/server/storage";
 import { getCachePolicyMetadata } from "../src/server/cache/strategy";
 import { getProviderTimeoutBudget, resolveProviderConflict, runProviderFallbacks } from "../src/server/providers/adapter";
 import { getRuntimeModeHealth } from "../src/server/env/runtimeMode";
@@ -24,6 +24,8 @@ import { hashSourceSnapshot } from "../src/server/storage";
 import { rateLimitProfiles } from "../src/server/security/rateLimit";
 import { contractAddressSchema, tokenSymbolSchema, walletAddressSchema } from "../src/server/security/inputValidation";
 import { buildRiskReport, validateRiskReport } from "../src/server/scan/riskReport";
+import { getX402RouteConfig, getX402RuntimeConfig, validateX402RuntimeConfig } from "../src/server/x402/config";
+import { assertFreshX402Payment, hashPaymentHeader } from "../src/server/x402/guards";
 import type { AgentResult, PortfolioSnapshot, TokenHolding } from "../src/server/types";
 import { POST as confirmExecution } from "../src/app/api/execute/confirm/route";
 
@@ -865,7 +867,7 @@ async function runReadinessChecks() {
   assert(hardening.riskDriverBreakdown.some((item) => item.key === "chain_readiness"), "Portfolio hardening must expose deterministic risk driver breakdown.");
 
   const storageHealth = getStorageHealth();
-  for (const table of ["wallets", "agent_runs", "agent_results", "recommendations", "user_rules", "approvals", "transactions", "token_identities", "source_snapshots"]) {
+  for (const table of ["wallets", "agent_runs", "agent_results", "recommendations", "user_rules", "approvals", "transactions", "x402_payment_receipts", "token_identities", "source_snapshots"]) {
     assert(storageHealth.schema?.tables.includes(table), `Storage schema contract must include ${table}.`);
   }
 
@@ -1065,6 +1067,93 @@ function runCachePolicyChecks() {
   assert(execution.scope === "no-store", "Execution planning must not be shared-cacheable.");
 }
 
+function runX402Checks() {
+  const previous = {
+    X402_PAY_TO: process.env.X402_PAY_TO,
+    X402_PRICE_USD: process.env.X402_PRICE_USD,
+    X402_NETWORK: process.env.X402_NETWORK,
+    X402_FACILITATOR_URL: process.env.X402_FACILITATOR_URL,
+    CDP_API_KEY_ID: process.env.CDP_API_KEY_ID,
+    CDP_API_KEY_SECRET: process.env.CDP_API_KEY_SECRET,
+  };
+
+  process.env.X402_PAY_TO = "0x0000000000000000000000000000000000000001";
+  process.env.X402_PRICE_USD = "$0.01";
+  process.env.X402_NETWORK = "eip155:84532";
+  process.env.X402_FACILITATOR_URL = "https://x402.org/facilitator";
+
+  const config = getX402RuntimeConfig();
+  const validation = validateX402RuntimeConfig(config);
+  const routeConfig = getX402RouteConfig(config);
+
+  assert(validation.ok, `x402 config should validate in fixture: ${validation.issues.join(", ")}`);
+  assert(config.protectedResource === "/api/x402/deep-scan", "x402 protected resource must be the premium deep scan endpoint.");
+  assert(Array.isArray(routeConfig.accepts), "x402 route config must expose payment requirements.");
+  assert(routeConfig.accepts[0]?.payTo === config.payTo, "x402 route config must bind the expected recipient.");
+  assert(routeConfig.accepts[0]?.network === config.network, "x402 route config must bind the expected network.");
+
+  const request = new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+    headers: { "PAYMENT-SIGNATURE": "fixture-payment-signature" },
+  });
+  const guard = assertFreshX402Payment({
+    request,
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(guard.ok, "Fresh x402 payment signature must pass idempotency guard.");
+  const receipt = createX402PaymentReceipt({
+    requestId: guard.requestId,
+    paymentHeaderHash: guard.paymentHeaderHash,
+    network: config.network,
+    asset: config.asset,
+    amount: config.priceUsd,
+    priceUsd: config.priceUsd,
+    payTo: config.payTo,
+    facilitatorUrl: config.facilitatorUrl,
+    protectedResource: config.protectedResource,
+    requestBodyHash: guard.requestBodyHash,
+    verificationStatus: "verified",
+  });
+
+  assert(receipt.id.startsWith("x402_"), "x402 payment receipts must use x402 ids.");
+  assert(getX402PaymentReceiptByHeaderHash(hashPaymentHeader("fixture-payment-signature"))?.id === receipt.id, "x402 receipts must be retrievable by payment header hash.");
+
+  const duplicate = assertFreshX402Payment({
+    request,
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!duplicate.ok && duplicate.status === 409, "Duplicate x402 payment signature must be rejected before premium work runs.");
+
+  process.env.X402_PRICE_USD = "0.01";
+  const invalid = validateX402RuntimeConfig(getX402RuntimeConfig());
+  assert(!invalid.ok && invalid.issues.some((issue) => issue.includes("X402_PRICE_USD")), "x402 price must keep dollar-prefixed format.");
+
+  process.env.X402_PRICE_USD = "$0.01";
+  process.env.X402_NETWORK = "eip155:8453";
+  const invalidMainnetFacilitator = validateX402RuntimeConfig(getX402RuntimeConfig());
+  assert(
+    !invalidMainnetFacilitator.ok && invalidMainnetFacilitator.issues.some((issue) => issue.includes("Base mainnet")),
+    "Base mainnet must reject the testnet-only facilitator.",
+  );
+
+  process.env.X402_FACILITATOR_URL = "https://api.cdp.coinbase.com/platform/v2/x402";
+  delete process.env.CDP_API_KEY_ID;
+  delete process.env.CDP_API_KEY_SECRET;
+  const invalidCdpAuth = validateX402RuntimeConfig(getX402RuntimeConfig());
+  assert(!invalidCdpAuth.ok && invalidCdpAuth.issues.some((issue) => issue.includes("CDP_API_KEY_ID")), "CDP facilitator must require both API credentials.");
+
+  for (const [key, value] of Object.entries(previous)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+}
+
 async function main() {
   await runOnchainChecks();
   await runNewsChecks();
@@ -1074,6 +1163,7 @@ async function main() {
   await runReadinessChecks();
   await runProviderReliabilityChecks();
   runCachePolicyChecks();
+  runX402Checks();
 
   console.log("Agent fixture checks passed.");
 }

@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import type { UserRule } from "@/server/types";
-import { ShieldCheck } from "lucide-react";
 
 export function RuleForm({ initialRules }: { initialRules: UserRule }) {
   const [rules, setRules] = useState(initialRules);
@@ -22,16 +21,9 @@ export function RuleForm({ initialRules }: { initialRules: UserRule }) {
   }
 
   return (
-    <section className="glass-panel rounded-[28px] p-6">
-      <div className="flex items-center gap-3">
-        <div className="rounded-2xl bg-[#d9a441]/12 p-3 text-[#d9a441]">
-          <ShieldCheck className="h-5 w-5" />
-        </div>
-        <div>
-          <h2 className="text-2xl font-semibold">Risk tolerance</h2>
-        </div>
-      </div>
-      <div className="mt-8 grid gap-5">
+    <section className="glass-panel rounded-lg p-6">
+      <h2 className="text-xl font-semibold">Limits</h2>
+      <div className="mt-6 grid gap-6">
         {[
           ["maxRiskScore", "Max risk"],
           ["maxTradePercent", "Max trade"],
@@ -60,9 +52,9 @@ export function RuleForm({ initialRules }: { initialRules: UserRule }) {
         onClick={saveRules}
         className="mt-8 inline-flex h-11 items-center justify-center rounded-full bg-[#d9a441] px-6 text-sm font-semibold text-black transition hover:bg-[#f2c86d]"
       >
-        Save Rules
+        Save
       </button>
-      {saved ? <span className="ml-4 text-sm text-emerald-300">Rules saved for demo session.</span> : null}
+      {saved ? <span className="ml-4 text-sm text-emerald-300">Saved</span> : null}
     </section>
   );
 }

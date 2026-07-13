@@ -142,28 +142,9 @@ export function AgentsNetwork() {
 
   return (
     <div className="space-y-6">
-      <section className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-        <div>
-          <div className="text-sm uppercase tracking-[0.2em] text-[#d9a441]">Agents</div>
-          <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">Agent command center</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-white/50">
-            Run each specialist agent independently, inspect findings, and verify the same signals that feed the V1 AI Risk Report.
-          </p>
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <div className="rounded-2xl border border-white/10 bg-white/[.045] px-4 py-3">
-            <div className="text-2xl font-semibold">{completedCount}</div>
-            <div className="mt-1 text-xs text-white/42">completed</div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/[.045] px-4 py-3">
-            <div className="text-2xl font-semibold">{warningCount}</div>
-            <div className="mt-1 text-xs text-white/42">warnings</div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/[.045] px-4 py-3">
-            <div className="text-2xl font-semibold">6</div>
-            <div className="mt-1 text-xs text-white/42">agents</div>
-          </div>
-        </div>
+      <section className="flex items-end justify-between gap-4 border-b border-white/10 pb-4">
+        <h1 className="text-3xl font-semibold tracking-tight">Agents</h1>
+        <div className="text-sm text-white/46">{completedCount} run · {warningCount} warnings</div>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-3">
@@ -173,9 +154,9 @@ export function AgentsNetwork() {
           const isLoading = Boolean(loading[module.key]);
 
           return (
-            <article key={module.key} className="flex min-h-[22rem] flex-col rounded-[24px] border border-white/10 bg-white/[.045] p-5">
+            <article key={module.key} className="flex flex-col rounded-lg border border-white/10 bg-white/[.045] p-4">
               <div className="flex items-start justify-between gap-4">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#d9a441]/10 text-[#d9a441]">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#d9a441]/10 text-[#d9a441]">
                   <Icon className="h-5 w-5" />
                 </div>
                 <span className={result?.status === "warning" ? "rounded-full bg-[#d9a441]/15 px-3 py-1 text-xs text-[#f2c86d]" : "rounded-full bg-white/7 px-3 py-1 text-xs text-white/46"}>
@@ -183,12 +164,9 @@ export function AgentsNetwork() {
                 </span>
               </div>
 
-              <div className="mt-5">
-                <h2 className="text-xl font-semibold">{module.name}</h2>
-                <p className="mt-2 min-h-12 text-sm leading-6 text-white/48">{module.description}</p>
-              </div>
+              <h2 className="mt-4 text-base font-semibold">{module.name}</h2>
 
-              <label className="mt-5 text-xs uppercase tracking-[0.16em] text-white/34" htmlFor={`${module.key}-input`}>
+              <label className="mt-4 text-xs text-white/34" htmlFor={`${module.key}-input`}>
                 {module.inputLabel}
               </label>
               <input
@@ -209,7 +187,7 @@ export function AgentsNetwork() {
                 Run
               </button>
 
-              <div className="mt-4 flex flex-1 flex-col justify-end">
+              <div className="mt-3">
                 {result ? (
                   <button
                     type="button"
@@ -225,11 +203,9 @@ export function AgentsNetwork() {
                       <span>{Math.round(result.confidence * 100)}% confidence</span>
                       {result.recommendedAction === "manual_review" ? <span>manual review</span> : null}
                     </div>
-                    <p className="mt-2 line-clamp-2 text-sm leading-6 text-white/46">{result.summary}</p>
+                    <p className="mt-2 line-clamp-1 text-sm text-white/46">{result.summary}</p>
                   </button>
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-white/10 p-4 text-sm text-white/34">No result yet.</div>
-                )}
+                ) : null}
               </div>
             </article>
           );

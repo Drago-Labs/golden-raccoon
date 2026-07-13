@@ -23,6 +23,10 @@ const requiredFiles = [
   "frontend/src/server/evaluation/replay.ts",
   "frontend/src/server/storage/index.ts",
   "frontend/src/server/storage/schema.sql",
+  "frontend/src/server/x402/config.ts",
+  "frontend/src/server/x402/guards.ts",
+  "frontend/src/server/x402/server.ts",
+  "frontend/src/app/api/x402/deep-scan/route.ts",
   "frontend/src/server/agents/execution/policy.ts",
   "frontend/src/app/api/health/route.ts",
   "frontend/src/app/api/history/agent-runs/route.ts",
@@ -182,6 +186,7 @@ function checkProductionEnvironment() {
 
   const requiredEnv = [
     "NEXT_PUBLIC_APP_URL",
+    "NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID",
     "SUPABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY",
     "GOAT_RPC_URL",
@@ -195,33 +200,62 @@ function checkProductionEnvironment() {
       process.env.TAVILY_API_KEY ||
       process.env.X_BEARER_TOKEN,
   );
+  const requiredX402Env = ["X402_PAY_TO", "X402_PRICE_USD", "X402_NETWORK", "X402_FACILITATOR_URL"];
+  const missingX402 = requiredX402Env.filter((key) => !process.env[key]);
+  const cdpFacilitator = process.env.X402_FACILITATOR_URL?.includes("api.cdp.coinbase.com");
+  const cdpAuthConfigured = Boolean(process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET);
+  const productionFailure = hostedProductionDeploy || strictProductionDeploy;
 
   if (missing.length > 0) {
     const message = `production deploy env is incomplete: ${missing.join(", ")}`;
 
-    strictProductionDeploy ? fail(message) : warn(`${message}. Set PRODUCTION_DEPLOY=1 or RELEASE_TARGET=production to enforce this as a hard release gate.`);
+    productionFailure ? fail(message) : warn(message);
   }
 
   if (!goPlusConfigured) {
     const message = "production deploy requires GOPLUS_API_KEY or both GOPLUS_APP_KEY and GOPLUS_APP_SECRET for Contract Guard security checks";
 
-    strictProductionDeploy ? fail(message) : warn(message);
+    productionFailure ? fail(message) : warn(message);
   }
 
   if (!portfolioProviderConfigured) {
     const message = "production deploy requires GOAT_RPC_URL or at least one portfolio provider key: GOLDRUSH_API_KEY, COVALENT_API_KEY, or ALCHEMY_API_KEY";
 
-    strictProductionDeploy ? fail(message) : warn(message);
+    productionFailure ? fail(message) : warn(message);
   }
 
   if (!socialProviderConfigured) {
     warn("social provider key is not configured; V1 Social Agent will run in metadata-only mode and will not generate fake follower, engagement, or bot scores");
   }
 
+  if (missingX402.length > 0) {
+    const message = `production x402 env is incomplete: ${missingX402.join(", ")}`;
+
+    productionFailure ? fail(message) : warn(message);
+  }
+
+  if (process.env.X402_NETWORK !== "eip155:8453") {
+    const message = "production x402 must use Base mainnet network eip155:8453";
+
+    productionFailure ? fail(message) : warn(message);
+  }
+
+  if (!cdpFacilitator) {
+    const message = "production x402 must use the CDP facilitator at https://api.cdp.coinbase.com/platform/v2/x402";
+
+    productionFailure ? fail(message) : warn(message);
+  }
+
+  if (!cdpAuthConfigured) {
+    const message = "production CDP x402 requires CDP_API_KEY_ID and CDP_API_KEY_SECRET";
+
+    productionFailure ? fail(message) : warn(message);
+  }
+
   if (process.env.NEXT_PUBLIC_APP_URL?.includes("localhost")) {
     const message = "production deploy NEXT_PUBLIC_APP_URL must not point to localhost";
 
-    strictProductionDeploy ? fail(message) : warn(message);
+    productionFailure ? fail(message) : warn(message);
   }
 }
 
@@ -234,7 +268,7 @@ checkVercelBuildGate();
 checkProductionEnvironment();
 
 const schema = readFileSync(join(root, "frontend/src/server/storage/schema.sql"), "utf8");
-for (const table of ["wallets", "agent_runs", "agent_results", "recommendations", "user_rules", "approvals", "transactions", "token_identities", "source_snapshots"]) {
+for (const table of ["wallets", "agent_runs", "agent_results", "recommendations", "user_rules", "approvals", "transactions", "x402_payment_receipts", "token_identities", "source_snapshots"]) {
   if (!schema.includes(`create table if not exists ${table}`)) {
     fail(`storage schema is missing table contract: ${table}`);
   }

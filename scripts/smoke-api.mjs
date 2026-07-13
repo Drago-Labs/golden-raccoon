@@ -63,6 +63,13 @@ const checks = [
     init: postJson({ query: "not-a-contract", chain: "base" }),
     validate: (body) => body.dataQuality?.mode === "unavailable" && body.dataQuality?.mockSources === 0,
   },
+  {
+    name: "x402 premium requires payment",
+    path: "/api/x402/deep-scan?query=GOAT&chain=base",
+    init: { method: "GET", headers: { Accept: "application/json" } },
+    expectedStatus: 402,
+    validate: (_body, response) => Boolean(response.headers.get("payment-required") || response.headers.get("x-payment-required")),
+  },
 ];
 
 for (const check of checks) {
@@ -76,9 +83,9 @@ for (const check of checks) {
     throw new Error(`${check.name} failed with HTTP ${response.status}`);
   }
 
-  const body = await response.json();
+  const body = await response.json().catch(() => ({}));
 
-  if (!check.validate(body)) {
+  if (!check.validate(body, response)) {
     throw new Error(`${check.name} returned unexpected payload`);
   }
 

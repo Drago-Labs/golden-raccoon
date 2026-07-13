@@ -1,4 +1,5 @@
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
+import { base, baseSepolia } from "wagmi/chains";
 import { goatNetwork } from "./chains";
 
 const appUrl =
@@ -11,6 +12,6 @@ export const wagmiConfig = getDefaultConfig({
   appUrl,
   appIcon: `${appUrl}/brand/logo.png`,
   projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "gold-raccoon-demo",
-  chains: [goatNetwork],
+  chains: [goatNetwork, baseSepolia, base],
   ssr: true,
 });

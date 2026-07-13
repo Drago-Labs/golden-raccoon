@@ -32,7 +32,70 @@ GOPLUS_API_KEY=
 # Or provide app credentials; the server will request and cache access tokens:
 GOPLUS_APP_KEY=
 GOPLUS_APP_SECRET=
+
+# Server-only x402 premium deep scan production config.
+X402_PAY_TO=0x3ED3E93047b4bCF2e6Ab0744Db08a132d0c97D7d
+X402_PRICE_USD=\$0.99
+X402_NETWORK=eip155:8453
+X402_FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402
+X402_ASSET=USDC
+CDP_API_KEY_ID=
+CDP_API_KEY_SECRET=
 ```
+
+## GOAT x402 Premium Flow
+
+The free scan remains available at `/api/scan/token`. Premium deep scan is protected at `/api/x402/deep-scan`.
+
+- Without payment, the endpoint returns HTTP `402` with a `PAYMENT-REQUIRED` header.
+- An x402-compatible buyer signs the payment and retries with `PAYMENT-SIGNATURE`.
+- The server verifies through the configured x402 facilitator before running premium analysis.
+- Duplicate payment signatures are blocked with a local idempotency guard.
+- Production must configure `X402_PAY_TO`, `X402_PRICE_USD`, `X402_NETWORK`, and `X402_FACILITATOR_URL`.
+- CDP facilitator production mode also requires `CDP_API_KEY_ID` and `CDP_API_KEY_SECRET`.
+
+Production uses Base mainnet (`eip155:8453`) with the authenticated CDP facilitator. For local testnet checks, use Base Sepolia (`eip155:84532`) with `https://x402.org/facilitator`.
+
+### V1 Pricing Logic
+
+Deep Scan starts at `$0.99`.
+
+Pricing rule:
+
+```text
+final price >= AI model cost + provider/API cost + payment/facilitator overhead + infra buffer + profit margin
+```
+
+V1 uses one fixed Deep Scan price because actual per-scan AI/provider usage is not persisted yet. After usage metering is added, keep at least a 60-70% gross margin target and adjust `X402_PRICE_USD` from production env without code changes.
+
+Free Scan should stay free:
+
+- Buy Risk
+- Confidence
+- Verdict
+- Top reasons
+- Basic agent cards
+
+Paid Deep Scan should unlock:
+
+- Full agent factor detail
+- Critical blocker explanation
+- Decision confidence breakdown
+- What would change this decision
+- Full source/missing-data details
+- x402 receipt id
+
+## Supabase Migration
+
+The canonical V1 schema is `frontend/src/server/storage/schema.sql`.
+
+Local or remote application steps:
+
+1. Open the Supabase project SQL editor or connect with the Supabase CLI.
+2. Run the full contents of `frontend/src/server/storage/schema.sql`.
+3. Confirm these tables exist: `wallets`, `agent_runs`, `agent_results`, `recommendations`, `user_rules`, `approvals`, `transactions`, `x402_payment_receipts`, `token_identities`, `source_snapshots`.
+4. Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to server-only env.
+5. Run `npm run deploy:check` from the repository root.
 
 First, run the development server:
 

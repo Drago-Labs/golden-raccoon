@@ -3,20 +3,12 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { useAccount } from "wagmi";
-import { ArrowRight, Bot, Check, ChevronDown, Loader2, Newspaper, RadioTower, ShieldCheck, Wallet } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, Loader2 } from "lucide-react";
 import type { AgentResult, PortfolioSnapshot, TokenHolding, TokenScanResult } from "@/server/types";
 import { AgentResultPanel } from "@/components/AgentResultPanel";
 import { NoDataState } from "@/components/NoDataState";
 import { RiskScoreCard } from "@/components/RiskScoreCard";
 import { WalletPortfolioCard } from "@/components/WalletPortfolioCard";
-
-const agents = [
-  { name: "Portfolio", detail: "Reads holdings, allocation and wallet exposure.", icon: Wallet },
-  { name: "News", detail: "Checks market headlines and project catalysts.", icon: Newspaper },
-  { name: "Social", detail: "Reviews sentiment, hype quality and warning signals.", icon: RadioTower },
-  { name: "Onchain", detail: "Checks contract, liquidity, holders and wallet flows.", icon: ShieldCheck },
-  { name: "Execution", detail: "Prepares approval-only transaction plans.", icon: Bot },
-];
 
 const networks = [
   { id: "goat", name: "GOAT", mark: "G", color: "bg-[#d9a441] text-black" },
@@ -96,7 +88,7 @@ function getPortfolioRiskDrivers(portfolio: PortfolioSnapshot) {
     suggestedRebalance:
       portfolio.riskScore >= 70
         ? "Reduce high-risk exposure and increase stable reserve."
-        : stableReserve < 15
+        : stableReserve < 10
           ? "Increase stable reserve before taking more token risk."
           : "Monitor current allocation; no urgent rebalance signal.",
   };
@@ -318,126 +310,57 @@ export function DashboardClient() {
   }
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-[28px] border border-[#d9a441]/20 bg-[#d9a441]/7 p-6 sm:p-8">
-        <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
-          <div className="max-w-3xl">
-            <div className="text-sm uppercase tracking-[0.2em] text-[#d9a441]">Multi agent dashboard</div>
-            <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">Wallet guarded by agents</h1>
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-4">
-        <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Wallet</div>
-        <div className="grid items-stretch gap-5 lg:grid-cols-[1.15fr_.85fr]">
+    <div className="space-y-5">
+      <section>
+        <h1 className="text-3xl font-semibold tracking-tight">Portfolio</h1>
+        <div className="mt-4 grid items-stretch gap-5 lg:grid-cols-[1.15fr_.85fr]">
           <WalletPortfolioCard portfolio={portfolio} walletAddress={address} />
-          <RiskScoreCard score={portfolio.riskScore} />
+          <RiskScoreCard score={portfolio.riskScore} holdings={portfolio.holdings} />
         </div>
       </section>
 
-      <section className="glass-panel rounded-[28px] p-5">
-        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+      <section className="flex flex-col gap-3 border-y border-white/10 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-sm text-white/62">{riskDrivers.suggestedRebalance}</div>
+        <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
+          <span><span className="text-white/38">Largest</span> {riskDrivers.largestHolding?.symbol ?? "N/A"} {riskDrivers.largestHolding?.allocationPercent.toFixed(1) ?? "0.0"}%</span>
+          <span><span className="text-white/38">Stable</span> {riskDrivers.stableReserve.toFixed(1)}%</span>
+          <span><span className="text-white/38">Exit risk</span> {riskDrivers.liquidityExitRisk.toFixed(1)}%</span>
+        </div>
+      </section>
+
+      <section className="glass-panel rounded-lg p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Risk drivers</div>
-            <h2 className="mt-2 text-2xl font-semibold">Portfolio pressure points</h2>
+            <h2 className="text-xl font-semibold">Portfolio decision</h2>
+            <div className="mt-1 text-sm text-white/46">{dashboardRunSummary?.final ? `${dashboardRunSummary.final.verdict} - ${dashboardRunSummary.final.recommendedAction.replaceAll("_", " ")}` : "Analyze the highest-risk holding."}</div>
           </div>
-          <div className="text-sm text-white/46">{riskDrivers.suggestedRebalance}</div>
-        </div>
-        <div className="mt-5 grid gap-3 lg:grid-cols-4">
-          <div className="rounded-2xl bg-white/6 p-4">
-            <div className="text-sm text-white/42">Largest holding</div>
-            <div className="mt-1 text-xl font-semibold">{riskDrivers.largestHolding?.symbol ?? "N/A"}</div>
-            <div className="mt-1 text-sm text-white/48">{riskDrivers.largestHolding?.allocationPercent.toFixed(1) ?? "0.0"}%</div>
-          </div>
-          <div className="rounded-2xl bg-white/6 p-4">
-            <div className="text-sm text-white/42">Stable reserve</div>
-            <div className="mt-1 text-xl font-semibold">{riskDrivers.stableReserve.toFixed(1)}%</div>
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full rounded-full bg-emerald-300" style={{ width: `${Math.min(100, riskDrivers.stableReserve)}%` }} />
-            </div>
-          </div>
-          <div className="rounded-2xl bg-white/6 p-4">
-            <div className="text-sm text-white/42">Liquidity exit risk</div>
-            <div className="mt-1 text-xl font-semibold">{riskDrivers.liquidityExitRisk.toFixed(1)}%</div>
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full rounded-full bg-red-300" style={{ width: `${Math.min(100, riskDrivers.liquidityExitRisk)}%` }} />
-            </div>
-          </div>
-          <div className="rounded-2xl bg-white/6 p-4">
-            <div className="text-sm text-white/42">Top risk holdings</div>
-            <div className="mt-2 space-y-1">
-              {riskDrivers.topHoldings.map((holding) => (
-                <div key={`${holding.tokenAddress}:${holding.symbol}`} className="flex justify-between gap-2 text-sm text-white/58">
-                  <span>{holding.symbol}</span>
-                  <span>{holding.riskScore}/100</span>
-                </div>
-              ))}
-            </div>
+          <div className="flex gap-2">
+            {dashboardAgentResults.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setIsDashboardRunOpen(true)}
+                className="inline-flex h-11 items-center justify-center rounded-full border border-white/10 px-4 text-sm font-semibold text-white/70 transition hover:text-white"
+              >
+                View result
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={runDashboardAgents}
+              disabled={isRunningAgents}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#d9a441] px-5 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isRunningAgents ? "Running" : "Run agents"}
+              {isRunningAgents ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+            </button>
           </div>
         </div>
       </section>
 
-      <section className="glass-panel rounded-[28px] p-5">
-        <div className="grid gap-5 lg:grid-cols-[.8fr_1.2fr] lg:items-center">
-          <div>
-            <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Run agents</div>
-            <h2 className="mt-2 text-2xl font-semibold">Portfolio-led decision</h2>
-            <div className="mt-2 text-sm leading-6 text-white/46">
-              Starts with wallet exposure, then checks the riskiest token across contract, news and social signals.
-            </div>
-          </div>
-          <div className="space-y-4">
-            <div className="grid gap-2 sm:grid-cols-5">
-              {dashboardRunSteps.map((step) => (
-                <div key={step.key} className={`min-h-24 rounded-[20px] border p-3 ${getStepTone(step.status)}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm font-semibold">{step.label}</div>
-                    {step.status === "running" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  </div>
-                  <div className="mt-3 text-xs leading-5 opacity-75">{step.detail}</div>
-                </div>
-              ))}
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-sm text-white/46">
-                {dashboardRunSummary?.final
-                  ? `${dashboardRunSummary.final.verdict} - ${dashboardRunSummary.final.recommendedAction.replaceAll("_", " ")}`
-                  : dashboardRunSummary?.riskyToken
-                    ? `Watching ${dashboardRunSummary.riskyToken.symbol} at ${dashboardRunSummary.riskyToken.riskScore}/100 risk.`
-                    : "Ready to run the full agent stack."}
-              </div>
-              <div className="flex gap-2">
-                {dashboardAgentResults.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => setIsDashboardRunOpen(true)}
-                    className="inline-flex h-11 items-center justify-center rounded-full border border-white/10 px-4 text-sm font-semibold text-white/70 transition hover:text-white"
-                  >
-                    View result
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={runDashboardAgents}
-                  disabled={isRunningAgents}
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#d9a441] px-5 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isRunningAgents ? "Running" : "Run agents"}
-                  {isRunningAgents ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-[28px] border border-[#d9a441]/20 bg-[#d9a441]/7 p-5">
+      <section className="rounded-lg border border-[#d9a441]/20 bg-[#d9a441]/7 p-5">
         <div className="grid gap-4 lg:grid-cols-[.55fr_1.45fr] lg:items-center">
           <div>
-            <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Token scan</div>
-            <div className="mt-2 text-xl font-semibold">Contract first</div>
-            <div className="mt-2 text-sm text-white/42">Network, social, liquidity</div>
+            <div className="text-xl font-semibold">Scan token</div>
           </div>
           <form onSubmit={runTokenScan} className="flex flex-col gap-3 sm:flex-row">
             <div className="relative sm:w-56">
@@ -456,7 +379,7 @@ export function DashboardClient() {
               </button>
 
               {isNetworkOpen ? (
-                <div className="absolute left-0 top-14 z-20 w-full overflow-hidden rounded-[22px] border border-white/10 bg-[#101012] py-2 shadow-2xl sm:w-72">
+                <div className="absolute bottom-14 left-0 z-50 max-h-72 w-full overflow-y-auto rounded-[22px] border border-white/10 bg-[#101012] py-2 shadow-2xl sm:w-72">
                   {networks.map((network) => (
                     <button
                       key={network.id}
@@ -495,40 +418,6 @@ export function DashboardClient() {
               <ArrowRight className="h-4 w-4" />
             </button>
           </form>
-        </div>
-      </section>
-
-      <section className="glass-panel rounded-[28px] p-5">
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-          <div>
-            <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Agents</div>
-            <h2 className="mt-2 text-2xl font-semibold">5 agent modules</h2>
-          </div>
-        </div>
-
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {agents.map((agent) => {
-            const Icon = agent.icon;
-
-            return (
-              <div
-                key={agent.name}
-                tabIndex={0}
-                className="group relative rounded-[22px] border border-white/10 bg-black/20 p-4 outline-none transition hover:border-[#d9a441]/35 focus:border-[#d9a441]/35"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#d9a441]/10 text-[#d9a441]">
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <span className="h-2 w-2 rounded-full bg-emerald-300" />
-                </div>
-                <div className="mt-4 text-base font-semibold">{agent.name}</div>
-                <div className="pointer-events-none absolute bottom-4 left-4 right-4 rounded-2xl border border-white/10 bg-[#050505]/95 px-3 py-2 text-xs leading-5 text-white/64 opacity-0 shadow-2xl transition group-hover:opacity-100 group-focus:opacity-100">
-                  {agent.detail}
-                </div>
-              </div>
-            );
-          })}
         </div>
       </section>
 

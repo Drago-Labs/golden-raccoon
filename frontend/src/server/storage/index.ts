@@ -7,6 +7,7 @@ import type {
   TransactionRecord,
   UserApprovalRecord,
   UserRule,
+  X402PaymentReceipt,
 } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { validateAgentResult } from "@/server/agents/schema";
@@ -29,6 +30,7 @@ export const storageSchemaContract = {
     "user_rules",
     "approvals",
     "transactions",
+    "x402_payment_receipts",
     "token_identities",
     "source_snapshots",
   ],
@@ -42,6 +44,9 @@ export const storageSchemaContract = {
     "createTransactionRecord",
     "listApprovalRecords",
     "createApprovalRecord",
+    "listX402PaymentReceipts",
+    "getX402PaymentReceiptByHeaderHash",
+    "createX402PaymentReceipt",
     "getUserRuleRecord",
     "upsertUserRuleRecord",
   ],
@@ -54,6 +59,7 @@ const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonTransactions?: TransactionRecord[];
   __goldenRaccoonApprovals?: UserApprovalRecord[];
   __goldenRaccoonUserRules?: UserRule[];
+  __goldenRaccoonX402PaymentReceipts?: X402PaymentReceipt[];
 };
 
 function getAgentRuns() {
@@ -84,6 +90,12 @@ function getUserRules() {
   memoryStore.__goldenRaccoonUserRules ??= [];
 
   return memoryStore.__goldenRaccoonUserRules;
+}
+
+function getX402PaymentReceipts() {
+  memoryStore.__goldenRaccoonX402PaymentReceipts ??= [];
+
+  return memoryStore.__goldenRaccoonX402PaymentReceipts;
 }
 
 function createId() {
@@ -315,6 +327,38 @@ export function upsertUserRuleRecord(input: UserRule) {
   return record;
 }
 
+export function listX402PaymentReceipts() {
+  return getX402PaymentReceipts().sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+export function getX402PaymentReceiptByHeaderHash(paymentHeaderHash: string) {
+  return getX402PaymentReceipts().find((record) => record.paymentHeaderHash === paymentHeaderHash);
+}
+
+export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string }) {
+  const existing = getX402PaymentReceiptByHeaderHash(input.paymentHeaderHash);
+
+  if (existing) {
+    return {
+      ...existing,
+      verificationStatus: "duplicate" as const,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  const record: X402PaymentReceipt = {
+    id: createRecordId("x402"),
+    ...input,
+    createdAt,
+    updatedAt: input.updatedAt ?? createdAt,
+  };
+
+  getX402PaymentReceipts().unshift(record);
+
+  return record;
+}
+
 export function getStorageCounts(): StorageCounts {
   return {
     agentRuns: getAgentRuns().length,
@@ -322,5 +366,6 @@ export function getStorageCounts(): StorageCounts {
     transactions: getTransactions().length,
     approvals: getApprovals().length,
     userRules: getUserRules().length,
+    x402PaymentReceipts: getX402PaymentReceipts().length,
   };
 }

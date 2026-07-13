@@ -9,6 +9,30 @@ type KnownToken = {
 };
 
 const stablecoinSymbols = new Set(["USDC", "USDT", "DAI"]);
+// CoinMarketCap top 20 snapshot, 2026-07-13. Meme assets retain their
+// volatility classification and stablecoins still require address verification.
+const establishedLargeCapSymbols = new Set([
+  "BTC",
+  "ETH",
+  "USDT",
+  "BNB",
+  "USDC",
+  "XRP",
+  "SOL",
+  "TRX",
+  "HYPE",
+  "DOGE",
+  "ZEC",
+  "LEO",
+  "XLM",
+  "XMR",
+  "ADA",
+  "LINK",
+  "CC",
+  "BCH",
+  "DAI",
+  "USD1",
+]);
 
 const knownTokens: KnownToken[] = [
   {
@@ -100,7 +124,15 @@ export function getKnownToken(symbol?: string | null) {
 }
 
 export function isKnownToken(symbol?: string | null) {
-  return Boolean(getKnownToken(symbol));
+  const normalizedSymbol = symbol?.trim().toUpperCase();
+
+  return Boolean(getKnownToken(symbol) || (normalizedSymbol && establishedLargeCapSymbols.has(normalizedSymbol)));
+}
+
+export function isEstablishedLargeCap(symbol?: string | null) {
+  const normalizedSymbol = symbol?.trim().toUpperCase();
+
+  return Boolean(normalizedSymbol && establishedLargeCapSymbols.has(normalizedSymbol));
 }
 
 export function isKnownHighVolatilitySymbol(symbol?: string | null) {
@@ -129,6 +161,10 @@ export function isVerifiedStablecoin(symbol?: string | null, chain?: string, tok
 }
 
 export function getKnownTokenClass(symbol?: string | null): KnownTokenClass {
-  return getKnownToken(symbol)?.tokenClass ?? (isKnownHighVolatilitySymbol(symbol) ? "meme" : "unknown");
-}
+  const normalizedSymbol = symbol?.trim().toUpperCase();
 
+  if (isKnownHighVolatilitySymbol(normalizedSymbol)) return "meme";
+  if (stablecoinSymbols.has(normalizedSymbol ?? "")) return "stablecoin";
+
+  return getKnownToken(symbol)?.tokenClass ?? (normalizedSymbol && establishedLargeCapSymbols.has(normalizedSymbol) ? "blue_chip" : "unknown");
+}

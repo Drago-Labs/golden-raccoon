@@ -1,6 +1,6 @@
 import type { PortfolioSnapshot, TokenHolding, TokenSignal } from "../types";
 import { clampScore, scoreToRiskLevel, weightedScore } from "@/server/agents/shared";
-import { getKnownTokenClass, isKnownHighVolatilitySymbol, isVerifiedStablecoin } from "@/server/portfolio/tokenRegistry";
+import { getKnownTokenClass, isEstablishedLargeCap, isKnownHighVolatilitySymbol, isVerifiedStablecoin } from "@/server/portfolio/tokenRegistry";
 
 const weights: Record<keyof TokenSignal, number> = {
   scamRisk: 0.16,
@@ -35,6 +35,7 @@ export type PortfolioRiskSignals = {
   correlationRisk: number;
   chainExecutionRisk: number;
   weightedHoldingRisk: number;
+  coreAssetExposurePercent: number;
   largestHoldingPercent: number;
   top3HoldingPercent: number;
   top5HoldingPercent: number;
@@ -62,6 +63,7 @@ export function getPortfolioRiskSignals(holdings: TokenHolding[]): PortfolioRisk
   const top5HoldingPercent = sumAllocation(sortedByAllocation.slice(0, 5));
   const stableReservePercent = sumAllocation(holdings.filter((holding) => isVerifiedStablecoinHolding(holding)));
   const weightedHoldingRisk = getWeightedHoldingRisk(holdings);
+  const coreAssetExposurePercent = sumAllocation(holdings.filter((holding) => isCoreAssetHolding(holding)));
   const unverifiedExposurePercent = sumAllocation(holdings.filter((holding) => !holding.isVerified));
   const highRiskClassExposurePercent = sumAllocation(holdings.filter((holding) => isHighRiskClassHolding(holding)));
   const unknownPriceExposurePercent = sumAllocation(holdings.filter((holding) => holding.priceUsd <= 0 || holding.valueUsd <= 0));
@@ -74,17 +76,19 @@ export function getPortfolioRiskSignals(holdings: TokenHolding[]): PortfolioRisk
   const criticalExposurePercent = sumAllocation(holdings.filter((holding) => holding.riskScore >= 75));
 
   return {
-    concentrationRisk: getStableAdjustedConcentrationRisk(
+    concentrationRisk: getQualityAdjustedConcentrationRisk(
       getConcentrationRisk(largestHoldingPercent, top3HoldingPercent, top5HoldingPercent),
       stableReservePercent,
+      coreAssetExposurePercent,
     ),
     assetQualityRisk: getAssetQualityRisk(unverifiedExposurePercent, highRiskClassExposurePercent, unknownPriceExposurePercent),
     liquidityExitRisk: getLiquidityExitRisk(lowLiquidityExposurePercent, holdings),
     stableReserveRisk: getStableReserveRisk(stableReservePercent),
     volatilityRisk: getVolatilityRisk(highVolatilityExposurePercent, holdings),
-    correlationRisk: getCorrelationRisk(dominantThemePercent, stableReservePercent),
+    correlationRisk: getCorrelationRisk(dominantThemePercent, stableReservePercent, coreAssetExposurePercent),
     chainExecutionRisk: getChainExecutionRisk(dominantChainPercent, hasNativeGasToken),
     weightedHoldingRisk,
+    coreAssetExposurePercent,
     largestHoldingPercent,
     top3HoldingPercent,
     top5HoldingPercent,
@@ -113,19 +117,27 @@ export function getConcentrationRisk(largestHoldingPercent: number, top3HoldingP
 }
 
 export function getStableReserveRisk(stableReservePercent: number) {
-  if (stableReservePercent < 5) return 88;
-  if (stableReservePercent < 15) return 70;
-  if (stableReservePercent < 30) return 42;
+  if (stableReservePercent < 5) return 70;
+  if (stableReservePercent < 10) return 50;
+  if (stableReservePercent < 20) return 32;
 
   return 16;
 }
 
-function getStableAdjustedConcentrationRisk(concentrationRisk: number, stableReservePercent: number) {
+function getQualityAdjustedConcentrationRisk(concentrationRisk: number, stableReservePercent: number, coreAssetExposurePercent: number) {
   if (stableReservePercent >= 60) {
     return Math.min(concentrationRisk, 24);
   }
 
   if (stableReservePercent >= 40) {
+    return Math.min(concentrationRisk, 42);
+  }
+
+  if (coreAssetExposurePercent >= 80) {
+    return Math.min(concentrationRisk, 28);
+  }
+
+  if (coreAssetExposurePercent >= 60) {
     return Math.min(concentrationRisk, 42);
   }
 
@@ -168,7 +180,7 @@ export function getVolatilityRisk(highVolatilityExposurePercent: number, holding
   ]);
 }
 
-export function getCorrelationRisk(dominantThemePercent: number, stableReservePercent: number) {
+export function getCorrelationRisk(dominantThemePercent: number, stableReservePercent: number, coreAssetExposurePercent = 0) {
   if (stableReservePercent >= 60) {
     return 12;
   }
@@ -176,18 +188,31 @@ export function getCorrelationRisk(dominantThemePercent: number, stableReservePe
   const dominantThemeRisk = exposureToRisk(dominantThemePercent, 50, 70, 85);
   const noStablePenalty = stableReservePercent < 15 ? 18 : stableReservePercent < 30 ? 8 : 0;
 
-  return clampScore(dominantThemeRisk + noStablePenalty);
+  const rawRisk = clampScore(dominantThemeRisk + noStablePenalty);
+
+  if (coreAssetExposurePercent >= 80) return Math.min(rawRisk, 24);
+  if (coreAssetExposurePercent >= 60) return Math.min(rawRisk, 42);
+
+  return rawRisk;
 }
 
 export function getChainExecutionRisk(dominantChainPercent: number, hasNativeGasToken: boolean) {
-  const concentrationRisk = dominantChainPercent >= 100 ? 72 : dominantChainPercent >= 90 ? 58 : dominantChainPercent >= 70 ? 42 : 16;
-  const gasPenalty = hasNativeGasToken ? 0 : 22;
+  const concentrationRisk = dominantChainPercent >= 90 ? 24 : dominantChainPercent >= 70 ? 18 : 12;
+  const gasPenalty = hasNativeGasToken ? 0 : 28;
 
   return clampScore(concentrationRisk + gasPenalty);
 }
 
 function isVerifiedStablecoinHolding(holding: TokenHolding) {
   return isVerifiedStablecoin(holding.symbol, holding.chainId ?? holding.chainName, holding.tokenAddress);
+}
+
+function isCoreAssetHolding(holding: TokenHolding) {
+  if (isVerifiedStablecoinHolding(holding)) return true;
+
+  if (holding.isVerified !== true || getKnownTokenClass(holding.symbol) === "meme") return false;
+
+  return isEstablishedLargeCap(holding.symbol) || ["WETH", "WBTC"].includes(holding.symbol.toUpperCase());
 }
 
 function isHighRiskClassHolding(holding: TokenHolding) {

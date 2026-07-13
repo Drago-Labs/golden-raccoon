@@ -1,7 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ShieldCheck } from "lucide-react";
 import { WalletConnectButton } from "@/components/WalletConnectButton";
 
 const navItems = [
@@ -10,7 +9,6 @@ const navItems = [
   { href: "/scan", label: "Scan" },
   { href: "/strategy", label: "Strategy" },
   { href: "/history", label: "History" },
-  { href: "/operations", label: "Ops" },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -29,7 +27,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             />
             <div>
               <div className="text-sm font-semibold tracking-[0.18em] text-[#d9a441]">GOLDEN RACCOON</div>
-              <div className="text-xs text-white/48">Multi-agent portfolio intelligence</div>
             </div>
           </Link>
           <nav className="hidden items-center gap-1 rounded-full border border-white/10 bg-white/5 p-1 md:flex">
@@ -45,14 +42,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           </nav>
           <WalletConnectButton />
         </div>
+        <nav className="mx-auto flex w-full max-w-7xl gap-1 overflow-x-auto px-5 pb-3 md:hidden">
+          {navItems.map((item) => (
+            <Link key={item.href} href={item.href} className="shrink-0 rounded-full px-3 py-2 text-sm text-white/64 hover:bg-white/8 hover:text-white">
+              {item.label}
+            </Link>
+          ))}
+        </nav>
       </header>
-      <main className="mx-auto w-full max-w-7xl px-5 py-8 sm:px-8">
-        <div className="mb-8 h-px w-full gold-line" />
-        {children}
-      </main>
-      <div className="pointer-events-none fixed bottom-6 right-6 hidden rounded-full border border-[#d9a441]/30 bg-[#d9a441]/10 p-3 text-[#d9a441] lg:block">
-        <ShieldCheck className="h-5 w-5" />
-      </div>
+      <main className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8 sm:py-8">{children}</main>
     </div>
   );
 }

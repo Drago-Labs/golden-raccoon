@@ -23,6 +23,7 @@ export default function OperationsPage() {
             <div className="mt-4 grid gap-3 text-sm text-white/64">
               <code className="rounded-md bg-black/35 px-3 py-2">npm run deploy:check</code>
               <code className="rounded-md bg-black/35 px-3 py-2">npm run test:agents --prefix frontend</code>
+              <code className="rounded-md bg-black/35 px-3 py-2">{"curl -i \"$SMOKE_BASE_URL/api/x402/deep-scan?query=GOAT&chain=base\""}</code>
               <code className="rounded-md bg-black/35 px-3 py-2">SMOKE_BASE_URL=https://your-production-domain.example npm run smoke</code>
               <code className="rounded-md bg-black/35 px-3 py-2">MONITOR_BASE_URL=https://your-production-domain.example npm run monitor:production</code>
             </div>

@@ -13,15 +13,30 @@ const serverEnvKeys = [
   "GOPLUS_APP_SECRET",
   "ALCHEMY_API_KEY",
   "GOAT_RPC_URL",
+  "X402_PAY_TO",
+  "X402_PRICE_USD",
+  "X402_NETWORK",
+  "X402_FACILITATOR_URL",
+  "X402_ASSET",
+  "CDP_API_KEY_ID",
+  "CDP_API_KEY_SECRET",
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
 ] as const;
 
-const publicEnvKeys = ["NEXT_PUBLIC_GOAT_RPC_URL"] as const;
+const publicEnvKeys = ["NEXT_PUBLIC_GOAT_RPC_URL", "NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID"] as const;
+
+function isX402Ready() {
+  const baseConfigReady = Boolean(process.env.X402_PAY_TO && process.env.X402_PRICE_USD && process.env.X402_NETWORK && process.env.X402_FACILITATOR_URL);
+  const usesCdpFacilitator = process.env.X402_FACILITATOR_URL?.includes("api.cdp.coinbase.com");
+
+  return baseConfigReady && (!usesCdpFacilitator || Boolean(process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET));
+}
 
 export function getEnvHealth() {
   const goPlusReady = Boolean(process.env.GOPLUS_API_KEY || (process.env.GOPLUS_APP_KEY && process.env.GOPLUS_APP_SECRET));
   const portfolioReady = Boolean(process.env.GOAT_RPC_URL || process.env.GOLDRUSH_API_KEY || process.env.COVALENT_API_KEY || process.env.ALCHEMY_API_KEY);
+  const x402Ready = isX402Ready();
   const checks: EnvCheck[] = [
     ...serverEnvKeys.map((key) => ({
       key,
@@ -56,6 +71,7 @@ export function getEnvHealth() {
       news: true,
       social: true,
       execution: true,
+      x402: x402Ready,
     },
     detail:
       configuredLiveSources.length > 0
@@ -67,6 +83,7 @@ export function getEnvHealth() {
 export function getAgentReadiness() {
   const portfolioReady = Boolean(process.env.GOAT_RPC_URL || process.env.GOLDRUSH_API_KEY || process.env.COVALENT_API_KEY || process.env.ALCHEMY_API_KEY);
   const onchainReady = Boolean(process.env.GOPLUS_API_KEY || (process.env.GOPLUS_APP_KEY && process.env.GOPLUS_APP_SECRET));
+  const x402Ready = isX402Ready();
   const newsReady = true;
   const socialProviderReady = Boolean(
     process.env.SOCIAL_DATA_PROVIDER_URL ||
@@ -103,6 +120,12 @@ export function getAgentReadiness() {
     execution: {
       status: "live",
       detail: "Execution Agent uses local user rules and approval-only transaction planning.",
+    },
+    x402: {
+      status: x402Ready ? "live" : "unavailable",
+      detail: x402Ready
+        ? "GOAT premium deep scan is protected by x402 payment configuration."
+        : "x402 payment env is incomplete; premium deep scan remains locked for production.",
     },
   };
 }

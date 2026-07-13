@@ -491,6 +491,26 @@ export type StorageHealth = {
   };
 };
 
+export type X402PaymentReceipt = {
+  id: string;
+  requestId: string;
+  paymentHeaderHash: string;
+  walletAddress?: string;
+  payer?: string;
+  transactionHash?: string;
+  network: string;
+  asset: string;
+  amount: string;
+  priceUsd: string;
+  payTo: string;
+  facilitatorUrl: string;
+  protectedResource: string;
+  requestBodyHash: string;
+  verificationStatus: "payment_required" | "verified" | "settled" | "failed" | "duplicate" | "expired";
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type RecommendationRecord = {
   id: string;
   runId?: string;
@@ -522,4 +542,5 @@ export type StorageCounts = {
   transactions: number;
   approvals: number;
   userRules: number;
+  x402PaymentReceipts: number;
 };

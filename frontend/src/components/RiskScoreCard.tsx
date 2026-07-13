@@ -1,3 +1,10 @@
+"use client";
+
+import { CircleHelp, X } from "lucide-react";
+import { useState } from "react";
+import type { TokenHolding } from "@/server/types";
+import { getPortfolioRiskSignals } from "@/server/portfolio/riskScoring";
+
 function polarToCartesian(cx: number, cy: number, radius: number, angle: number) {
   const radians = ((angle - 90) * Math.PI) / 180;
 
@@ -15,25 +22,77 @@ function arcPath(startAngle: number, endAngle: number) {
   return `M ${start.x} ${start.y} A 74 74 0 ${largeArcFlag} 0 ${end.x} ${end.y}`;
 }
 
-export function RiskScoreCard({ score }: { score: number }) {
+export function RiskScoreCard({ score, holdings = [] }: { score: number; holdings?: TokenHolding[] }) {
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const boundedScore = Math.min(100, Math.max(0, score));
   const level = boundedScore >= 71 ? "High" : boundedScore >= 41 ? "Medium" : "Low";
   const markerAngle = -90 + boundedScore * 1.8;
   const marker = polarToCartesian(100, 100, 74, markerAngle);
   const markerStem = polarToCartesian(100, 100, 58, markerAngle);
   const markerColor = boundedScore >= 71 ? "#ff6b6b" : boundedScore >= 41 ? "#f2c86d" : "#60d394";
+  const signals = getPortfolioRiskSignals(holdings);
+  const categories = [
+    { label: "Concentration", score: signals.concentrationRisk, weight: 30 },
+    { label: "Asset quality", score: signals.assetQualityRisk, weight: 20 },
+    { label: "Liquidity", score: signals.liquidityExitRisk, weight: 15 },
+    { label: "Stable reserve", score: signals.stableReserveRisk, weight: 10 },
+    { label: "Volatility", score: signals.volatilityRisk, weight: 10 },
+    { label: "Correlation", score: signals.correlationRisk, weight: 10 },
+    { label: "Network execution", score: signals.chainExecutionRisk, weight: 5 },
+  ];
 
   return (
-    <section className="glass-panel flex h-full flex-col rounded-[28px] p-6">
+    <section className="glass-panel relative flex h-full flex-col rounded-[28px] p-6">
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-sm text-white/54">Portfolio risk</div>
+          <div className="flex items-center gap-2 text-sm text-white/54">
+            Portfolio risk
+            {holdings.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setShowBreakdown((visible) => !visible)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-white/46 transition hover:bg-white/8 hover:text-white"
+                aria-label="Show risk score breakdown"
+                aria-expanded={showBreakdown}
+              >
+                <CircleHelp className="h-4 w-4" />
+              </button>
+            ) : null}
+          </div>
           <div className="mt-1 text-4xl font-semibold">{boundedScore}/100</div>
         </div>
         <span className="rounded-full border border-white/10 bg-white/7 px-3 py-1 text-xs font-medium" style={{ color: markerColor }}>
           {level}
         </span>
       </div>
+
+      {showBreakdown && holdings.length > 0 ? (
+        <div className="absolute inset-x-5 top-24 z-10 rounded-lg border border-white/12 bg-[#0b0b0b] p-4 shadow-2xl">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-semibold">Why {boundedScore}/100?</div>
+            <button type="button" onClick={() => setShowBreakdown(false)} className="inline-flex h-8 w-8 items-center justify-center rounded-full text-white/46 hover:bg-white/8 hover:text-white" aria-label="Close risk breakdown">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-3 space-y-2.5">
+            {categories.map((category) => (
+              <div key={category.label} className="grid grid-cols-[1fr_5rem] items-center gap-3 text-xs">
+                <div>
+                  <div className="flex justify-between gap-3 text-white/62">
+                    <span>{category.label}</span>
+                    <span>{category.weight}% weight</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
+                    <div className="h-full rounded-full bg-[#d9a441]" style={{ width: `${category.score}%` }} />
+                  </div>
+                </div>
+                <div className="text-right font-semibold text-white">{category.score}/100</div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-xs leading-5 text-white/38">Overall risk uses the category weights above and portfolio safety floors.</p>
+        </div>
+      ) : null}
 
       <div className="flex flex-1 items-center justify-center">
         <svg viewBox="0 0 200 128" className="h-40 w-full max-w-xs overflow-visible" role="img" aria-label={`Portfolio risk ${boundedScore} out of 100`}>

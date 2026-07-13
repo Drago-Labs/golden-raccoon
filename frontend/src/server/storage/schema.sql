@@ -126,6 +126,26 @@ create table if not exists transactions (
   created_at timestamptz not null default now()
 );
 
+create table if not exists x402_payment_receipts (
+  id uuid primary key default gen_random_uuid(),
+  request_id text not null,
+  payment_header_hash text not null unique,
+  wallet_address text,
+  payer text,
+  transaction_hash text,
+  network text not null,
+  asset text not null,
+  amount text not null,
+  price_usd text not null,
+  pay_to text not null,
+  facilitator_url text not null,
+  protected_resource text not null,
+  request_body_hash text not null,
+  verification_status text not null check (verification_status in ('payment_required', 'verified', 'settled', 'failed', 'duplicate', 'expired')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists user_rules (
   id uuid primary key default gen_random_uuid(),
   wallet_address text not null unique,
@@ -147,3 +167,4 @@ create index if not exists source_snapshots_run_agent_idx on source_snapshots(ru
 create index if not exists recommendations_wallet_created_idx on recommendations(wallet_address, created_at desc);
 create index if not exists transactions_wallet_created_idx on transactions(wallet_address, created_at desc);
 create index if not exists approvals_wallet_created_idx on approvals(wallet_address, created_at desc);
+create index if not exists x402_payment_receipts_resource_created_idx on x402_payment_receipts(protected_resource, created_at desc);
