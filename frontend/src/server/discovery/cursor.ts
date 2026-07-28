@@ -1,9 +1,22 @@
+import { z } from "zod";
 import type {
   DiscoveryChainId,
   DiscoveryCursor,
   DiscoveryProviderKind,
 } from "@/server/discovery/types";
 import type { BackoffConfig } from "@/server/discovery/types";
+
+// ─── Zod schema for runtime validation ───────────────────────────────────────
+
+export const discoveryCursorSchema = z.object({
+  providerKind: z.enum(["dexscreener_new_pairs", "stellar_market"]),
+  chainId: z.string().min(1),
+  cursor: z.string(),
+  updatedAt: z.string().datetime({ offset: true }).or(z.string().datetime()),
+  consecutiveFailures: z.number().int().min(0),
+  nextAllowedPollMs: z.number().int().min(0),
+  _key: z.string().optional(),
+});
 
 // ─── In-memory cursor store ──────────────────────────────────────────────────
 // Persisted cursors survive restarts via JSON serialisation.
@@ -96,11 +109,17 @@ export function dumpCursors(): Record<string, unknown>[] {
 
 /**
  * Restore cursors from a previously dumped array.
+ * Uses Zod runtime validation to ensure the data matches the expected shape.
+ * Silently skips entries that fail validation.
  */
 export function loadCursors(dumped: Record<string, unknown>[]): void {
   for (const entry of dumped) {
-    const { _key, ...cursor } = entry;
-    cursorStore.set(_key as string, cursor as unknown as DiscoveryCursor);
+    const parsed = discoveryCursorSchema.safeParse(entry);
+    if (!parsed.success) {
+      continue;
+    }
+    const { _key, ...cursor } = parsed.data;
+    cursorStore.set(_key ?? storeKey(cursor.providerKind as DiscoveryProviderKind, cursor.chainId as DiscoveryChainId), cursor as DiscoveryCursor);
   }
 }
 
