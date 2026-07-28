@@ -4,6 +4,7 @@ import type { AgentResult } from "@/server/types";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { runDecisionAgent } from "@/server/agents/decision";
 import { checkRateLimit } from "@/server/security/rateLimit";
+import { chainFamilySchema, networkSchema } from "@/server/security/inputValidation";
 
 const agentResultSchema = z.object({
   agent: z.enum(["portfolio", "news", "social", "onchain", "decision", "execution"]),
@@ -51,6 +52,8 @@ const agentResultSchema = z.object({
   ),
   dataQuality: z
     .object({
+      chainFamily: chainFamilySchema.optional(),
+      network: networkSchema.optional(),
       mode: z.enum(["live", "partial", "unavailable", "stale", "conflicting"]),
       connectedSources: z.number(),
       unavailableSources: z.number(),
@@ -108,6 +111,8 @@ const bodySchema = z.object({
   results: z.array(agentResultSchema).optional(),
   context: z
     .object({
+      chainFamily: chainFamilySchema.optional(),
+      network: networkSchema.optional(),
       mode: z.enum(["portfolio_review", "token_scan", "pre_buy_check", "holding_review", "execution_prepare"]).optional(),
       userAlreadyOwnsToken: z.boolean().optional(),
       targetExposurePercent: z.number().min(0).max(100).optional(),

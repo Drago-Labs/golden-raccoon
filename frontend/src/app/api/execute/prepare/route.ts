@@ -6,8 +6,14 @@ import { getPortfolioSnapshot } from "@/server/portfolio/getPortfolio";
 import { assertApprovalOnly } from "@/server/security/policy";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { getUserRuleRecord } from "@/server/storage";
+import {
+  chainFamilySchema,
+  networkSchema,
+  validateChainScopedWallet,
+} from "@/server/security/inputValidation";
 
 const bodySchema = z.object({
+  chainFamily: chainFamilySchema.optional(),
   walletAddress: z.string().optional(),
   action: z.string().optional(),
   decisionId: z.string().optional(),
@@ -16,7 +22,7 @@ const bodySchema = z.object({
   percent: z.number().min(0).max(100).optional(),
   riskScore: z.number().min(0).max(100).optional(),
   estimatedValueUsd: z.number().min(0).optional(),
-  network: z.string().optional(),
+  network: networkSchema.optional(),
   slippageBps: z.number().min(0).max(10_000).optional(),
   priceImpactBps: z.number().min(0).optional(),
   gasEstimateUsd: z.number().min(0).optional(),
@@ -24,6 +30,18 @@ const bodySchema = z.object({
   expectedOutputAmount: z.number().min(0).optional(),
   simulationStatus: z.enum(["not_required", "pending", "passed", "failed", "unavailable"]).optional(),
   simulationRevertReason: z.string().optional(),
+}).superRefine((value, context) => {
+  if (value.walletAddress && !validateChainScopedWallet({
+    chainFamily: value.chainFamily,
+    network: value.network,
+    walletAddress: value.walletAddress,
+  })) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["walletAddress"],
+      message: "Wallet address does not match chainFamily/network.",
+    });
+  }
 });
 
 export async function POST(request: Request) {
@@ -47,7 +65,10 @@ export async function POST(request: Request) {
   }
 
   const { portfolio } = await getPortfolioSnapshot(parsed.data.walletAddress);
-  const rules = getUserRuleRecord(parsed.data.walletAddress ?? portfolio.walletAddress);
+  const rules = getUserRuleRecord(parsed.data.walletAddress ?? portfolio.walletAddress, {
+    chainFamily: parsed.data.chainFamily ?? portfolio.chainFamily,
+    network: parsed.data.network ?? portfolio.network,
+  });
   const preview = buildExecutionPreviewFromPortfolio(portfolio, { ...parsed.data, rules });
 
   return withCacheHeaders(NextResponse.json(preview), "execution");

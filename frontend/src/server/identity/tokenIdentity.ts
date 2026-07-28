@@ -1,7 +1,7 @@
 import type { AgentInputIdentity, ResolvedTokenIdentity } from "@/server/types";
 import { buildTokenIdentityGraph } from "@/server/identity/identityGraph";
+import { createContractIdentity, getChainFamily, resolveChainContext } from "@/lib/chainIdentity";
 
-const evmAddressPattern = /^0x[a-fA-F0-9]{40}$/;
 const genericSymbols = new Set(["AI", "GOAT", "MOON", "PEPE", "MEME", "DOGE", "CAT", "BTC", "ETH"]);
 
 function normalizeUrl(value?: string) {
@@ -21,8 +21,21 @@ function normalizeChain(value?: string) {
   return value?.trim().toLowerCase();
 }
 
-function normalizeAddress(value?: string) {
-  return evmAddressPattern.test(value ?? "") ? value?.toLowerCase() : undefined;
+function normalizeAddress(value?: string, chain?: string) {
+  if (!value) return undefined;
+
+  try {
+    const chainFamily = getChainFamily(chain);
+    const context = resolveChainContext({
+      chainFamily,
+      network: chain ?? (chainFamily === "evm" ? "legacy-evm" : undefined),
+      identifier: value,
+    });
+
+    return createContractIdentity({ ...context, address: value }).address;
+  } catch {
+    return undefined;
+  }
 }
 
 function getConfidenceLabel(confidence: number): ResolvedTokenIdentity["confidenceLabel"] {
@@ -32,7 +45,7 @@ function getConfidenceLabel(confidence: number): ResolvedTokenIdentity["confiden
 }
 
 export function resolveTokenIdentity(input: AgentInputIdentity): ResolvedTokenIdentity {
-  const contractAddress = normalizeAddress(input.contractAddress);
+  const contractAddress = normalizeAddress(input.contractAddress, input.chain);
   const chain = normalizeChain(input.chain);
   const symbol = input.symbol?.trim().toUpperCase();
   const tokenName = input.tokenName?.trim();
@@ -119,7 +132,7 @@ export function resolveTokenIdentity(input: AgentInputIdentity): ResolvedTokenId
   const boundedConfidence = Math.min(0.96, Math.max(0.08, confidence));
   const identityKey =
     contractAddress && chain
-      ? `${chain}:${contractAddress}`
+      ? `${getChainFamily(chain)}:${chain}:${contractAddress}`
       : contractAddress
         ? contractAddress
         : [symbol, tokenName, websiteUrl, input.coingeckoId].filter(Boolean).join(":").toLowerCase() || "unknown-token";

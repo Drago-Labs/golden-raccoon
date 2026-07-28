@@ -11,8 +11,20 @@ import type {
 } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { validateAgentResult } from "@/server/agents/schema";
+import {
+  canonicalizeAddress,
+  canonicalizeTransactionHash,
+  createWalletIdentity,
+  getChainFamily,
+  isStellarAddress,
+  normalizeNetwork,
+  resolveChainContext,
+  type ChainContext,
+} from "@/lib/chainIdentity";
 
 type CreateAgentRunInput = {
+  chainFamily?: AgentRunRecord["chainFamily"];
+  network?: string;
   walletAddress: string;
   mode?: AgentRunRecord["mode"];
   inputSnapshot?: Record<string, unknown>;
@@ -20,6 +32,59 @@ type CreateAgentRunInput = {
   results: AgentResult[];
   userAction?: AgentRunRecord["userAction"];
 };
+
+type TransactionRecordInput = Omit<TransactionRecord, "chainFamily" | "createdAt"> & {
+  chainFamily?: TransactionRecord["chainFamily"];
+  createdAt?: string;
+};
+
+type ApprovalRecordInput = Omit<
+  UserApprovalRecord,
+  "chainFamily" | "id" | "createdAt" | "status" | "autoExecuted"
+> & {
+  chainFamily?: UserApprovalRecord["chainFamily"];
+};
+
+function recordContext(input: {
+  chainFamily?: ChainContext["chainFamily"];
+  network?: string;
+  identifier?: string;
+}) {
+  const inferredNetwork =
+    input.network ??
+    (isStellarAddress(input.identifier)
+      ? "stellar-testnet"
+      : "legacy-evm");
+
+  return resolveChainContext({
+    chainFamily: input.chainFamily,
+    network: inferredNetwork,
+    identifier: input.identifier,
+  });
+}
+
+function normalizeStoredWallet(address: string, context: ChainContext) {
+  const trimmed = address.trim();
+  const looksLikeChainIdentifier =
+    trimmed.startsWith("0x") ||
+    isStellarAddress(trimmed) ||
+    /^[GCM][A-Z2-7]{55}$/.test(trimmed);
+
+  if (!looksLikeChainIdentifier) {
+    return canonicalizeAddress(trimmed, context.chainFamily);
+  }
+
+  return createWalletIdentity({ ...context, address: trimmed }).address;
+}
+
+function walletMatches(record: { chainFamily?: ChainContext["chainFamily"]; network?: string; walletAddress: string }, address: string) {
+  const candidateFamily = isStellarAddress(address) ? "stellar" : getChainFamily(record.network);
+  const recordFamily = record.chainFamily ?? getChainFamily(record.network);
+
+  if (recordFamily !== candidateFamily) return false;
+
+  return canonicalizeAddress(record.walletAddress, recordFamily) === canonicalizeAddress(address, candidateFamily);
+}
 
 export const storageSchemaContract = {
   tables: [
@@ -153,10 +218,8 @@ export function getStorageHealth(): StorageHealth {
 }
 
 export function listAgentRunRecords(walletAddress?: string) {
-  const normalizedWallet = walletAddress?.toLowerCase();
-
   return getAgentRuns()
-    .filter((record) => !normalizedWallet || record.walletAddress.toLowerCase() === normalizedWallet)
+    .filter((record) => !walletAddress || walletMatches(record, walletAddress))
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
 }
 
@@ -194,9 +257,15 @@ export function createAgentRunRecord(input: CreateAgentRunInput): AgentRunRecord
     immutable: true,
     decisionExplanation: result.agent === "decision" ? result.rawSignals?.explanation : undefined,
   }));
+  const context = recordContext({
+    chainFamily: input.chainFamily,
+    network: input.network ?? input.targetToken?.network ?? input.targetToken?.chain,
+    identifier: input.walletAddress,
+  });
   const record: AgentRunRecord = {
     id: createId(),
-    walletAddress: input.walletAddress,
+    ...context,
+    walletAddress: normalizeStoredWallet(input.walletAddress, context),
     mode: input.mode,
     targetToken: input.targetToken,
     status: completed ? (failed ? "partial" : "completed") : "failed",
@@ -216,6 +285,7 @@ export function createAgentRunRecord(input: CreateAgentRunInput): AgentRunRecord
 
   getAgentRuns().unshift(record);
   createRecommendationRecord({
+    ...context,
     runId: record.id,
     walletAddress: record.walletAddress,
     action: record.recommendation,
@@ -228,18 +298,22 @@ export function createAgentRunRecord(input: CreateAgentRunInput): AgentRunRecord
 }
 
 export function listRecommendationRecords(walletAddress?: string) {
-  const normalizedWallet = walletAddress?.toLowerCase();
-
   return getRecommendations()
-    .filter((record) => !normalizedWallet || record.walletAddress.toLowerCase() === normalizedWallet)
+    .filter((record) => !walletAddress || walletMatches(record, walletAddress))
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
 }
 
-export function createRecommendationRecord(input: Omit<RecommendationRecord, "id" | "createdAt">) {
+export function createRecommendationRecord(
+  input: Omit<RecommendationRecord, "chainFamily" | "network" | "id" | "createdAt"> &
+    Partial<Pick<RecommendationRecord, "chainFamily" | "network">>,
+) {
+  const context = recordContext(input);
   const record: RecommendationRecord = {
     id: createRecordId("rec"),
     createdAt: new Date().toISOString(),
     ...input,
+    ...context,
+    walletAddress: normalizeStoredWallet(input.walletAddress, context),
   };
 
   getRecommendations().unshift(record);
@@ -248,21 +322,61 @@ export function createRecommendationRecord(input: Omit<RecommendationRecord, "id
 }
 
 export function listTransactionRecords(walletAddress?: string) {
-  const normalizedWallet = walletAddress?.toLowerCase();
-
   return getTransactions()
-    .filter((record) => !normalizedWallet || record.walletAddress?.toLowerCase() === normalizedWallet)
+    .filter(
+      (record) =>
+        !walletAddress ||
+        (record.walletAddress &&
+          walletMatches(
+            {
+              chainFamily: record.chainFamily,
+              network: record.network,
+              walletAddress: record.walletAddress,
+            },
+            walletAddress,
+          )),
+    )
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
 }
 
-export function getTransactionRecord(hash: string) {
-  return getTransactions().find((record) => record.hash.toLowerCase() === hash.toLowerCase());
+export function getTransactionRecord(
+  hash: string,
+  contextInput: Partial<ChainContext> & { network?: string } = {},
+) {
+  const context = recordContext({
+    ...contextInput,
+    network: contextInput.network ?? (hash.startsWith("0x") ? "legacy-evm" : undefined),
+  });
+  const canonicalHash = canonicalizeTransactionHash(hash, context);
+
+  return getTransactions().find(
+    (record) =>
+      record.chainFamily === context.chainFamily &&
+      normalizeNetwork(record.network, record.chainFamily) === context.network &&
+      record.hash === canonicalHash,
+  );
 }
 
-export function createTransactionRecord(input: Omit<TransactionRecord, "createdAt"> & { createdAt?: string }) {
-  const existingIndex = getTransactions().findIndex((record) => record.hash.toLowerCase() === input.hash.toLowerCase());
+export function createTransactionRecord(input: TransactionRecordInput) {
+  const context = recordContext({
+    chainFamily: input.chainFamily,
+    network: input.network,
+    identifier: input.walletAddress,
+  });
+  const hash = canonicalizeTransactionHash(input.hash, context);
+  const existingIndex = getTransactions().findIndex(
+    (record) =>
+      record.chainFamily === context.chainFamily &&
+      normalizeNetwork(record.network, record.chainFamily) === context.network &&
+      record.hash === hash,
+  );
   const record: TransactionRecord = {
     ...input,
+    ...context,
+    hash,
+    walletAddress: input.walletAddress
+      ? normalizeStoredWallet(input.walletAddress, context)
+      : undefined,
     createdAt: input.createdAt ?? new Date().toISOString(),
   };
 
@@ -276,17 +390,23 @@ export function createTransactionRecord(input: Omit<TransactionRecord, "createdA
 }
 
 export function listApprovalRecords(walletAddress?: string) {
-  const normalizedWallet = walletAddress?.toLowerCase();
-
   return getApprovals()
-    .filter((record) => !normalizedWallet || record.walletAddress.toLowerCase() === normalizedWallet)
+    .filter((record) => !walletAddress || walletMatches(record, walletAddress))
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
 }
 
-export function createApprovalRecord(input: Omit<UserApprovalRecord, "id" | "createdAt" | "status" | "autoExecuted">) {
+export function createApprovalRecord(input: ApprovalRecordInput) {
+  const context = recordContext({
+    chainFamily: input.chainFamily,
+    network: input.network ?? (input.txHash.startsWith("0x") ? "legacy-evm" : undefined),
+    identifier: input.walletAddress,
+  });
   const record: UserApprovalRecord = {
     id: createRecordId("approval"),
     ...input,
+    ...context,
+    walletAddress: normalizeStoredWallet(input.walletAddress, context),
+    txHash: canonicalizeTransactionHash(input.txHash, context),
     status: "confirmed",
     autoExecuted: false,
     createdAt: new Date().toISOString(),
@@ -297,11 +417,27 @@ export function createApprovalRecord(input: Omit<UserApprovalRecord, "id" | "cre
   return record;
 }
 
-export function getUserRuleRecord(walletAddress = "0xDemoWallet") {
-  const existing = getUserRules().find((rule) => rule.walletAddress.toLowerCase() === walletAddress.toLowerCase());
+export function getUserRuleRecord(
+  walletAddress = "0xDemoWallet",
+  contextInput: Partial<ChainContext> = {},
+) {
+  const existing = getUserRules().find(
+    (rule) =>
+      walletMatches(
+        {
+          chainFamily: rule.chainFamily,
+          network: rule.network,
+          walletAddress: rule.walletAddress,
+        },
+        walletAddress,
+      ) &&
+      (!contextInput.network ||
+        normalizeNetwork(rule.network ?? "legacy-evm", rule.chainFamily ?? "evm") ===
+          normalizeNetwork(contextInput.network, contextInput.chainFamily ?? rule.chainFamily ?? "evm")),
+  );
 
   return {
-    ...getDefaultRules(walletAddress),
+    ...getDefaultRules(walletAddress, contextInput),
     ...existing,
     autoExecute: false,
   };
@@ -309,14 +445,32 @@ export function getUserRuleRecord(walletAddress = "0xDemoWallet") {
 
 export function upsertUserRuleRecord(input: UserRule) {
   const createdAt = input.createdAt ?? new Date().toISOString();
-  const defaults = getDefaultRules(input.walletAddress);
+  const context = recordContext({
+    chainFamily: input.chainFamily,
+    network: input.network,
+    identifier: input.walletAddress,
+  });
+  const defaults = getDefaultRules(input.walletAddress, context);
   const record: UserRule = {
     ...defaults,
     ...input,
+    ...context,
+    walletAddress: normalizeStoredWallet(input.walletAddress, context),
     autoExecute: false,
     createdAt,
   };
-  const existingIndex = getUserRules().findIndex((rule) => rule.walletAddress.toLowerCase() === input.walletAddress.toLowerCase());
+  const existingIndex = getUserRules().findIndex(
+    (rule) =>
+      walletMatches(
+        {
+          chainFamily: rule.chainFamily,
+          network: rule.network,
+          walletAddress: rule.walletAddress,
+        },
+        record.walletAddress,
+      ) &&
+      normalizeNetwork(rule.network ?? "legacy-evm", rule.chainFamily ?? "evm") === context.network,
+  );
 
   if (existingIndex >= 0) {
     getUserRules()[existingIndex] = record;

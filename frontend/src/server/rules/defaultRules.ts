@@ -1,7 +1,18 @@
 import type { UserRule } from "../types";
+import { isStellarAddress, resolveChainContext, type ChainContext } from "@/lib/chainIdentity";
 
-export function getDefaultRules(walletAddress = "0xDemoWallet"): UserRule {
+export function getDefaultRules(
+  walletAddress = "0xDemoWallet",
+  contextInput: Partial<ChainContext> = {},
+): UserRule {
+  const context = resolveChainContext({
+    ...contextInput,
+    network: contextInput.network ?? (isStellarAddress(walletAddress) ? "stellar-testnet" : "legacy-evm"),
+    identifier: walletAddress,
+  });
+
   return {
+    ...context,
     walletAddress,
     maxRiskScore: 80,
     maxTradePercent: 20,

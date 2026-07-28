@@ -9,8 +9,9 @@
     "deploy:check": "node ../scripts/check-deploy-readiness.mjs",
     "lint": "eslint",
     "test:agents": "tsx --tsconfig tsconfig.json scripts/agent-fixture-check.ts",
+    "test:chain-identity": "tsx --tsconfig tsconfig.json scripts/chain-identity-check.ts",
     "test:stellar-config": "tsx --tsconfig tsconfig.json scripts/stellar-config-check.ts",
-    "verify": "npm run test:agents && npm run lint && npm run build"
+    "verify": "npm run test:chain-identity && npm run test:agents && npm run lint && npm run build"
   },
   "dependencies": {
     "@coinbase/x402": "^2.1.0",
@@ -38,6 +39,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.3.14",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

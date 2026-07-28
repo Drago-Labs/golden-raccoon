@@ -12,7 +12,7 @@ type OnchainAgentInput = {
   symbol?: string;
   issuer?: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "sac" | "sep41" | "issuer_account";
 };
 
 type GoPlusTokenSecurity = Record<string, unknown>;

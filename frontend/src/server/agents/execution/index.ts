@@ -1,8 +1,10 @@
 import type { AgentRecommendedAction, AgentResult, PortfolioSnapshot, TransactionPreview, UserRule } from "@/server/types";
 import { buildAgentResult } from "@/server/agents/shared";
 import { buildExecutionPolicy, evaluateExecutionPolicy } from "@/server/agents/execution/policy";
+import { resolveChainContext, type ChainFamily } from "@/lib/chainIdentity";
 
 type ExecutionAgentInput = {
+  chainFamily?: ChainFamily;
   action?: AgentRecommendedAction | string;
   walletAddress?: string;
   decisionId?: string;
@@ -138,6 +140,11 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
   const slippageBps = input.slippageBps ?? executionPolicy.maxSlippageBps;
   const priceImpactBps = input.priceImpactBps ?? (estimatedValueUsd > 5_000 ? 180 : estimatedValueUsd > 1_000 ? 75 : 25);
   const gasEstimateUsd = input.gasEstimateUsd ?? (plan.requiresTrade ? 3.5 : 0);
+  const chainContext = resolveChainContext({
+    chainFamily: input.chainFamily ?? input.rules?.chainFamily,
+    network: input.network ?? input.rules?.network ?? "GOAT Network",
+    identifier: input.walletAddress,
+  });
   const simulation = getSimulationPlan({
     requiresTrade: plan.requiresTrade,
     simulationStatus: input.simulationStatus,
@@ -171,8 +178,11 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
   const quoteMissing = plan.requiresTrade && quote?.status !== "planned";
   const blockedReason = policyStatus.violations[0] ?? (quoteMissing ? "Live quote provider result is required before preparing an executable transaction." : undefined);
   const executionReady = plan.requiresTrade && policyStatus.allowed && !quoteMissing;
-  const idempotencyKey = input.decisionId ? `${input.walletAddress ?? "unknown"}:${input.decisionId}:${action}:${fromToken}:${toToken}:${percent}` : undefined;
+  const idempotencyKey = input.decisionId
+    ? `${chainContext.chainFamily}:${chainContext.network}:${input.walletAddress ?? "unknown"}:${input.decisionId}:${action}:${fromToken}:${toToken}:${percent}`
+    : undefined;
   const preview: TransactionPreview = {
+    chainFamily: chainContext.chainFamily,
     title: blockedReason
       ? "Transaction blocked by policy"
       : plan.requiresTrade
@@ -187,7 +197,7 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
     projectedRiskScore: plan.requiresTrade && executionReady ? estimateProjectedRisk(currentRiskScore, percent) : currentRiskScore,
     requiresApproval: executionReady,
     executionReady,
-    network: input.network ?? "GOAT Network",
+    network: chainContext.network,
     slippageBps,
     priceImpactBps,
     gasEstimateUsd,

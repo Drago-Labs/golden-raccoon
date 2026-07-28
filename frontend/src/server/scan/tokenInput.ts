@@ -9,7 +9,7 @@ export type NormalizedTokenInput = {
   chain: string;
   contractAddress: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "sac" | "sep41" | "issuer_account";
   issuer?: string;
   pairAddress?: string;
   symbol?: string;
@@ -243,7 +243,7 @@ export async function normalizeTokenInput(query: string, chain?: string): Promis
       issuer: "issuer" in identity ? identity.issuer : undefined,
       symbol: "symbol" in identity ? identity.symbol : undefined,
       name: "name" in identity ? identity.name : identity.type === "issuer_account" ? "Stellar issuer account" : "Soroban contract token",
-      source: identity.type === "issuer_account" ? "stellar_issuer" : identity.type === "contract" ? "contract_address" : "stellar_asset",
+      source: identity.type === "issuer_account" ? "stellar_issuer" : identity.type === "sac" || identity.type === "sep41" ? "contract_address" : "stellar_asset",
     };
   }
 

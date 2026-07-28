@@ -10,7 +10,7 @@ export type StellarOnchainAgentInput = {
   symbol?: string;
   issuer?: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "sac" | "sep41" | "issuer_account";
 };
 
 type StellarAssetRecord = {
@@ -135,7 +135,8 @@ export async function runStellarOnchainAgent(input: StellarOnchainAgentInput): P
   const unauthorizedAccounts = assetRecord?.accounts?.unauthorized ?? 0;
   const identityScore = native || assetRecord || contractState || issuerAccount ? 8 : 80;
   const issuerControlScore = native ? 0 : !issuerExists ? 90 : authClawback ? 70 : authRequired && authRevocable ? 62 : authRevocable ? 48 : authRequired ? 42 : authImmutable ? 8 : 25;
-  const liquidityScore = native ? 8 : identity.type === "contract" ? 55 : liquidityPools === 0 ? 72 : liquidityAmount <= 0 ? 58 : liquidityPools < 3 ? 42 : 18;
+  const contractToken = identity.type === "sac" || identity.type === "sep41";
+  const liquidityScore = native ? 8 : contractToken ? 55 : liquidityPools === 0 ? 72 : liquidityAmount <= 0 ? 58 : liquidityPools < 3 ? 42 : 18;
   const contractScore = contractState ? (contractState.type === "stellar_asset_contract" ? 8 : 28) : identity.type === "issuer_account" ? 35 : 78;
   const sourceScore = health && (assetRecord || contractState || native) ? 10 : health ? 42 : 78;
   const score = weightedScore([
@@ -190,7 +191,7 @@ export async function runStellarOnchainAgent(input: StellarOnchainAgentInput): P
       scoreImpact: liquidityScore,
       detail: native
         ? "XLM is the native network asset."
-        : identity.type === "contract"
+        : contractToken
           ? "Generic Soroban contract liquidity requires a protocol-specific market adapter."
           : `${liquidityPools} Stellar liquidity pool(s) report ${liquidityAmount.toLocaleString("en-US")} units.`,
     },

@@ -1,3 +1,5 @@
+import type { AssetIdentityKind, ChainFamily } from "@/lib/chainIdentity";
+
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
 export type AgentStatus =
@@ -154,6 +156,10 @@ export type TokenSignal = {
 };
 
 export type TokenHolding = {
+  chainFamily?: ChainFamily;
+  network?: string;
+  assetKind?: AssetIdentityKind;
+  assetKey?: string;
   tokenAddress: string;
   symbol: "GOAT" | "USDC" | "MEME" | string;
   name: string;
@@ -174,6 +180,8 @@ export type TokenHolding = {
 };
 
 export type PortfolioSnapshot = {
+  chainFamily?: ChainFamily;
+  network?: string;
   walletAddress: string;
   nativeBalance: number;
   nativeSymbol: string;
@@ -208,6 +216,8 @@ export type SuggestedAction = {
 };
 
 export type AgentDecision = {
+  chainFamily?: ChainFamily;
+  network?: string;
   walletAddress: string;
   summary: string;
   riskScore: number;
@@ -221,6 +231,7 @@ export type AgentDecision = {
 };
 
 export type TransactionPreview = {
+  chainFamily?: ChainFamily;
   title: string;
   action?: "swap" | "reduce_exposure" | "watchlist" | "no_action";
   fromToken?: string;
@@ -293,6 +304,8 @@ export type TransactionPreview = {
 };
 
 export type UserRule = {
+  chainFamily?: ChainFamily;
+  network?: string;
   walletAddress: string;
   maxRiskScore: number;
   maxTradePercent: number;
@@ -382,6 +395,8 @@ export type AgentScoreCard = {
 };
 
 export type RiskReportInput = {
+  chainFamily?: ChainFamily;
+  network?: string;
   query: string;
   chain: string;
   contractAddress?: string;
@@ -390,12 +405,14 @@ export type RiskReportInput = {
   symbol?: string;
   tokenName?: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "sac" | "sep41" | "issuer_account";
   issuer?: string;
   source: "contract_address" | "dexscreener_pair_url" | "dexscreener_token_url" | "stellar_asset" | "stellar_issuer" | "unresolved";
 };
 
 export type RiskReport = {
+  chainFamily?: ChainFamily;
+  network?: string;
   id: string;
   chain: string;
   contractAddress?: string;
@@ -415,6 +432,8 @@ export type RiskReport = {
 };
 
 export type TokenScanResult = {
+  chainFamily?: ChainFamily;
+  network?: string;
   symbol: string;
   tokenAddress: string;
   chain: string;
@@ -453,6 +472,7 @@ export type TokenScanResult = {
 };
 
 export type TransactionRecord = {
+  chainFamily: ChainFamily;
   hash: string;
   type: "swap" | "approval" | "agent_log" | "transfer";
   decisionAction?: AgentRecommendedAction;
@@ -469,11 +489,17 @@ export type TransactionRecord = {
 };
 
 export type AgentRunRecord = {
+  chainFamily: ChainFamily;
+  network: string;
   id: string;
   walletAddress: string;
   mode?: "portfolio_review" | "token_scan" | "pre_buy_check" | "holding_review" | "execution_prepare";
   inputSnapshot?: Record<string, unknown>;
   targetToken?: {
+    chainFamily?: ChainFamily;
+    network?: string;
+    assetKind?: AssetIdentityKind;
+    assetKey?: string;
     symbol?: string;
     name?: string;
     tokenAddress?: string;
@@ -511,6 +537,7 @@ export type StorageHealth = {
 };
 
 export type X402PaymentReceipt = {
+  chainFamily?: ChainFamily;
   id: string;
   requestId: string;
   paymentHeaderHash: string;
@@ -531,6 +558,8 @@ export type X402PaymentReceipt = {
 };
 
 export type RecommendationRecord = {
+  chainFamily: ChainFamily;
+  network: string;
   id: string;
   runId?: string;
   walletAddress: string;
@@ -542,6 +571,7 @@ export type RecommendationRecord = {
 };
 
 export type UserApprovalRecord = {
+  chainFamily: ChainFamily;
   id: string;
   walletAddress: string;
   decisionId?: string;

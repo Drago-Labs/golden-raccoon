@@ -4,6 +4,11 @@ import type { AgentResult } from "@/server/types";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { createAgentRunRecord, listAgentRunRecords } from "@/server/storage";
+import {
+  chainFamilySchema,
+  networkSchema,
+  validateChainScopedWallet,
+} from "@/server/security/inputValidation";
 
 const targetTokenSchema = z.object({
   symbol: z.string().optional(),
@@ -15,12 +20,22 @@ const targetTokenSchema = z.object({
 });
 
 const bodySchema = z.object({
+  chainFamily: chainFamilySchema.optional(),
+  network: networkSchema.optional(),
   walletAddress: z.string().min(1),
   mode: z.enum(["portfolio_review", "token_scan", "pre_buy_check", "holding_review", "execution_prepare"]).optional(),
   inputSnapshot: z.record(z.string(), z.unknown()).optional(),
   targetToken: targetTokenSchema.optional(),
   results: z.array(z.unknown()).min(1),
   userAction: z.enum(["pending", "approved", "rejected", "adjusted", "executed"]).optional(),
+}).superRefine((value, context) => {
+  if (!validateChainScopedWallet(value)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["walletAddress"],
+      message: "Wallet address does not match chainFamily/network.",
+    });
+  }
 });
 
 export function GET(request: NextRequest) {
@@ -52,6 +67,8 @@ export async function POST(request: Request) {
   return withCacheHeaders(
     NextResponse.json(
       createAgentRunRecord({
+        chainFamily: parsed.data.chainFamily,
+        network: parsed.data.network,
         walletAddress: parsed.data.walletAddress,
         mode: parsed.data.mode,
         inputSnapshot: parsed.data.inputSnapshot,

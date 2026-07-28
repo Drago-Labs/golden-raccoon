@@ -12,6 +12,7 @@ import { WalletConnectButton } from "@/components/WalletConnectButton";
 import { getScanNetwork, normalizeScanNetworkId, scanNetworks } from "@/lib/scanNetworks";
 import { useWalletSession } from "@/hooks/useWalletSession";
 import { StellarRiskPublishButton } from "@/components/StellarRiskPublishButton";
+import { canonicalizeAddress, getChainFamily } from "@/lib/chainIdentity";
 
 const scanCheckLabels = ["Deployed", "Honeypot", "Sell tax", "Ownership", "Holders", "Liquidity", "LP lock", "Market"];
 
@@ -185,7 +186,8 @@ export function DashboardClient() {
   const [dashboardRunSteps, setDashboardRunSteps] = useState<DashboardRunStep[]>(getInitialDashboardSteps);
   const [dashboardAgentResults, setDashboardAgentResults] = useState<AgentResult[]>([]);
   const [dashboardRunSummary, setDashboardRunSummary] = useState<DashboardRunSummary | null>(null);
-  const normalizedAccountAddress = address?.toLowerCase();
+  const walletFamily = family ?? getChainFamily(chain);
+  const normalizedAccountAddress = address ? canonicalizeAddress(address, walletFamily) : undefined;
   const portfolioRequestMatches = Boolean(normalizedAccountAddress && portfolioRequest?.address === normalizedAccountAddress);
   const portfolio = portfolioRequestMatches && portfolioRequest?.status === "ready" ? portfolioRequest.data ?? null : null;
   const portfolioFailed = portfolioRequestMatches && portfolioRequest?.status === "error";
@@ -194,7 +196,7 @@ export function DashboardClient() {
     if (!isConnected || !address) return;
 
     const controller = new AbortController();
-    const requestAddress = address.toLowerCase();
+    const requestAddress = canonicalizeAddress(address, walletFamily);
 
     const params = new URLSearchParams({ walletAddress: address });
     if (family === "stellar" && chain) params.set("chain", chain);
@@ -213,7 +215,7 @@ export function DashboardClient() {
       });
 
     return () => controller.abort();
-  }, [address, chain, family, isConnected]);
+  }, [address, chain, family, isConnected, walletFamily]);
 
   useEffect(() => {
     if (!isScanning) return;

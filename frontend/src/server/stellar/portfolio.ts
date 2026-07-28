@@ -59,7 +59,7 @@ async function getXlmPrice() {
 export async function getStellarPortfolio(walletAddress: string, networkId: string): Promise<PortfolioSnapshot | null> {
   if (!StrKey.isValidEd25519PublicKey(walletAddress)) return null;
 
-  const canonicalWallet = walletAddress.toUpperCase();
+  const canonicalWallet = walletAddress.trim();
   const { network, server: dataServer } = createStellarDataServer(networkId);
   const { server: rpcServer } = createStellarRpcServer(networkId);
   const startedAt = performance.now();
@@ -77,7 +77,7 @@ export async function getStellarPortfolio(walletAddress: string, networkId: stri
   const preliminary = balances.map((balance) => {
     const native = balance.asset_type === "native";
     const code = native ? "XLM" : balance.asset_code ?? "UNKNOWN";
-    const issuer = native ? undefined : balance.asset_issuer?.toUpperCase();
+    const issuer = native ? undefined : balance.asset_issuer?.trim();
     const officialUsdc = code === "USDC" && issuer === officialUsdcIssuers[network.id];
     const verified = native || officialUsdc;
     const priceUsd = native ? xlmMarket?.usd ?? 0 : officialUsdc ? 1 : 0;

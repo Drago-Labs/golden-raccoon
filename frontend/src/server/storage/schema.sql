@@ -6,13 +6,25 @@ create extension if not exists pgcrypto;
 
 create table if not exists wallets (
   id uuid primary key default gen_random_uuid(),
-  address text not null unique,
-  created_at timestamptz not null default now()
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
+  network text not null default 'legacy-evm',
+  address_kind text not null default 'evm_account' check (address_kind in ('evm_account', 'stellar_account')),
+  address text not null,
+  created_at timestamptz not null default now(),
+  constraint wallets_chain_identity_check check (
+    (chain_family = 'evm' and address_kind = 'evm_account' and address ~* '^0x[0-9a-f]{40}$')
+    or (chain_family = 'stellar' and address_kind = 'stellar_account' and address ~ '^G[A-Z2-7]{55}$')
+  )
 );
 
 create table if not exists token_identities (
   id uuid primary key default gen_random_uuid(),
-  identity_key text not null unique,
+  identity_key text not null,
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
+  network text not null default 'legacy-evm',
+  asset_kind text not null default 'evm_contract' check (asset_kind in ('evm_contract', 'stellar_native', 'stellar_classic', 'stellar_sac', 'stellar_sep41')),
+  asset_key text not null,
+  issuer text,
   wallet_address text,
   contract_address text,
   chain text,
@@ -25,11 +37,23 @@ create table if not exists token_identities (
   dex_screener_pair_url text,
   confidence numeric not null default 0,
   warnings jsonb not null default '[]'::jsonb,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint token_identities_chain_asset_check check (
+    (chain_family = 'evm' and asset_kind = 'evm_contract' and asset_key ~ '^contract:0x[0-9a-f]{40}$')
+    or
+    (chain_family = 'stellar' and (
+      (asset_kind = 'stellar_native' and asset_key = 'native')
+      or (asset_kind = 'stellar_classic' and asset_key ~ '^classic:[A-Z0-9]{1,12}:G[A-Z2-7]{55}$' and issuer ~ '^G[A-Z2-7]{55}$')
+      or (asset_kind = 'stellar_sac' and asset_key ~ '^sac:C[A-Z2-7]{55}$')
+      or (asset_kind = 'stellar_sep41' and asset_key ~ '^sep41:C[A-Z2-7]{55}$')
+    ))
+  )
 );
 
 create table if not exists agent_runs (
   id uuid primary key default gen_random_uuid(),
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
+  network text not null default 'legacy-evm',
   wallet_address text not null,
   mode text check (mode in ('portfolio_review', 'token_scan', 'pre_buy_check', 'holding_review', 'execution_prepare')),
   input_snapshot jsonb not null default '{}'::jsonb,
@@ -49,6 +73,8 @@ create table if not exists agent_runs (
 
 create table if not exists agent_results (
   id uuid primary key default gen_random_uuid(),
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
+  network text not null default 'legacy-evm',
   run_id uuid not null references agent_runs(id) on delete cascade,
   agent text not null,
   status text not null,
@@ -85,6 +111,8 @@ create table if not exists source_snapshots (
 
 create table if not exists recommendations (
   id uuid primary key default gen_random_uuid(),
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
+  network text not null default 'legacy-evm',
   run_id uuid references agent_runs(id) on delete set null,
   wallet_address text not null,
   action text not null,
@@ -97,10 +125,11 @@ create table if not exists recommendations (
 
 create table if not exists approvals (
   id uuid primary key default gen_random_uuid(),
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
   wallet_address text not null,
   decision_id text,
   tx_hash text not null,
-  network text,
+  network text not null default 'legacy-evm',
   action text,
   asset text,
   value_usd numeric,
@@ -111,10 +140,11 @@ create table if not exists approvals (
 
 create table if not exists transactions (
   id uuid primary key default gen_random_uuid(),
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
   wallet_address text not null,
   decision_id text,
   decision_action text,
-  tx_hash text not null unique,
+  tx_hash text not null,
   type text not null,
   asset text not null,
   value_usd numeric not null default 0,
@@ -123,11 +153,16 @@ create table if not exists transactions (
   user_approved boolean not null default false,
   simulation_status text,
   policy_status jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint transactions_chain_hash_check check (
+    (chain_family = 'evm' and tx_hash ~ '^0x[0-9a-f]{64}$')
+    or (chain_family = 'stellar' and tx_hash ~ '^[0-9A-Fa-f]{64}$')
+  )
 );
 
 create table if not exists x402_payment_receipts (
   id uuid primary key default gen_random_uuid(),
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
   request_id text not null,
   payment_header_hash text not null unique,
   wallet_address text,
@@ -148,7 +183,9 @@ create table if not exists x402_payment_receipts (
 
 create table if not exists user_rules (
   id uuid primary key default gen_random_uuid(),
-  wallet_address text not null unique,
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
+  network text not null default 'legacy-evm',
+  wallet_address text not null,
   max_risk_score integer not null,
   max_trade_percent numeric not null,
   max_meme_exposure_percent numeric not null,
@@ -168,3 +205,11 @@ create index if not exists recommendations_wallet_created_idx on recommendations
 create index if not exists transactions_wallet_created_idx on transactions(wallet_address, created_at desc);
 create index if not exists approvals_wallet_created_idx on approvals(wallet_address, created_at desc);
 create index if not exists x402_payment_receipts_resource_created_idx on x402_payment_receipts(protected_resource, created_at desc);
+create unique index if not exists wallets_chain_network_address_uidx on wallets(chain_family, network, address);
+create unique index if not exists token_identities_chain_network_asset_uidx
+  on token_identities(chain_family, network, asset_key)
+  where asset_key is not null;
+create unique index if not exists token_identities_chain_network_identity_uidx
+  on token_identities(chain_family, network, identity_key);
+create unique index if not exists transactions_chain_network_hash_uidx on transactions(chain_family, network, tx_hash);
+create unique index if not exists user_rules_chain_network_wallet_uidx on user_rules(chain_family, network, wallet_address);

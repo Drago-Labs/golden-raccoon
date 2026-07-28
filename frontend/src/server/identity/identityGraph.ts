@@ -1,5 +1,6 @@
 import type { AgentInputIdentity } from "@/server/types";
 import { evaluateUrlSafety, getHostname } from "@/server/security/urlSafety";
+import { canonicalizeAddress, getChainFamily } from "@/lib/chainIdentity";
 
 export type IdentityGraphNode = {
   id: string;
@@ -70,7 +71,9 @@ export function verifyOfficialLinks(input: AgentInputIdentity) {
 export function buildTokenIdentityGraph(input: AgentInputIdentity) {
   const nodes: IdentityGraphNode[] = [];
   const edges: IdentityGraphEdge[] = [];
-  const contract = normalizeValue(input.contractAddress)?.toLowerCase();
+  const family = getChainFamily(input.chain);
+  const contractValue = normalizeValue(input.contractAddress);
+  const contract = contractValue ? canonicalizeAddress(contractValue, family) : undefined;
   const chain = normalizeValue(input.chain)?.toLowerCase();
   const symbol = normalizeValue(input.symbol)?.toUpperCase();
   const name = normalizeValue(input.tokenName);

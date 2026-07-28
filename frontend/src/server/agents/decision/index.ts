@@ -1,6 +1,7 @@
 import type { AgentFinding, AgentMissingData, AgentRecommendedAction, AgentResult, RiskLevel, UserRule } from "@/server/types";
 import { buildAgentResult, clampScore, scoreToRiskLevel } from "@/server/agents/shared";
 import { validateAgentResult } from "@/server/agents/schema";
+import type { ChainFamily } from "@/lib/chainIdentity";
 
 type DecisionMode = "portfolio_review" | "token_scan" | "pre_buy_check" | "holding_review" | "execution_prepare";
 
@@ -13,6 +14,8 @@ type UserRiskProfile = {
 };
 
 type DecisionContext = {
+  chainFamily?: ChainFamily;
+  network?: string;
   mode?: DecisionMode;
   userAlreadyOwnsToken?: boolean;
   targetExposurePercent?: number;
