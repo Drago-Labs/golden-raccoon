@@ -4,15 +4,13 @@ import { withCacheHeaders } from "@/server/cache/strategy";
 import { assertApprovalOnly } from "@/server/security/policy";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import {
-  appendLifecycleEventByName,
-  canonicalizeTransactionHash,
   createApprovalRecord,
   createTransactionRecord,
   getTransactionRecord,
-  updateTransactionRecord,
 } from "@/server/storage";
 import { isTransactionHashForChain, getChainFamily } from "@/lib/chainIdentity";
 import { attachExplorerUrl } from "@/server/transactions/explorer";
+import { confirmTransaction } from "@/server/transactions/lifecycleManager";
 
 const bodySchema = z.object({
   decisionId: z.string().optional(),
@@ -92,64 +90,95 @@ export async function POST(request: Request) {
     }, { status: 400 });
   }
 
-  const normalizedHash = canonicalizeTransactionHash(parsed.data.txHash, chainFamily);
-
-  if (getTransactionRecord(normalizedHash)) {
-    return NextResponse.json({ error: "duplicate_tx_hash", detail: "This transaction hash is already recorded." }, { status: 409 });
-  }
-
-  if (parsed.data.sourceAccount && chainFamily === "evm" && parsed.data.sourceAccount.toLowerCase() !== parsed.data.walletAddress.toLowerCase()) {
-    return NextResponse.json({ error: "source_wallet_mismatch", detail: "EVM source account must equal the connected wallet." }, { status: 403 });
-  }
-
+  // First, record the externally-broadcast hash so a duplicate confirm is rejected.
+  // The previous behaviour marked the record as confirmed without verification; we now
+  // persist at most a submitted record and rely on confirmTransaction() below to verify
+  // on-chain before transitioning to confirmed.
   const policyStatus = {
     allowed: parsed.data.policyAllowed ?? true,
     violations: parsed.data.policyViolations ?? [],
   };
+  const existing = getTransactionRecord(parsed.data.txHash);
+  if (existing) {
+    if (parsed.data.walletAddress.toLowerCase() !== (existing.walletAddress ?? "").toLowerCase()) {
+      return NextResponse.json({
+        error: "wallet_mismatch",
+        detail: "Connected wallet does not own the recorded transaction.",
+      }, { status: 403 });
+    }
+    if (parsed.data.sourceAccount && chainFamily === "evm" && parsed.data.sourceAccount.toLowerCase() !== parsed.data.walletAddress.toLowerCase()) {
+      return NextResponse.json({ error: "source_wallet_mismatch", detail: "EVM source account must equal the connected wallet." }, { status: 403 });
+    }
+    if (existing.lifecycleStatus === "confirmed") {
+      return NextResponse.json({ error: "duplicate_tx_hash", detail: "This transaction hash is already confirmed." }, { status: 409 });
+    }
+  } else {
+    createTransactionRecord({
+      hash: parsed.data.txHash,
+      type: "approval",
+      decisionAction: parsed.data.action,
+      asset: parsed.data.asset ?? "Wallet approval",
+      valueUsd: parsed.data.valueUsd ?? 0,
+      status: "submitted",
+      lifecycleStatus: "submitted",
+      chainFamily,
+      network,
+      walletAddress: parsed.data.walletAddress,
+      sourceAccount: parsed.data.sourceAccount,
+      userApproved: true,
+      decisionId: parsed.data.decisionId,
+      simulationStatus: parsed.data.simulationStatus,
+      policyStatus,
+      expectedEffects: parsed.data.expectedEffects,
+      idempotencyKey: parsed.data.idempotencyKey,
+      submittedAt: new Date().toISOString(),
+    });
+  }
+
+  let transaction;
+  try {
+    transaction = await confirmTransaction(parsed.data.txHash, {
+      walletAddress: parsed.data.walletAddress,
+      decisionWalletAddress: parsed.data.decisionWalletAddress,
+      sourceAccount: parsed.data.sourceAccount,
+      expectedEffects: parsed.data.expectedEffects ?? existing?.expectedEffects,
+    });
+  } catch (error) {
+    const code = (error as { code?: string }).code ?? "confirm_failed";
+    return NextResponse.json({
+      error: code,
+      detail: error instanceof Error ? error.message : "Could not confirm transaction.",
+    }, { status: code === "transaction_not_found" ? 404 : 502 });
+  }
+
+  if (transaction.lifecycleStatus === "failed" || transaction.lifecycleStatus === "replaced") {
+    return NextResponse.json({
+      error: "verification_failed",
+      detail: transaction.failureReason ?? `On-chain verification returned ${transaction.lifecycleStatus}.`,
+      transaction,
+    }, { status: 422 });
+  }
 
   const approval = createApprovalRecord({
     walletAddress: parsed.data.walletAddress,
     decisionId: parsed.data.decisionId,
-    txHash: normalizedHash,
-    network,
+    txHash: transaction.hash,
+    network: transaction.network,
     action: parsed.data.action,
     asset: parsed.data.asset ?? "Wallet approval",
     valueUsd: parsed.data.valueUsd ?? 0,
   });
-  const confirmedAt = new Date().toISOString();
-  const transaction = createTransactionRecord({
-    hash: normalizedHash,
-    type: "approval",
-    decisionAction: parsed.data.action,
-    asset: parsed.data.asset ?? "Wallet approval",
-    valueUsd: parsed.data.valueUsd ?? 0,
-    status: "confirmed",
-    lifecycleStatus: "confirmed",
-    chainFamily,
-    network,
-    walletAddress: parsed.data.walletAddress,
-    sourceAccount: parsed.data.sourceAccount,
-    userApproved: true,
-    decisionId: parsed.data.decisionId,
-    simulationStatus: parsed.data.simulationStatus,
-    policyStatus,
-    expectedEffects: parsed.data.expectedEffects,
-    idempotencyKey: parsed.data.idempotencyKey,
-    explorerUrl: attachExplorerUrl({ hash: normalizedHash, network, chainFamily }),
-    submittedAt: confirmedAt,
-    terminalAt: confirmedAt,
-  });
-
-  appendLifecycleEventByName(normalizedHash, "prepared", { network, chainFamily });
-  appendLifecycleEventByName(normalizedHash, "submitted", { network, chainFamily });
-  appendLifecycleEventByName(normalizedHash, "confirmed", { network, chainFamily, confirmedAt });
 
   return withCacheHeaders(NextResponse.json({
     ...parsed.data,
-    status: "confirmed",
+    status: transaction.lifecycleStatus === "confirmed" ? "confirmed" : "submitted",
     autoExecuted: false,
     approval,
-    transaction,
-    confirmedAt,
+    transaction: {
+      ...transaction,
+      explorerUrl: transaction.explorerUrl ?? attachExplorerUrl({ hash: transaction.hash, network: transaction.network, chainFamily: transaction.chainFamily }),
+    },
+    confirmedAt: transaction.lifecycleStatus === "confirmed" ? (transaction.terminalAt ?? new Date().toISOString()) : undefined,
+    pendingVerification: transaction.lifecycleStatus !== "confirmed",
   }), "execution");
 }

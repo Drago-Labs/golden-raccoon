@@ -31,6 +31,8 @@ import type { AgentResult, PortfolioSnapshot, TokenHolding } from "../src/server
 import { NextRequest } from "next/server";
 import { POST as confirmExecution } from "../src/app/api/execute/confirm/route";
 import { POST as submitExecution } from "../src/app/api/execute/submit/route";
+import { POST as prepareExecution } from "../src/app/api/execute/prepare/route";
+import { POST as rejectExecution } from "../src/app/api/execute/reject/route";
 import { GET as getTransactionLifecycle } from "../src/app/api/execute/transactions/[hash]/route";
 import { GET as listTransactionHistory } from "../src/app/api/history/transactions/route";
 import {
@@ -45,6 +47,8 @@ import {
   submitTransaction,
   pollTransaction,
   expireTransactionIfStale,
+  prepareTransaction,
+  recordUserRejection,
   TransactionLifecycleError,
 } from "../src/server/transactions/lifecycleManager";
 import {
@@ -56,6 +60,7 @@ import {
   listTransactionLifecycleEvents,
   updateTransactionRecord,
 } from "../src/server/storage";
+import type { TransactionLifecycleStatus } from "../src/server/types";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -846,7 +851,9 @@ async function runExecutionChecks() {
       }),
     }),
   );
-  assert(duplicateConfirmResponse.status === 409, "Confirm must reject duplicate transaction hash.");
+  assert(duplicateConfirmResponse.status === 200, "Confirm must remain idempotent for re-verification of an externally-broadcast hash.");
+  const duplicateConfirmJson = await duplicateConfirmResponse.json();
+  assert(duplicateConfirmJson.pendingVerification === true, "Re-confirming an externally-broadcast hash must report pendingVerification until on-chain verification succeeds.");
 
   const runRecord = createAgentRunRecord({
     walletAddress: "0xabc",
@@ -1236,22 +1243,21 @@ async function runTransactionLifecycleChecks() {
   assert(expiry.expired === true && expiry.transaction?.lifecycleStatus === "expired", "Stale pending transactions must transition to expired when TTL elapses.");
 
   configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "rejected" });
-  let rejected: Error | undefined;
-  try {
-    await submitTransaction({
-      chainFamily: "evm",
-      network: "GOAT Network",
-      walletAddress: "0xabc",
-      sourceAccount: "0xabc",
-      asset: "MEME",
-      userApproved: true,
-      signedPayload: `0x${"6".repeat(64)}`,
-      idempotencyKey: "idem_evm_rejected",
-    });
-  } catch (error) {
-    rejected = error as Error;
-  }
-  assert(rejected !== undefined && rejected.message.includes("rejected"), "EVM submit must surface rejected RPC outcomes as errors.");
+  const evmRejected = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: `0x${"6".repeat(64)}`,
+    idempotencyKey: "idem_evm_rejected",
+  });
+  assert(evmRejected.outcome === "terminally_recorded", "EVM rejected submit must be persisted as a terminally_recorded submission_failed.");
+  assert(evmRejected.transaction.lifecycleStatus === "failed", "EVM rejected submit must persist the failed lifecycle, not leave the record at prepared.");
+  assert(evmRejected.transaction.failureReason?.includes("rejected") ?? false, "EVM rejected submit must record the rejected reason on the failed record.");
+  assert(listTransactionLifecycleEvents(evmRejected.transaction.hash).some((event) => event.event === "submission_failed"), "EVM rejected submit must append a submission_failed lifecycle event.");
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
 
   configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
 
@@ -1320,22 +1326,20 @@ async function runTransactionLifecycleChecks() {
   assert(stellarExpiredPoll.transaction.lifecycleStatus === "expired", "Stellar poll-to-expired must mark the transaction expired.");
 
   configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "rejected" });
-  let stellarRejected: Error | undefined;
-  try {
-    await submitTransaction({
-      chainFamily: "stellar",
-      network: "stellar-testnet",
-      walletAddress: stellarWallet,
-      sourceAccount: stellarWallet,
-      asset: "GOAT",
-      userApproved: true,
-      signedPayload: `${"e".repeat(64)}`,
-      idempotencyKey: "idem_stellar_rejected",
-    });
-  } catch (error) {
-    stellarRejected = error as Error;
-  }
-  assert(stellarRejected !== undefined && stellarRejected.message.includes("rejected"), "Stellar submit must surface rejected RPC outcomes as errors.");
+  const stellarRejected = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarWallet,
+    sourceAccount: stellarWallet,
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: `${"e".repeat(64)}`,
+    idempotencyKey: "idem_stellar_rejected",
+  });
+  assert(stellarRejected.outcome === "terminally_recorded", "Stellar rejected submit must be persisted as a terminally_recorded submission_failed.");
+  assert(stellarRejected.transaction.lifecycleStatus === "failed", "Stellar rejected submit must persist the failed lifecycle, not leave the record at prepared.");
+  assert(stellarRejected.transaction.failureReason?.includes("rejected") ?? false, "Stellar rejected submit must record the rejected reason on the failed record.");
+  assert(listTransactionLifecycleEvents(stellarRejected.transaction.hash).some((event) => event.event === "submission_failed"), "Stellar rejected submit must append a submission_failed lifecycle event.");
 
   configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
   clearStellarSimulator();
@@ -1354,6 +1358,209 @@ async function runTransactionLifecycleChecks() {
   } catch (error) {
     assert(error instanceof TransactionLifecycleError && error.code === "network_chain_family_mismatch", "Submit must reject network/family mismatches.");
   }
+
+  // ---- submission_failed is a terminal persisted state, not a thrown error ----
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "rejected" });
+  const submissionFailedHash = `0x${"7".repeat(64)}`;
+  const submissionFailed = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: submissionFailedHash,
+    idempotencyKey: "idem_evm_submission_failed",
+  });
+  assert(submissionFailed.outcome === "terminally_recorded", "Rejected RPC submit must persist as terminally_recorded outcome.");
+  assert(submissionFailed.transaction.lifecycleStatus === "failed", "Submission rejection must persist the failed lifecycle, not leave the record at prepared.");
+  assert(submissionFailed.result.status === "failed", "Submission report must surface failed status to callers.");
+  assert(Boolean(submissionFailed.transaction.failureReason), "Failed submission must record a failureReason tied to the RPC rejection.");
+  assert(listTransactionLifecycleEvents(submissionFailed.transaction.hash).some((event) => event.event === "submission_failed"), "Failed submissions must append a submission_failed lifecycle event.");
+  assert(listTransactionLifecycleEvents(submissionFailed.transaction.hash).some((event) => event.event === "prepared"), "Failed submissions must still retain the prepared lifecycle event for audit.");
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
+  // ---- user_rejected is a real lifecycle path, not an orphan event ----
+  const userRejectedHash = `0x${"8".repeat(64)}`;
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const userRejectedPrep = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: userRejectedHash,
+    idempotencyKey: "idem_evm_user_rejected",
+  });
+  assert(userRejectedPrep.transaction.lifecycleStatus === "submitted", "User-rejected fixture requires a fresh submitted record.");
+  const userRejected = await recordUserRejection(userRejectedHash, { walletAddress: "0xabc", reason: "User clicked reject in wallet." });
+  assert(userRejected.lifecycleStatus === "user_rejected", "recordUserRejection must mark the transaction as user_rejected.");
+  assert(isImmutableTerminal(userRejected.lifecycleStatus as TransactionLifecycleStatus), "user_rejected must be flagged as immutable terminal.");
+  assert(Boolean(userRejected.failureReason), "user_rejected must record a human-readable failureReason.");
+  assert(listTransactionLifecycleEvents(userRejectedHash).some((event) => event.event === "user_rejected"), "user_rejected transactions must append a user_rejected lifecycle event.");
+
+  // Re-rejecting an already terminal transaction is a no-op
+  const reRejected = await recordUserRejection(userRejectedHash, { walletAddress: "0xabc" });
+  assert(reRejected.lifecycleStatus === "user_rejected", "Re-rejecting a terminal user_rejected transaction must remain terminal.");
+
+  // ---- prepareTransaction is idempotent across repeated POSTs with the same key ----
+  const prepared = prepareTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    decisionId: "decision_prepare_idempotent",
+    idempotencyKey: "idem_prepare_idempotent",
+  });
+  assert(!prepared.idempotent && prepared.created === true, "First prepare must create a new prepared record.");
+
+  const preparedAgain = prepareTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    decisionId: "decision_prepare_idempotent",
+    idempotencyKey: "idem_prepare_idempotent",
+  });
+  assert(preparedAgain.idempotent && preparedAgain.created === false, "Second prepare with the same idempotency key must be idempotent.");
+  assert(preparedAgain.transaction.hash === prepared.transaction.hash, "Idempotent prepare must return the same transaction record.");
+  assert(prepared.transaction.lifecycleStatus === "prepared", "Prepare must persist the prepared lifecycle.");
+  assert(listTransactionLifecycleEvents(prepared.transaction.hash).some((event) => event.event === "prepared"), "Prepared transactions must append a prepared lifecycle event.");
+
+  const prepareResponse = await prepareExecution(
+    new Request("http://localhost/api/execute/prepare", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: "0xabc",
+        chainFamily: "evm",
+        network: "GOAT Network",
+        decisionId: "decision_prepare_route",
+        asset: "MEME",
+        estimatedValueUsd: 50,
+        simulationStatus: "passed",
+        fromToken: "MEME",
+        toToken: "USDC",
+        percent: 10,
+        riskScore: 40,
+        idemKey: "idem_prepare_route",
+        idempotencyKey: "idem_prepare_route",
+      }),
+    }),
+  );
+  assert(prepareResponse.status === 200, "Prepare API must accept a valid input.");
+  const prepareJson = await prepareResponse.json();
+  assert(prepareJson.prepare?.created === true, "First prepare API call must create a new prepared record.");
+  assert(typeof prepareJson.prepare?.transaction?.hash === "string", "Prepare API must expose the prepared transaction hash.");
+  assert(prepareJson.lifecycle?.status === "prepared", "Prepare API lifecycle status must be prepared.");
+  assert(typeof prepareJson.lifecycle?.idempotencyKey === "string", "Prepare API response must include the idempotency key.");
+
+  const duplicatePrepareResponse = await prepareExecution(
+    new Request("http://localhost/api/execute/prepare", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: "0xabc",
+        chainFamily: "evm",
+        network: "GOAT Network",
+        decisionId: "decision_prepare_route",
+        asset: "MEME",
+        estimatedValueUsd: 50,
+        simulationStatus: "passed",
+        fromToken: "MEME",
+        toToken: "USDC",
+        percent: 10,
+        riskScore: 40,
+        idempotencyKey: "idem_prepare_route",
+      }),
+    }),
+  );
+  const duplicatePrepareJson = await duplicatePrepareResponse.json();
+  assert(duplicatePrepareResponse.status === 200, "Duplicate prepare must respond 200 (idempotent).");
+  assert(duplicatePrepareJson.prepare?.idempotent === true && duplicatePrepareJson.prepare?.created === false, "Duplicate prepare API call must be idempotent.");
+  assert(duplicatePrepareJson.prepare?.transaction?.hash === prepareJson.prepare?.transaction?.hash, "Duplicate prepare API call must reuse the prepared record.");
+
+  // ---- reject API persists user_rejected terminal state ----
+  const rejectHash = `0x${"a".repeat(63)}1`;
+  const rejectCreated = createTransactionRecord({
+    hash: rejectHash,
+    type: "approval",
+    asset: "MEME",
+    valueUsd: 0,
+    status: "submitted",
+    lifecycleStatus: "submitted",
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    userApproved: true,
+  });
+  assert(rejectCreated.lifecycleStatus === "submitted", "Rejected fixture requires an existing submitted record.");
+
+  const rejectResponse = await rejectExecution(
+    new Request("http://localhost/api/execute/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        txHash: rejectHash,
+        walletAddress: "0xabc",
+        reason: "User clicked reject in wallet.",
+        source: "wallet",
+      }),
+    }),
+  );
+  assert(rejectResponse.status === 200, "Reject API must record user_rejected for known hashes.");
+  const rejectJson = await rejectResponse.json();
+  assert(rejectJson.status === "user_rejected", "Reject API must expose user_rejected status.");
+  assert(getTransactionRecord(rejectHash)?.lifecycleStatus === "user_rejected", "Reject API must persist user_rejected terminal state in storage.");
+
+  const unknownRejectResponse = await rejectExecution(
+    new Request("http://localhost/api/execute/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        txHash: `0x${"b".repeat(63)}2`,
+        walletAddress: "0xabc",
+      }),
+    }),
+  );
+  assert(unknownRejectResponse.status === 404, "Reject API must reject unknown transaction hashes.");
+
+  const mismatchedRejectResponse = await rejectExecution(
+    new Request("http://localhost/api/execute/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        txHash: rejectHash,
+        walletAddress: "0xdef",
+        reason: "Mismatched wallet cannot reject.",
+      }),
+    }),
+  );
+  assert(mismatchedRejectResponse.status === 403, "Reject API must reject mismatched wallet addresses.");
+
+  // ---- confirm endpoint route surfaces pending verification when on-chain verifier has no terminal answer ----
+  // Use a fresh network with an explicit pending simulator so the test is deterministic.
+  configureEvmSimulator("evm", "ethereum", { pollOutcome: "pending" });
+  const confirmPendingHash = `0x${"c".repeat(63)}3`;
+  const confirmPending = await confirmExecution(
+    new Request("http://localhost/api/execute/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: "0xabc",
+        txHash: confirmPendingHash,
+        network: "ethereum",
+        userApproved: true,
+        action: "reduce_exposure",
+        asset: "MEME",
+        valueUsd: 25,
+        simulationStatus: "passed",
+        policyAllowed: true,
+      }),
+    }),
+  );
+  assert(confirmPending.status === 200, "Confirm API must record the externally broadcast hash and verify on-chain.");
+  const confirmPendingJson = await confirmPending.json();
+  assert(confirmPendingJson.pendingVerification === true, "Confirm must report pendingVerification when the on-chain verifier cannot confirm yet.");
+  assert(confirmPendingJson.transaction?.lifecycleStatus === "pending" || confirmPendingJson.transaction?.lifecycleStatus === "submitted", "Confirm must record a non-terminal lifecycle when verification is still pending.");
+  clearEvmSimulator();
 
   // Append a manual user_rejected event and ensure new hash is flagged
   appendLifecycleEventByName(`0x${"f".repeat(64)}`, "user_rejected", { reason: "User clicked reject in wallet." });
@@ -1422,14 +1629,16 @@ async function runTransactionLifecycleChecks() {
   );
   assert(wrongWalletFormat.status === 400, "Submit must reject invalid wallets.");
 
+  const evmMismatchedSourceWallet = `0x${"a".repeat(40)}`;
+  const evmMismatchedSourceOther = `0x${"d".repeat(40)}`;
   const evmMismatchedSource = await submitExecution(
     new Request("http://localhost/api/execute/submit", {
       method: "POST",
       body: JSON.stringify({
         chainFamily: "evm",
         network: "GOAT Network",
-        walletAddress: "0xabc",
-        sourceAccount: "0xdef",
+        walletAddress: evmMismatchedSourceWallet,
+        sourceAccount: evmMismatchedSourceOther,
         signedPayload: `0x${"b".repeat(64)}`,
         asset: "MEME",
         userApproved: true,
@@ -1493,7 +1702,7 @@ async function runTransactionLifecycleChecks() {
   assert(lookupByHash?.hash === evmSubmitted.transaction.hash, "Storage must retrieve transaction records by hash.");
   const lookupByKey = getTransactionRecordByIdempotencyKey("0xabc", "idem_evm_success");
   assert(lookupByKey?.idempotencyKey === "idem_evm_success", "Storage must look up records by idempotency key.");
-  assert(updateTransactionRecord(evmSubmitted.transaction.hash, { valueUsd: 999 }).valueUsd === 999, "Update should mutate tracking fields without touching status.");
+  assert(updateTransactionRecord(evmSubmitted.transaction.hash, { valueUsd: 999 })?.valueUsd === 999, "Update should mutate tracking fields without touching status.");
 
   clearEvmSimulator();
 }
