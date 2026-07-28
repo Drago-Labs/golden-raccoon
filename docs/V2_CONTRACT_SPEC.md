@@ -6,7 +6,7 @@
 | Authors | Golden Raccoon contributors |
 | Status | Draft for maintainer review |
 | Roadmap coverage | V2-061, V2-062, V2-063, prerequisite decisions for V2-066 / V2-067 |
-| Target networks | **TBD pending maintainer approval.** Targets under consideration: EVM — GOAT Network (id 48816), Base, Sepolia; Soroban — Stellar Testnet. Pubnet / pubnet-equivalent rollout is a separate decision. |
+| Target networks | **Maintainer sign-off requested.** Primary targets: EVM — GOAT Network (id 48816); Soroban — Stellar Testnet (pubnet-equivalent rollout deferred to a follow-up audit). Base Sepolia is documented as a secondary testnet in §9.6 for parallel coverage. |
 | Out of scope | Implementing or deploying the contracts; adding fund custody, swaps, or autonomous execution; choosing a production admin key inside this PR. |
 
 This document is the implementation-ready contract specification that closes V2 contract requirements (V2-061..V2-063 and the prerequisite decisions for V2-066 / V2-067). It does not introduce implementation code. The matching test matrix is `docs/V2_CONTRACT_TEST_MATRIX.md`.
@@ -459,13 +459,13 @@ All canonical identifier encodings (decision_id, policy_hash, decision_hash, int
 
 | Network | Chain | Tier | Status |
 | --- | --- | --- | --- |
-| Stellar Testnet | Soroban | dev | pending maintainer approval |
-| GOAT Network (id 48816) | EVM | dev | pending maintainer approval |
-| Base Sepolia | EVM | dev | pending maintainer approval |
-| Stellar Pubnet | Soroban | prod | depends on registry audit |
-| Base mainnet | EVM | prod | depends on V2 contract audit |
+| GOAT Network (id 48816) | EVM | dev (primary) | await maintainer sign-off |
+| Stellar Testnet | Soroban | dev (primary) | await maintainer sign-off |
+| Base Sepolia | EVM | dev (secondary, parallel coverage only) | await maintainer sign-off |
+| Stellar Pubnet | Soroban | prod | deferred until §9.3 step 6 (third-party audit) |
+| Base mainnet | EVM | prod | deferred until §9.3 step 6 (third-party audit) |
 
-The maintainer MUST approve the target networks before any implementation PR is opened. This PR does not select them.
+The contributor proposes GOAT Network (id 48816) as the primary EVM testnet and Stellar Testnet as the primary Soroban testnet because the existing frontend already exercises the entire V2 transaction lifecycle (`prepare`/`submit`/`confirm`/polling/reject) on these networks. Base Sepolia is kept as a documented secondary testnet; rollout against it begins only after a maintainer approval comment on this PR. Pubnet-equivalent rollouts remain deferred until the third-party audit closes (see §9.3).
 
 ### 9.2 Admin key lifecycle
 
@@ -491,13 +491,13 @@ The maintainer MUST approve the target networks before any implementation PR is 
 
 ### 9.5 Open questions for maintainer review
 
-1. Confirm the targeted EVM testnet (GOAT Network vs. Base Sepolia).
-2. Confirm the Stellar target (testnet vs. pubnet).
-3. Confirm the UUPS proxy is acceptable for V2 (alternatives: minimal proxy, beacon, or transparent).
-4. Confirm the upgrade delay window (24h minimum, 30d maximum).
-5. Confirm the publisher tier list (e.g. `gold_raccoon`, `partner`, `community`).
-6. Confirm the version-rebuild hash encoding (commit SHA-256 truncated to 32 bytes).
-7. Confirm whether the regime requires a publisher quarantine list (out of scope for this spec).
+1. Confirm the targeted EVM testnet — **proposed**: GOAT Network (id 48816) primary, Base Sepolia documented as secondary (§9.1).
+2. Confirm the Stellar target — **proposed**: Stellar Testnet dev now, Stellar Pubnet deferred until audit (§9.3).
+3. Confirm the UUPS proxy is acceptable for V2 (alternatives: minimal proxy, beacon, or transparent). **proposed**: UUPS, with §5.7 timelock and cancel path.
+4. Confirm the upgrade delay window (24h minimum, 30d maximum). **proposed**: 24h minimum, 30d maximum.
+5. Confirm the publisher tier list (e.g. `gold_raccoon`, `partner`, `community`). **proposed**: `gold_raccoon`, `partner`, `community`.
+6. Confirm the version-rebuild hash encoding (commit SHA-256 truncated to 32 bytes). **proposed**: `sha256(git_commit || build_runner)` truncated to 32 bytes for Soroban; `keccak256(git_commit || build_runner)` truncated to 32 bytes for EVM.
+7. Confirm whether the regime requires a publisher quarantine list (out of scope for this spec). **proposed**: deferred — covered by a future V2-068+ spec.
 
 ---
 

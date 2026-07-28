@@ -252,8 +252,8 @@ These invariants are mirrored on the frontend side via the V2 transaction lifecy
 
 ## Open items for maintainer review
 
-1. Which EVM testnet is the production target — GOAT Network only, Base Sepolia only, or both? (Spec §9.1 — `Goat Network (id 48816)`, `Base Sepolia` listed as `pending maintainer approval`.)
-2. Are publisher tiers `gold_raccoon`, `partner`, `community` acceptable, or should the spec add a fourth `audited` tier?
-3. Is the 24-hour upgrade delay minimum acceptable, or should the spec require 72 hours?
-4. Should the spec require a quorum for pause, owner transfer, or upgrade execution? (Currently single-key.)
-5. Should the spec publish a typed `VersionReported` schema in addition to the event signature?
+1. **EVM testnet production target — proposed:** GOAT Network (id 48816) is the primary production target; Base Sepolia remains a documented secondary testnet for parallel coverage only (Spec §9.1). Both are listed as `await maintainer sign-off` in `docs/V2_CONTRACT_SPEC.md` §9.1.
+2. **Publisher tier list — proposed:** `gold_raccoon`, `partner`, `community`. A fourth `audited` tier is not proposed in this PR; it is tracked as a possible future V2-068+ extension.
+3. **Upgrade delay window — proposed:** 24-hour minimum, 30-day maximum, consistent with Spec §5.7 / §6.7. A 72-hour minimum is not proposed; the maintainer can request 72 hours as a follow-up edit if desired.
+4. **Quorum for pause / owner transfer / upgrade execution — proposed:** single-key with guardian support, no quorum in this spec. Quorum logic is out of scope and a future spec may add it once §10 (threats and assumptions) is revisited.
+5. **`VersionReported` schema — proposed:** the event signature in Spec §4 is the canonical schema; the implementation MUST emit semver (3 × `uint16`/`u32`) and `buildHash` (`bytes32`/`BytesN<32>`) in that order so indexers can rely on a single projection. A separate typed schema document is not proposed for V2.
