@@ -1,4 +1,4 @@
-import type { AgentRecommendedAction, AgentResult, PortfolioSnapshot, StellarSwapQuote, TransactionPreview, UserRule } from "@/server/types";
+import type { AgentRecommendedAction, AgentResult, PortfolioSnapshot, SimulationResultDetail, StellarSwapQuote, TransactionPreview, UserRule } from "@/server/types";
 import { buildAgentResult } from "@/server/agents/shared";
 import { buildExecutionPolicy, evaluateExecutionPolicy } from "@/server/agents/execution/policy";
 import { getChainFamily } from "@/lib/chainIdentity";
@@ -20,8 +20,10 @@ type ExecutionAgentInput = {
   gasEstimateUsd?: number;
   quoteAvailable?: boolean;
   expectedOutputAmount?: number;
-  simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
+  simulationStatus?: SimulationResultDetail["status"];
   simulationRevertReason?: string;
+  simulation?: SimulationResultDetail;
+  fresh?: boolean;
   rules?: UserRule;
   // Stellar-specific input fields
   stellarAssetCode?: string;
@@ -83,9 +85,10 @@ function estimateProjectedRisk(currentRiskScore: number, percent: number) {
 
 function getSimulationPlan(input: {
   requiresTrade: boolean;
-  isStellar?: boolean;
-  simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
+isStellar?: boolean;
+  simulationStatus?: SimulationResultDetail["status"];
   revertReason?: string;
+  simulation?: SimulationResultDetail;
 }): NonNullable<TransactionPreview["simulation"]> {
   if (!input.requiresTrade) {
     return {
@@ -110,14 +113,29 @@ function getSimulationPlan(input: {
   }
 
   return {
-    provider: "planned_tenderly",
-    status: input.simulationStatus ?? "pending",
-    checks: ["Approval simulation", "Sell/swap simulation", "Revert reason capture", "Slippage and tax sanity check"],
-    revertReason: input.revertReason,
-    detail:
-      input.simulationStatus === "failed"
+    provider: input.simulation?.provider ?? "planned_tenderly",
+    status: input.simulation?.status ?? input.simulationStatus ?? "pending",
+    checks: input.simulation?.checks ?? ["Approval simulation", "Sell/swap simulation", "Revert reason capture", "Slippage and tax sanity check"],
+    revertReason: input.simulation?.revertReason ?? input.revertReason,
+    revertReasonHuman: input.simulation?.revertReasonHuman,
+    detail: input.simulation?.detail
+      ?? (input.simulationStatus === "failed"
         ? input.revertReason ?? "Simulation failed."
-        : "Tenderly or equivalent simulation is planned before confirmation. Pending simulation blocks unsafe confidence but still allows preview display.",
+        : "Tenderly or equivalent simulation is planned before confirmation. Pending simulation blocks unsafe confidence but still allows preview display."),
+    simulatedAt: input.simulation?.simulatedAt,
+    blockNumber: input.simulation?.blockNumber,
+    ledgerSeq: input.simulation?.ledgerSeq,
+    quoteExpiry: input.simulation?.quoteExpiry,
+    calldataHash: input.simulation?.calldataHash,
+    fromAmount: input.simulation?.fromAmount,
+    route: input.simulation?.route,
+    slippageBps: input.simulation?.slippageBps,
+    sequenceNumber: input.simulation?.sequenceNumber,
+    fee: input.simulation?.fee,
+    balanceChanges: input.simulation?.balanceChanges,
+    allowanceRisk: input.simulation?.allowanceRisk,
+    trustlineRisk: input.simulation?.trustlineRisk,
+    chainFamily: input.simulation?.chainFamily,
   };
 }
 
@@ -174,6 +192,7 @@ export async function buildExecutionPreview(input: ExecutionAgentInput): Promise
     isStellar,
     simulationStatus: input.simulationStatus,
     revertReason: input.simulationRevertReason,
+    simulation: input.simulation,
   });
   const policyStatus = evaluateExecutionPolicy(
     {

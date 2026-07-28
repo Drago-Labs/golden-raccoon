@@ -408,13 +408,7 @@ export type TransactionPreview = {
     status: "planned" | "fresh" | "simulated" | "unavailable";
     detail: string;
   };
-  simulation?: {
-    provider: "planned_tenderly" | "not_required" | "stellar_soroban" | "stellar_classic";
-    status: "not_required" | "pending" | "passed" | "failed" | "unavailable";
-    checks: string[];
-    revertReason?: string;
-    detail: string;
-  };
+simulation?: SimulationResultDetail;
   audit?: {
     approvalRequired: boolean;
     serverCanSign: false;
@@ -716,7 +710,7 @@ export type TransactionRecord = {
   walletAddress?: string;
   userApproved?: boolean;
   decisionId?: string;
-  simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
+  simulationStatus?: SimulationResultDetail["status"];
   policyStatus?: TransactionPreview["policyStatus"];
   stellarDetails?: {
     sequence?: string;
@@ -800,6 +794,67 @@ export type RecommendationRecord = {
   confidence: number;
   summary: string;
   createdAt: string;
+};
+
+export type BalanceChange = {
+  token: string;
+  symbol: string;
+  currentBalance: string;
+  expectedChange: string;
+  direction: "inflow" | "outflow";
+};
+
+export type AllowanceRiskDetail = {
+  spender: string;
+  spenderShort: string;
+  token: string;
+  currentAllowance: string;
+  newAllowance: string;
+  isInfinite: boolean;
+};
+
+export type StellarTrustlineRisk = {
+  asset: string;
+  assetShort: string;
+  issuer: string;
+  issuerShort: string;
+  action: "add" | "remove" | "update" | "authorize" | "deauthorize";
+  detail: string;
+};
+
+export type SimulationFreshnessConfig = {
+  maxBlockAge: number;
+  maxLedgerAge: number;
+  maxElapsedMs: number;
+};
+
+export type SimulationFreshnessResult = {
+  fresh: boolean;
+  reason?: string;
+  expiredAt?: string;
+};
+
+export type SimulationResultDetail = {
+  provider: "planned_tenderly" | "not_required";
+  status: "not_required" | "pending" | "passed" | "failed" | "unavailable";
+  checks: string[];
+  revertReason?: string;
+  revertReasonHuman?: string;
+  detail: string;
+  simulatedAt?: string;
+  blockNumber?: number;
+  ledgerSeq?: number;
+  quoteExpiry?: string;
+  calldataHash?: string;
+  fromAmount?: string;
+  route?: string[];
+  slippageBps?: number;
+  sequenceNumber?: number | string;
+  fee?: string;
+  balanceChanges?: BalanceChange[];
+  allowanceRisk?: AllowanceRiskDetail[];
+  trustlineRisk?: StellarTrustlineRisk[];
+  chainFamily?: "evm" | "stellar";
 };
 
 export type UserApprovalRecord = {
