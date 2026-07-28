@@ -37,6 +37,7 @@ create table if not exists agent_runs (
   target_name text,
   target_address text,
   target_chain text,
+  target_token_data jsonb,
   status text not null check (status in ('completed', 'partial', 'failed')),
   recommendation text not null,
   decision_score integer not null,

@@ -186,7 +186,7 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
   const partialStatus = getRunPartialStatus(results);
 
   const runRecord = input.persistRun
-    ? createAgentRunRecord({
+    ? await createAgentRunRecord({
         walletAddress: input.walletAddress ?? "unknown",
         mode: input.mode,
         inputSnapshot: {

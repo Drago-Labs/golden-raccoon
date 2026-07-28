@@ -59,11 +59,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "simulation_required", detail: "High-risk execution confirmation requires a fresh passed simulation." }, { status: 403 });
   }
 
-  if (getTransactionRecord(parsed.data.txHash)) {
+  if (await getTransactionRecord(parsed.data.txHash)) {
     return NextResponse.json({ error: "duplicate_tx_hash", detail: "This transaction hash is already recorded." }, { status: 409 });
   }
 
-  const approval = createApprovalRecord({
+  const approval = await createApprovalRecord({
     walletAddress: parsed.data.walletAddress,
     decisionId: parsed.data.decisionId,
     txHash: parsed.data.txHash,
@@ -72,7 +72,7 @@ export async function POST(request: Request) {
     asset: parsed.data.asset ?? "Wallet approval",
     valueUsd: parsed.data.valueUsd ?? 0,
   });
-  const transaction = createTransactionRecord({
+  const transaction = await createTransactionRecord({
     hash: parsed.data.txHash,
     type: "approval",
     decisionAction: parsed.data.action,

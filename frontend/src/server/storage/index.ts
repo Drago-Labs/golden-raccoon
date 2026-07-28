@@ -1,3 +1,10 @@
+// Note: server-only is intentionally NOT imported here at module scope.
+// The Supabase adapter (adapters/supabase.ts) imports server-only
+// to protect server credentials. We use dynamic import for the adapter
+// so server-only is only triggered when Supabase is actually selected
+// (server-side only). Fixture tests and client-side imports of types
+// are unaffected.
+
 import type {
   AgentResult,
   AgentRunRecord,
@@ -12,97 +19,55 @@ import type {
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { validateAgentResult } from "@/server/agents/schema";
 
-type CreateAgentRunInput = {
-  walletAddress: string;
-  mode?: AgentRunRecord["mode"];
-  inputSnapshot?: Record<string, unknown>;
-  targetToken?: AgentRunRecord["targetToken"];
-  results: AgentResult[];
-  userAction?: AgentRunRecord["userAction"];
-};
+import type { IStorageAdapter, HealthProbeResult } from "./adapters/types";
+import { MemoryStorageAdapter } from "./adapters/memory";
+export { storageSchemaContract } from "./contract";
+export type { AgentRunRecord };
+export type { HealthProbeResult };
 
-export const storageSchemaContract = {
-  tables: [
-    "wallets",
-    "agent_runs",
-    "agent_results",
-    "recommendations",
-    "user_rules",
-    "approvals",
-    "transactions",
-    "x402_payment_receipts",
-    "token_identities",
-    "source_snapshots",
-  ],
-  adapterApi: [
-    "listAgentRunRecords",
-    "getAgentRunRecord",
-    "createAgentRunRecord",
-    "listRecommendationRecords",
-    "createRecommendationRecord",
-    "listTransactionRecords",
-    "createTransactionRecord",
-    "listApprovalRecords",
-    "createApprovalRecord",
-    "listX402PaymentReceipts",
-    "getX402PaymentReceiptByHeaderHash",
-    "createX402PaymentReceipt",
-    "getUserRuleRecord",
-    "upsertUserRuleRecord",
-  ],
-  migration: "frontend/src/server/storage/schema.sql",
-};
+// ─── Lazy adapter initialization ──────────────────────────────────────────────
 
-const memoryStore = globalThis as typeof globalThis & {
-  __goldenRaccoonAgentRuns?: AgentRunRecord[];
-  __goldenRaccoonRecommendations?: RecommendationRecord[];
-  __goldenRaccoonTransactions?: TransactionRecord[];
-  __goldenRaccoonApprovals?: UserApprovalRecord[];
-  __goldenRaccoonUserRules?: UserRule[];
-  __goldenRaccoonX402PaymentReceipts?: X402PaymentReceipt[];
-};
-
-function getAgentRuns() {
-  memoryStore.__goldenRaccoonAgentRuns ??= [];
-
-  return memoryStore.__goldenRaccoonAgentRuns;
+function isSupabaseConfigured(): boolean {
+  return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
-function getRecommendations() {
-  memoryStore.__goldenRaccoonRecommendations ??= [];
+let _adapter: IStorageAdapter | null = null;
 
-  return memoryStore.__goldenRaccoonRecommendations;
+async function getAdapter(): Promise<IStorageAdapter> {
+  if (_adapter) return _adapter;
+
+  if (isSupabaseConfigured()) {
+    try {
+      // Dynamic import so server-only guard in supabase.ts is only triggered
+      // when actually selecting Supabase (server-side only).
+      const { SupabaseStorageAdapter } = await import("./adapters/supabase");
+      _adapter = new SupabaseStorageAdapter();
+      return _adapter;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Supabase init failed, falling back to memory:", msg);
+    }
+  }
+
+  _adapter = new MemoryStorageAdapter();
+  return _adapter;
 }
 
-function getTransactions() {
-  memoryStore.__goldenRaccoonTransactions ??= [];
-
-  return memoryStore.__goldenRaccoonTransactions;
+/** Provider information (available synchronously after first init). */
+export function getStorageProvider() {
+  if (_adapter) {
+    return { provider: _adapter.provider, persistent: _adapter.persistent };
+  }
+  return { provider: "memory" as const, persistent: false };
 }
 
-function getApprovals() {
-  memoryStore.__goldenRaccoonApprovals ??= [];
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-  return memoryStore.__goldenRaccoonApprovals;
-}
-
-function getUserRules() {
-  memoryStore.__goldenRaccoonUserRules ??= [];
-
-  return memoryStore.__goldenRaccoonUserRules;
-}
-
-function getX402PaymentReceipts() {
-  memoryStore.__goldenRaccoonX402PaymentReceipts ??= [];
-
-  return memoryStore.__goldenRaccoonX402PaymentReceipts;
-}
-
-function createId() {
+function createId(): string {
   return `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function createRecordId(prefix: string) {
+function createRecordId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
@@ -110,64 +75,59 @@ function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(",")}]`;
   }
-
   if (value && typeof value === "object") {
     return `{${Object.entries(value as Record<string, unknown>)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
       .join(",")}}`;
   }
-
   return JSON.stringify(value);
 }
 
-export function hashSourceSnapshot(value: unknown) {
+export function hashSourceSnapshot(value: unknown): string {
   const serialized = stableStringify(value);
   let hash = 5381;
-
   for (let index = 0; index < serialized.length; index += 1) {
     hash = (hash * 33) ^ serialized.charCodeAt(index);
   }
-
   return `snap_${(hash >>> 0).toString(16)}`;
 }
 
-export function getStorageHealth(): StorageHealth {
-  const supabaseConfigured = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+// ─── Health ──────────────────────────────────────────────────────────────────
 
-  if (supabaseConfigured) {
-    return {
-      provider: "supabase_postgres",
-      persistent: false,
-      detail: "Supabase env vars are configured. The MVP adapter still uses in-memory storage, but the function API and schema contract are fixed for adapter parity.",
-      schema: storageSchemaContract,
-    };
-  }
-
-  return {
-    provider: "memory",
-    persistent: false,
-    detail: "Using in-memory MVP storage. Records reset when the server process restarts.",
-    schema: storageSchemaContract,
-  };
+export async function getStorageHealth(): Promise<StorageHealth> {
+  return (await getAdapter()).getStorageHealth();
 }
 
-export function listAgentRunRecords(walletAddress?: string) {
-  const normalizedWallet = walletAddress?.toLowerCase();
-
-  return getAgentRuns()
-    .filter((record) => !normalizedWallet || record.walletAddress.toLowerCase() === normalizedWallet)
-    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+export async function getStorageCounts(): Promise<StorageCounts> {
+  return (await getAdapter()).getStorageCounts();
 }
 
-export function getAgentRunRecord(id: string) {
-  return getAgentRuns().find((record) => record.id === id);
+export async function performStorageHealthProbe(): Promise<HealthProbeResult> {
+  return (await getAdapter()).performHealthProbe();
 }
 
-export function createAgentRunRecord(input: CreateAgentRunInput): AgentRunRecord {
+// ─── Agent runs ──────────────────────────────────────────────────────────────
+
+export async function listAgentRunRecords(walletAddress?: string): Promise<AgentRunRecord[]> {
+  return (await getAdapter()).listAgentRunRecords(walletAddress);
+}
+
+export async function getAgentRunRecord(id: string): Promise<AgentRunRecord | null> {
+  return (await getAdapter()).getAgentRunRecord(id);
+}
+
+export async function createAgentRunRecord(input: {
+  walletAddress: string;
+  mode?: AgentRunRecord["mode"];
+  inputSnapshot?: Record<string, unknown>;
+  targetToken?: AgentRunRecord["targetToken"];
+  results: AgentResult[];
+  userAction?: AgentRunRecord["userAction"];
+}): Promise<AgentRunRecord> {
+  // Validate results before persisting
   for (const result of input.results) {
     const parsed = validateAgentResult(result);
-
     if (!parsed.success) {
       throw new Error(`Invalid AgentResult cannot be stored for ${result.agent}: ${parsed.error.message}`);
     }
@@ -176,12 +136,14 @@ export function createAgentRunRecord(input: CreateAgentRunInput): AgentRunRecord
   const decision = [...input.results].reverse().find((result) => result.agent === "decision");
   const failed = input.results.some((result) => result.status === "error" || result.status === "unavailable");
   const completed = input.results.some((result) => result.agent === "decision");
+
   const sourceStatuses = input.results.map((result) => ({
     agent: result.agent,
     connected: result.sources.filter((source) => source.status === "connected").length,
     unavailable: result.sources.filter((source) => source.status === "unavailable").length,
     mock: result.sources.filter((source) => source.status === "mock").length,
   }));
+
   const resultSnapshots = input.results.map((result) => ({
     agent: result.agent,
     rawSignals: result.rawSignals ?? {},
@@ -194,28 +156,31 @@ export function createAgentRunRecord(input: CreateAgentRunInput): AgentRunRecord
     immutable: true,
     decisionExplanation: result.agent === "decision" ? result.rawSignals?.explanation : undefined,
   }));
-  const record: AgentRunRecord = {
+
+  const createdAt = new Date().toISOString();
+
+  const insert = {
     id: createId(),
     walletAddress: input.walletAddress,
-    mode: input.mode,
-    targetToken: input.targetToken,
-    status: completed ? (failed ? "partial" : "completed") : "failed",
-    recommendation: decision?.recommendedAction ?? "manual_review",
-    decisionScore: decision?.score ?? Math.max(...input.results.map((result) => result.score), 50),
+    mode: input.mode ?? null,
+    targetToken: input.targetToken ?? null,
+    status: (completed ? (failed ? "partial" : "completed") : "failed") as AgentRunRecord["status"],
+    recommendation: (decision?.recommendedAction ?? "manual_review") as AgentRunRecord["recommendation"],
+    decisionScore: decision?.score ?? Math.max(...input.results.map((r) => r.score), 50),
     confidence: decision?.confidence ?? 0.28,
     summary: decision?.summary ?? "Agent run ended before a final decision was produced.",
     results: input.results,
     sourceStatuses,
-    inputSnapshot: {
-      ...(input.inputSnapshot ?? {}),
-      resultSnapshots,
-    },
+    inputSnapshot: { ...(input.inputSnapshot ?? {}), resultSnapshots },
     userAction: input.userAction ?? "pending",
-    createdAt: new Date().toISOString(),
+    createdAt,
   };
 
-  getAgentRuns().unshift(record);
-  createRecommendationRecord({
+  const adapter = await getAdapter();
+  const record = await adapter.createAgentRunRecord(insert);
+
+  // Also create a recommendation record
+  await createRecommendationRecord({
     runId: record.id,
     walletAddress: record.walletAddress,
     action: record.recommendation,
@@ -227,63 +192,46 @@ export function createAgentRunRecord(input: CreateAgentRunInput): AgentRunRecord
   return record;
 }
 
-export function listRecommendationRecords(walletAddress?: string) {
-  const normalizedWallet = walletAddress?.toLowerCase();
+// ─── Recommendations ─────────────────────────────────────────────────────────
 
-  return getRecommendations()
-    .filter((record) => !normalizedWallet || record.walletAddress.toLowerCase() === normalizedWallet)
-    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+export async function listRecommendationRecords(walletAddress?: string): Promise<RecommendationRecord[]> {
+  return (await getAdapter()).listRecommendationRecords(walletAddress);
 }
 
-export function createRecommendationRecord(input: Omit<RecommendationRecord, "id" | "createdAt">) {
+export async function createRecommendationRecord(input: Omit<RecommendationRecord, "id" | "createdAt">): Promise<RecommendationRecord> {
   const record: RecommendationRecord = {
     id: createRecordId("rec"),
     createdAt: new Date().toISOString(),
     ...input,
   };
-
-  getRecommendations().unshift(record);
-
-  return record;
+  return (await getAdapter()).createRecommendationRecord(record);
 }
 
-export function listTransactionRecords(walletAddress?: string) {
-  const normalizedWallet = walletAddress?.toLowerCase();
+// ─── Transactions ────────────────────────────────────────────────────────────
 
-  return getTransactions()
-    .filter((record) => !normalizedWallet || record.walletAddress?.toLowerCase() === normalizedWallet)
-    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+export async function listTransactionRecords(walletAddress?: string): Promise<TransactionRecord[]> {
+  return (await getAdapter()).listTransactionRecords(walletAddress);
 }
 
-export function getTransactionRecord(hash: string) {
-  return getTransactions().find((record) => record.hash.toLowerCase() === hash.toLowerCase());
+export async function getTransactionRecord(hash: string): Promise<TransactionRecord | null> {
+  return (await getAdapter()).getTransactionRecord(hash);
 }
 
-export function createTransactionRecord(input: Omit<TransactionRecord, "createdAt"> & { createdAt?: string }) {
-  const existingIndex = getTransactions().findIndex((record) => record.hash.toLowerCase() === input.hash.toLowerCase());
+export async function createTransactionRecord(input: Omit<TransactionRecord, "createdAt"> & { createdAt?: string }): Promise<TransactionRecord> {
   const record: TransactionRecord = {
     ...input,
     createdAt: input.createdAt ?? new Date().toISOString(),
   };
-
-  if (existingIndex >= 0) {
-    getTransactions()[existingIndex] = record;
-  } else {
-    getTransactions().unshift(record);
-  }
-
-  return record;
+  return (await getAdapter()).createTransactionRecord(record);
 }
 
-export function listApprovalRecords(walletAddress?: string) {
-  const normalizedWallet = walletAddress?.toLowerCase();
+// ─── Approvals ───────────────────────────────────────────────────────────────
 
-  return getApprovals()
-    .filter((record) => !normalizedWallet || record.walletAddress.toLowerCase() === normalizedWallet)
-    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+export async function listApprovalRecords(walletAddress?: string): Promise<UserApprovalRecord[]> {
+  return (await getAdapter()).listApprovalRecords(walletAddress);
 }
 
-export function createApprovalRecord(input: Omit<UserApprovalRecord, "id" | "createdAt" | "status" | "autoExecuted">) {
+export async function createApprovalRecord(input: Omit<UserApprovalRecord, "id" | "createdAt" | "status" | "autoExecuted">): Promise<UserApprovalRecord> {
   const record: UserApprovalRecord = {
     id: createRecordId("approval"),
     ...input,
@@ -291,23 +239,20 @@ export function createApprovalRecord(input: Omit<UserApprovalRecord, "id" | "cre
     autoExecuted: false,
     createdAt: new Date().toISOString(),
   };
-
-  getApprovals().unshift(record);
-
-  return record;
+  return (await getAdapter()).createApprovalRecord(record);
 }
 
-export function getUserRuleRecord(walletAddress = "0xDemoWallet") {
-  const existing = getUserRules().find((rule) => rule.walletAddress.toLowerCase() === walletAddress.toLowerCase());
+// ─── User rules ──────────────────────────────────────────────────────────────
 
-  return {
-    ...getDefaultRules(walletAddress),
-    ...existing,
-    autoExecute: false,
-  };
+export async function getUserRuleRecord(walletAddress = "0xDemoWallet"): Promise<UserRule> {
+  const existing = await (await getAdapter()).getUserRuleRecord(walletAddress);
+  if (existing) {
+    return { ...getDefaultRules(walletAddress), ...existing, autoExecute: false };
+  }
+  return { ...getDefaultRules(walletAddress), autoExecute: false };
 }
 
-export function upsertUserRuleRecord(input: UserRule) {
+export async function upsertUserRuleRecord(input: UserRule): Promise<UserRule> {
   const createdAt = input.createdAt ?? new Date().toISOString();
   const defaults = getDefaultRules(input.walletAddress);
   const record: UserRule = {
@@ -316,36 +261,20 @@ export function upsertUserRuleRecord(input: UserRule) {
     autoExecute: false,
     createdAt,
   };
-  const existingIndex = getUserRules().findIndex((rule) => rule.walletAddress.toLowerCase() === input.walletAddress.toLowerCase());
-
-  if (existingIndex >= 0) {
-    getUserRules()[existingIndex] = record;
-  } else {
-    getUserRules().unshift(record);
-  }
-
-  return record;
+  return (await getAdapter()).upsertUserRuleRecord(record);
 }
 
-export function listX402PaymentReceipts() {
-  return getX402PaymentReceipts().sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+// ─── x402 receipts ───────────────────────────────────────────────────────────
+
+export async function listX402PaymentReceipts(): Promise<X402PaymentReceipt[]> {
+  return (await getAdapter()).listX402PaymentReceipts();
 }
 
-export function getX402PaymentReceiptByHeaderHash(paymentHeaderHash: string) {
-  return getX402PaymentReceipts().find((record) => record.paymentHeaderHash === paymentHeaderHash);
+export async function getX402PaymentReceiptByHeaderHash(paymentHeaderHash: string): Promise<X402PaymentReceipt | null> {
+  return (await getAdapter()).getX402PaymentReceiptByHeaderHash(paymentHeaderHash);
 }
 
-export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string }) {
-  const existing = getX402PaymentReceiptByHeaderHash(input.paymentHeaderHash);
-
-  if (existing) {
-    return {
-      ...existing,
-      verificationStatus: "duplicate" as const,
-      updatedAt: new Date().toISOString(),
-    };
-  }
-
+export async function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string }): Promise<X402PaymentReceipt> {
   const createdAt = input.createdAt ?? new Date().toISOString();
   const record: X402PaymentReceipt = {
     id: createRecordId("x402"),
@@ -353,19 +282,6 @@ export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | 
     createdAt,
     updatedAt: input.updatedAt ?? createdAt,
   };
-
-  getX402PaymentReceipts().unshift(record);
-
-  return record;
-}
-
-export function getStorageCounts(): StorageCounts {
-  return {
-    agentRuns: getAgentRuns().length,
-    recommendations: getRecommendations().length,
-    transactions: getTransactions().length,
-    approvals: getApprovals().length,
-    userRules: getUserRules().length,
-    x402PaymentReceipts: getX402PaymentReceipts().length,
-  };
+  const adapter = await getAdapter();
+  return adapter.createX402PaymentReceipt(record);
 }

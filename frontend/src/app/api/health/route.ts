@@ -10,21 +10,21 @@ import { alertThresholds, evaluateAlertThresholds } from "@/server/observability
 
 export const dynamic = "force-dynamic";
 
-export function GET() {
+export async function GET() {
   return NextResponse.json(
     {
       ok: true,
       service: "golden-raccoon",
       env: getEnvHealth(),
       agentReadiness: getAgentReadiness(),
-      storage: getStorageHealth(),
-      storageCounts: getStorageCounts(),
+      storage: await getStorageHealth(),
+      storageCounts: await getStorageCounts(),
       security: getSecurityHealth(),
       productionHealth: getProductionHealth(),
-      metrics: getAgentRunMetrics(listAgentRunRecords()),
+      metrics: getAgentRunMetrics(await listAgentRunRecords()),
       alerts: {
         thresholds: alertThresholds,
-        status: evaluateAlertThresholds(getAgentRunMetrics(listAgentRunRecords())),
+        status: evaluateAlertThresholds(getAgentRunMetrics(await listAgentRunRecords())),
       },
       runtimeMode: getRuntimeModeHealth(),
       cache: apiCacheStrategy,

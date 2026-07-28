@@ -821,7 +821,7 @@ async function runExecutionChecks() {
   );
   assert(duplicateConfirmResponse.status === 409, "Confirm must reject duplicate transaction hash.");
 
-  const runRecord = createAgentRunRecord({
+  const runRecord = await createAgentRunRecord({
     walletAddress: "0xabc",
     mode: "token_scan",
     inputSnapshot: { symbol: "MEME", chain: "base" },
@@ -935,7 +935,7 @@ async function runReadinessChecks() {
   assert(hardening.chainReadiness.executionReadiness === "gas_missing", "Portfolio hardening must expose native gas readiness.");
   assert(hardening.riskDriverBreakdown.some((item) => item.key === "chain_readiness"), "Portfolio hardening must expose deterministic risk driver breakdown.");
 
-  const storageHealth = getStorageHealth();
+  const storageHealth = await getStorageHealth();
   for (const table of ["wallets", "agent_runs", "agent_results", "recommendations", "user_rules", "approvals", "transactions", "x402_payment_receipts", "token_identities", "source_snapshots"]) {
     assert(storageHealth.schema?.tables.includes(table), `Storage schema contract must include ${table}.`);
   }
@@ -1136,7 +1136,7 @@ function runCachePolicyChecks() {
   assert(execution.scope === "no-store", "Execution planning must not be shared-cacheable.");
 }
 
-function runX402Checks() {
+async function runX402Checks() {
   const previous = {
     X402_PAY_TO: process.env.X402_PAY_TO,
     X402_PRICE_USD: process.env.X402_PRICE_USD,
@@ -1164,14 +1164,14 @@ function runX402Checks() {
   const request = new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
     headers: { "PAYMENT-SIGNATURE": "fixture-payment-signature" },
   });
-  const guard = assertFreshX402Payment({
+  const guard = await assertFreshX402Payment({
     request,
     requestBody: { query: "GOAT", chain: "base" },
     config,
   });
 
   assert(guard.ok, "Fresh x402 payment signature must pass idempotency guard.");
-  const receipt = createX402PaymentReceipt({
+  const receipt = await createX402PaymentReceipt({
     requestId: guard.requestId,
     paymentHeaderHash: guard.paymentHeaderHash,
     network: config.network,
@@ -1186,9 +1186,9 @@ function runX402Checks() {
   });
 
   assert(receipt.id.startsWith("x402_"), "x402 payment receipts must use x402 ids.");
-  assert(getX402PaymentReceiptByHeaderHash(hashPaymentHeader("fixture-payment-signature"))?.id === receipt.id, "x402 receipts must be retrievable by payment header hash.");
+  assert((await getX402PaymentReceiptByHeaderHash(hashPaymentHeader("fixture-payment-signature")))?.id === receipt.id, "x402 receipts must be retrievable by payment header hash.");
 
-  const duplicate = assertFreshX402Payment({
+  const duplicate = await assertFreshX402Payment({
     request,
     requestBody: { query: "GOAT", chain: "base" },
     config,

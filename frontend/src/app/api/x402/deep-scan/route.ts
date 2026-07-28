@@ -34,13 +34,13 @@ async function deepScanHandler(request: NextRequest): Promise<NextResponse<unkno
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const guard = assertFreshX402Payment({ request, requestBody: parsed.data, config });
+  const guard = await assertFreshX402Payment({ request, requestBody: parsed.data, config });
 
   if (!guard.ok) {
     return NextResponse.json({ error: guard.error, detail: guard.detail, receiptId: guard.receiptId }, { status: guard.status });
   }
 
-  const receipt = createX402PaymentReceipt({
+  const receipt = await createX402PaymentReceipt({
     requestId: guard.requestId,
     paymentHeaderHash: guard.paymentHeaderHash,
     walletAddress: parsed.data.walletAddress,

@@ -23,7 +23,7 @@ export function getPaymentSignatureHeader(request: NextRequest | Request) {
   ).trim();
 }
 
-export function assertFreshX402Payment(input: { request: NextRequest | Request; requestBody: unknown; config: X402RuntimeConfig }) {
+export async function assertFreshX402Payment(input: { request: NextRequest | Request; requestBody: unknown; config: X402RuntimeConfig }) {
   const paymentSignature = getPaymentSignatureHeader(input.request);
 
   if (!paymentSignature) {
@@ -36,7 +36,7 @@ export function assertFreshX402Payment(input: { request: NextRequest | Request; 
   }
 
   const paymentHeaderHash = hashPaymentHeader(paymentSignature);
-  const existing = getX402PaymentReceiptByHeaderHash(paymentHeaderHash);
+  const existing = await getX402PaymentReceiptByHeaderHash(paymentHeaderHash);
 
   if (existing) {
     return {
