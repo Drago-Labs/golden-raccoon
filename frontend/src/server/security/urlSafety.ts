@@ -12,7 +12,18 @@ export const externalFetchSandboxRules = {
   allowedProtocols: ["https:", "http:"],
   redirectLimit: 3,
   maxResponseBytes: 1_000_000,
-  allowedContentTypes: ["text/html", "application/json", "application/rss+xml", "application/xml", "text/xml"],
+  allowedContentTypes: [
+    "text/html",
+    "application/json",
+    "application/rss+xml",
+    "application/xml",
+    "text/xml",
+    "text/plain",
+    "text/toml",
+    "application/toml",
+    "text/x-toml",
+    "application/x-toml",
+  ],
 };
 
 const privateIpPatterns = [
@@ -22,16 +33,22 @@ const privateIpPatterns = [
   /^172\.(1[6-9]|2\d|3[0-1])\./,
   /^169\.254\./,
   /^0\./,
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,
+  /^198\.1[89]\./,
 ];
 
-function isPrivateOrLocalHost(hostname: string) {
-  const normalized = hostname.toLowerCase();
+export function isPrivateOrLocalHost(hostname: string) {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
 
   return (
     normalized === "localhost" ||
     normalized.endsWith(".localhost") ||
     normalized === "0.0.0.0" ||
     normalized === "::1" ||
+    normalized === "::" ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe80:") ||
     privateIpPatterns.some((pattern) => pattern.test(normalized))
   );
 }
@@ -123,3 +140,25 @@ export function assertExternalFetchAllowed(url: string, contentType?: string, re
     rules: externalFetchSandboxRules,
   };
 }
+
+export function assertSep1FetchAllowed(url: string, contentType?: string, responseBytes?: number) {
+  const safety = evaluateUrlSafety(url, undefined, 3);
+  const isHttps = url.toLowerCase().startsWith("https://");
+  const contentAllowed = !contentType || externalFetchSandboxRules.allowedContentTypes.some((allowed) => contentType.toLowerCase().includes(allowed));
+  const maxSep1Bytes = 250_000;
+  const sizeAllowed = typeof responseBytes !== "number" || responseBytes <= maxSep1Bytes;
+
+  const issues: string[] = [...safety.issues];
+  if (!isHttps) issues.push("SEP-1 metadata must be fetched via HTTPS");
+  if (!contentAllowed) issues.push("content type not allowed for SEP-1 metadata");
+  if (!sizeAllowed) issues.push("SEP-1 response size limit exceeded");
+
+  return {
+    allowed: safety.safe && isHttps && contentAllowed && sizeAllowed,
+    issues,
+  };
+}
+
+
+
+

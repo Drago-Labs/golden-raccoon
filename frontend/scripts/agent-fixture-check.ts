@@ -10,7 +10,9 @@ import { createAgentRunRecord, createX402PaymentReceipt, getStorageHealth, getX4
 import { getCachePolicyMetadata } from "../src/server/cache/strategy";
 import { getProviderTimeoutBudget, resolveProviderConflict, runProviderFallbacks } from "../src/server/providers/adapter";
 import { getRuntimeModeHealth } from "../src/server/env/runtimeMode";
-import { assertExternalFetchAllowed, evaluateUrlSafety } from "../src/server/security/urlSafety";
+import { assertExternalFetchAllowed, assertSep1FetchAllowed, evaluateUrlSafety, isPrivateOrLocalHost } from "../src/server/security/urlSafety";
+import { parseStellarAssetInput, parseSep1Toml, deriveStellarSacContractId, type StellarAssetIdentity } from "../src/server/stellar/assetIdentity";
+import { stellarNetworks } from "../src/lib/stellar/config";
 import { getPortfolioHardeningReport } from "../src/server/portfolio/hardening";
 import { getPortfolioRiskSignals } from "../src/server/portfolio/riskScoring";
 import { createAgentRunId, getRunPartialStatus, markRunCancelled } from "../src/server/agents/orchestrationState";
@@ -1223,6 +1225,158 @@ function runX402Checks() {
   }
 }
 
+function runStellarAssetIdentityChecks() {
+  const testnetPassphrase = stellarNetworks["stellar-testnet"].networkPassphrase;
+  const networkId = "stellar-testnet";
+
+  // 1. Native XLM resolution
+  const nativeXlm = parseStellarAssetInput("xlm", networkId);
+  assert(nativeXlm !== null, "XLM must resolve.");
+  assert(nativeXlm!.type === "native", "XLM must resolve as native type.");
+  assert(nativeXlm!.assetKey === "native", "XLM asset key must be 'native'.");
+  assert((nativeXlm as { symbol: string }).symbol === "XLM", "XLM symbol must be XLM.");
+  assert((nativeXlm as { contractId: string }).contractId.startsWith("C"), "Native XLM must derive a SAC contract ID.");
+
+  const nativeAlt = parseStellarAssetInput("native", networkId);
+  assert(nativeAlt !== null && nativeAlt.type === "native", "'native' string must resolve as native.");
+
+  const nativeStellarPrefix = parseStellarAssetInput("stellar:xlm", networkId);
+  assert(nativeStellarPrefix !== null && nativeStellarPrefix.type === "native", "'stellar:xlm' must resolve as native.");
+
+  // 2. Classic asset (CODE:ISSUER) resolution and deterministic SAC
+  const fakeIssuer = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+  const classicInput = `USDC:${fakeIssuer}`;
+  const classic = parseStellarAssetInput(classicInput, networkId);
+  assert(classic !== null, "Classic CODE:ISSUER must resolve.");
+  assert(classic!.type === "classic", "CODE:ISSUER must resolve as classic type.");
+  assert((classic as { symbol: string }).symbol === "USDC", "Classic symbol must be USDC.");
+  assert((classic as { issuer: string }).issuer === fakeIssuer, "Classic issuer must match.");
+  assert((classic as { contractId: string }).contractId.startsWith("C"), "Classic must derive a deterministic SAC contract ID.");
+
+  // Verify deterministic SAC derivation helper matches
+  const sacIdFromHelper = deriveStellarSacContractId({ code: "USDC", issuer: fakeIssuer }, testnetPassphrase);
+  assert(sacIdFromHelper === (classic as { contractId: string }).contractId, "deriveStellarSacContractId must match parseStellarAssetInput SAC.");
+
+  // Native SAC derivation
+  const nativeSacId = deriveStellarSacContractId("native", testnetPassphrase);
+  assert(nativeSacId === (nativeXlm as { contractId: string }).contractId, "Native SAC derivation must match XLM identity contractId.");
+
+  // 3. Symbol-only identity is NEVER accepted for classic assets
+  const symbolOnly = parseStellarAssetInput("USDC", networkId);
+  assert(symbolOnly === null, "Symbol-only identity must NEVER be accepted for classic assets.");
+
+  const symbolOnlyLower = parseStellarAssetInput("usdc", networkId);
+  assert(symbolOnlyLower === null, "Symbol-only identity (lowercase) must not resolve.");
+
+  // 4. Contract (C...) address resolution
+  const fakeContract = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+  const contractIdentity = parseStellarAssetInput(fakeContract, networkId);
+  assert(contractIdentity !== null, "C-contract must resolve.");
+  assert(contractIdentity!.type === "contract" || contractIdentity!.type === "deterministic_sac", "C-contract must resolve as contract or deterministic_sac.");
+  assert((contractIdentity as { contractId: string }).contractId === fakeContract, "Contract identity must have matching contractId.");
+
+  // If a C-address matches the native SAC, it should resolve as deterministic_sac
+  const nativeSac = parseStellarAssetInput(nativeSacId, networkId);
+  assert(nativeSac !== null, "Native SAC contract ID must resolve.");
+  assert(nativeSac!.type === "deterministic_sac", "Native SAC contract ID must resolve as deterministic_sac.");
+  assert((nativeSac as { underlyingType: string }).underlyingType === "native", "Native SAC must have underlyingType 'native'.");
+  assert((nativeSac as { symbol: string }).symbol === "XLM", "Native SAC must have symbol XLM.");
+
+  // 5. Issuer account (G...) resolution
+  const issuerIdentity = parseStellarAssetInput(fakeIssuer, networkId);
+  assert(issuerIdentity !== null, "G-account must resolve.");
+  assert(issuerIdentity!.type === "issuer_account", "G-account must resolve as issuer_account.");
+  assert((issuerIdentity as { issuer: string }).issuer === fakeIssuer, "Issuer must match.");
+
+  // 6. Explorer URL parsing
+  const expertUrl = `https://stellar.expert/explorer/testnet/asset/USDC-${fakeIssuer}`;
+  const expertParsed = parseStellarAssetInput(expertUrl, networkId);
+  assert(expertParsed !== null, "Stellar Expert asset URL must resolve.");
+  assert(expertParsed!.type === "classic", "Stellar Expert asset URL must resolve as classic.");
+  assert((expertParsed as { symbol: string }).symbol === "USDC", "Stellar Expert URL symbol must be USDC.");
+  assert((expertParsed as { source?: string }).source === "explorer_url", "Explorer URL must have source 'explorer_url'.");
+
+  const expertContractUrl = `https://stellar.expert/explorer/testnet/contract/${fakeContract}`;
+  const expertContractParsed = parseStellarAssetInput(expertContractUrl, networkId);
+  assert(expertContractParsed !== null, "Stellar Expert contract URL must resolve.");
+  assert((expertContractParsed as { contractId: string }).contractId === fakeContract, "Stellar Expert contract URL contractId must match.");
+
+  const expertAccountUrl = `https://stellar.expert/explorer/testnet/account/${fakeIssuer}`;
+  const expertAccountParsed = parseStellarAssetInput(expertAccountUrl, networkId);
+  assert(expertAccountParsed !== null, "Stellar Expert account URL must resolve.");
+  assert(expertAccountParsed!.type === "issuer_account", "Stellar Expert account URL must resolve as issuer_account.");
+
+  const lumenscanUrl = `https://lumenscan.io/assets/USDC-${fakeIssuer}`;
+  const lumenscanParsed = parseStellarAssetInput(lumenscanUrl, networkId);
+  assert(lumenscanParsed !== null, "Lumenscan asset URL must resolve.");
+  assert(lumenscanParsed!.type === "classic", "Lumenscan URL must resolve as classic.");
+
+  // DexScreener stellar URL with contract
+  const dexUrl = `https://dexscreener.com/stellar/${fakeContract}`;
+  const dexParsed = parseStellarAssetInput(dexUrl, networkId);
+  assert(dexParsed !== null, "DexScreener Stellar URL must resolve.");
+  assert((dexParsed as { contractId: string }).contractId === fakeContract, "DexScreener Stellar URL contract must match.");
+
+  // 7. SSRF / private network metadata URL blocking
+  assert(isPrivateOrLocalHost("localhost"), "isPrivateOrLocalHost must block localhost.");
+  assert(isPrivateOrLocalHost("127.0.0.1"), "isPrivateOrLocalHost must block 127.0.0.1.");
+  assert(isPrivateOrLocalHost("10.0.0.1"), "isPrivateOrLocalHost must block 10.x.x.x.");
+  assert(isPrivateOrLocalHost("192.168.1.1"), "isPrivateOrLocalHost must block 192.168.x.x.");
+  assert(isPrivateOrLocalHost("169.254.1.1"), "isPrivateOrLocalHost must block 169.254.x.x (link-local).");
+  assert(isPrivateOrLocalHost("0.0.0.0"), "isPrivateOrLocalHost must block 0.0.0.0.");
+  assert(isPrivateOrLocalHost("::1"), "isPrivateOrLocalHost must block ::1.");
+  assert(!isPrivateOrLocalHost("example.com"), "isPrivateOrLocalHost must not block public hostnames.");
+
+  const sep1Blocked = assertSep1FetchAllowed("http://localhost/.well-known/stellar.toml");
+  assert(!sep1Blocked.allowed, "SEP-1 fetch must block localhost.");
+  assert(sep1Blocked.issues.some((i: string) => i.includes("private or localhost")), "SEP-1 fetch block must mention private target.");
+  assert(sep1Blocked.issues.some((i: string) => i.includes("HTTPS")), "SEP-1 fetch must require HTTPS.");
+
+  const sep1PrivateIp = assertSep1FetchAllowed("https://10.0.0.1/.well-known/stellar.toml");
+  assert(!sep1PrivateIp.allowed, "SEP-1 fetch must block private IP addresses.");
+
+  const sep1ValidHttps = assertSep1FetchAllowed("https://example.com/.well-known/stellar.toml");
+  assert(sep1ValidHttps.allowed, "SEP-1 fetch must allow valid HTTPS URLs.");
+
+  const sep1OversizedContent = assertSep1FetchAllowed("https://example.com/.well-known/stellar.toml", "text/plain", 300_000);
+  assert(!sep1OversizedContent.allowed, "SEP-1 fetch must block oversized responses.");
+
+  // 8. SEP-1 TOML parsing and issuer conflict detection
+  const sampleToml = [
+    "[DOCUMENTATION]",
+    'ORG_NAME = "Test Org"',
+    'ORG_URL = "https://example.com"',
+    'ORG_TWITTER = "test_org"',
+    "",
+    "[[CURRENCIES]]",
+    'code = "USDC"',
+    `issuer = "${fakeIssuer}"`,
+    'name = "Test USDC"',
+    "display_decimals = 7",
+  ].join("\n");
+
+  const parsed = parseSep1Toml(sampleToml);
+  assert(parsed.documentation?.orgName === "Test Org", "SEP-1 TOML must parse ORG_NAME.");
+  assert(parsed.documentation?.orgUrl === "https://example.com", "SEP-1 TOML must parse ORG_URL.");
+  assert(parsed.documentation?.orgTwitter === "test_org", "SEP-1 TOML must parse ORG_TWITTER.");
+  assert(parsed.currencies?.length === 1, "SEP-1 TOML must parse one currency.");
+  assert(parsed.currencies?.[0]?.code === "USDC", "SEP-1 currency code must be USDC.");
+  assert(parsed.currencies?.[0]?.issuer === fakeIssuer, "SEP-1 currency issuer must match.");
+  assert(parsed.currencies?.[0]?.displayDecimals === 7, "SEP-1 currency display_decimals must be 7.");
+
+  // Empty/comment-only TOML
+  const emptyToml = parseSep1Toml("# just a comment\n");
+  assert(emptyToml.documentation === undefined, "Empty TOML must have no documentation.");
+  assert(emptyToml.currencies === undefined, "Empty TOML must have no currencies.");
+
+  // 9. Invalid inputs return null
+  assert(parseStellarAssetInput("", networkId) === null, "Empty string must not resolve.");
+  assert(parseStellarAssetInput("not-a-valid-input", networkId) === null, "Random text must not resolve.");
+  assert(parseStellarAssetInput("0x3333333333333333333333333333333333333333", networkId) === null, "EVM address must not resolve as Stellar.");
+
+  console.log("  Stellar asset identity checks passed.");
+}
+
 async function main() {
   await runOnchainChecks();
   await runNewsChecks();
@@ -1233,6 +1387,7 @@ async function main() {
   await runProviderReliabilityChecks();
   runCachePolicyChecks();
   runX402Checks();
+  runStellarAssetIdentityChecks();
 
   console.log("Agent fixture checks passed.");
 }
