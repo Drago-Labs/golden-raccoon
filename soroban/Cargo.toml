@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["contracts/risk-registry"]
+members = ["contracts/risk-registry", "contracts/policy"]
 
 [workspace.package]
 edition = "2021"
