@@ -120,6 +120,9 @@ export type AgentInputIdentity = {
   contractAddress?: string;
   symbol?: string;
   tokenName?: string;
+  issuer?: string;
+  assetKey?: string;
+  assetType?: "native" | "classic" | "contract" | "issuer_account";
   websiteUrl?: string;
   twitterUrl?: string;
   telegramUrl?: string;
@@ -130,12 +133,15 @@ export type AgentInputIdentity = {
   dexScreenerPairUrl?: string;
 };
 
+export type DiscoveryAgentInputIdentity = AgentInputIdentity;
+
 export type ResolvedTokenIdentity = AgentInputIdentity & {
   identityKey: string;
   confidence: number;
   confidenceLabel: "low" | "medium" | "high";
   matchReasons: string[];
   warnings: string[];
+  chainFamily?: string;
   identityGraph?: unknown;
   symbolCollision?: unknown;
   officialLinkVerification?: unknown;
@@ -395,6 +401,124 @@ export type RiskReportInput = {
   source: "contract_address" | "dexscreener_pair_url" | "dexscreener_token_url" | "stellar_asset" | "stellar_issuer" | "unresolved";
 };
 
+export type DiscoverySourceKind = "dexscreener" | "stellar_market" | "manual";
+
+export type DiscoveryCandidate = {
+  id: string;
+  chain: string;
+  contractAddress?: string;
+  pairAddress?: string;
+  pairUrl?: string;
+  symbol?: string;
+  tokenName?: string;
+  assetKey?: string;
+  issuer?: string;
+  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  source: DiscoverySourceKind;
+  sourceUrl?: string;
+  discoveredAt: string;
+  metrics: {
+    liquidityUsd?: number;
+    volume24hUsd?: number;
+    fdvUsd?: number;
+    fdvLiquidityRatio?: number;
+    priceChange24hPercent?: number;
+    pairAgeDays?: number;
+    nativePair?: boolean;
+  };
+  raw: Record<string, unknown>;
+};
+
+export type DiscoveryClassification = "watch" | "risky" | "scam" | "early_opportunity";
+
+export type DiscoveryScanResult = {
+  candidate: DiscoveryCandidate;
+  identity: ResolvedTokenIdentity;
+  results: AgentResult[];
+  decision: AgentResult;
+  classification: DiscoveryClassification;
+  classificationReasons: string[];
+  confidence: number;
+  sourceLineage: AgentSource[];
+  missingData: AgentMissingData[];
+  scannedAt: string;
+};
+
+export type WatchlistEntryInput = {
+  walletAddress: string;
+  chain: string;
+  contractAddress?: string;
+  pairAddress?: string;
+  symbol?: string;
+  tokenName?: string;
+  assetKey?: string;
+  issuer?: string;
+  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  source: DiscoveryCandidate["source"] | "manual_watchlist";
+  note?: string;
+};
+
+export type WatchlistEntry = {
+  id: string;
+  walletAddress: string;
+  identityKey: string;
+  chain: string;
+  contractAddress?: string;
+  pairAddress?: string;
+  symbol?: string;
+  tokenName?: string;
+  assetKey?: string;
+  issuer?: string;
+  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  source: WatchlistEntryInput["source"];
+  note?: string;
+  createdAt: string;
+  lastScannedAt?: string;
+  latestScanRunId?: string;
+  latestClassification?: DiscoveryClassification;
+  latestScore?: number;
+};
+
+export type WatchlistScanRun = {
+  id: string;
+  entryId: string;
+  walletAddress: string;
+  identityKey: string;
+  classification: DiscoveryClassification;
+  classificationReasons: string[];
+  confidence: number;
+  score: number;
+  riskReport?: RiskReport;
+  agentRunId?: string;
+  previousRunId?: string;
+  sourceLineage: AgentSource[];
+  missingData: AgentMissingData[];
+  scannedAt: string;
+  status: "completed" | "partial" | "failed" | "stale";
+};
+
+export type DiscoveryAlertKind =
+  | "critical_risk"
+  | "liquidity_drop"
+  | "holder_concentration"
+  | "social_phishing"
+  | "news_incident"
+  | "classification_change";
+
+export type DiscoveryAlert = {
+  id: string;
+  walletAddress: string;
+  entryId?: string;
+  runId?: string;
+  kind: DiscoveryAlertKind;
+  title: string;
+  detail: string;
+  severity: RiskLevel;
+  sourceLabel?: string;
+  acknowledged: boolean;
+  createdAt: string;
+};
+
 export type RiskReport = {
   id: string;
   chain: string;
@@ -471,7 +595,7 @@ export type TransactionRecord = {
 export type AgentRunRecord = {
   id: string;
   walletAddress: string;
-  mode?: "portfolio_review" | "token_scan" | "pre_buy_check" | "holding_review" | "execution_prepare";
+  mode?: "portfolio_review" | "token_scan" | "pre_buy_check" | "holding_review" | "execution_prepare" | "discovery_candidate";
   inputSnapshot?: Record<string, unknown>;
   targetToken?: {
     symbol?: string;

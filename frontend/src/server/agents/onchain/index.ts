@@ -136,6 +136,8 @@ type OnchainAgentProviders = {
   fetchContractCode?: (rpcUrl: string, contractAddress: string) => Promise<ContractCodeCheck>;
 };
 
+export type { OnchainAgentProviders };
+
 function normalizeChain(chain?: string) {
   return normalizeScanNetworkId(chain || "goat");
 }

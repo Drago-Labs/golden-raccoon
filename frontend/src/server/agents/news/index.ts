@@ -56,7 +56,7 @@ type IdentityTerm = {
   strength: "weak" | "medium" | "high";
 };
 
-type NewsAgentProviders = {
+export type NewsAgentProviders = {
   feeds?: NewsFeed[];
   fetchFeed?: (feed: NewsFeed) => Promise<NewsItem[]>;
   now?: Date;
