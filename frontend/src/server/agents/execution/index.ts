@@ -1,6 +1,7 @@
 import type { AgentRecommendedAction, AgentResult, PortfolioSnapshot, TransactionPreview, UserRule } from "@/server/types";
 import { buildAgentResult } from "@/server/agents/shared";
 import { buildExecutionPolicy, evaluateExecutionPolicy } from "@/server/agents/execution/policy";
+import { getChainFamily } from "@/lib/chainIdentity";
 
 type ExecutionAgentInput = {
   action?: AgentRecommendedAction | string;
@@ -20,6 +21,12 @@ type ExecutionAgentInput = {
   simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
   simulationRevertReason?: string;
   rules?: UserRule;
+  // Stellar-specific input fields
+  stellarAssetCode?: string;
+  stellarIssuer?: string;
+  stellarFromIssuer?: string;
+  stellarToIssuer?: string;
+  stellarSwapAmount?: number;
 };
 
 function clampPercent(percent?: number) {
@@ -43,6 +50,7 @@ function normalizeAction(action?: string): AgentRecommendedAction {
     action === "avoid" ||
     action === "manual_review" ||
     action === "prepare_transaction" ||
+    action === "create_trustline" ||
     action === "no_action"
   ) {
     return action;
@@ -59,6 +67,7 @@ function getActionPlan(action: AgentRecommendedAction) {
   if (action === "avoid") return { txAction: "no_action" as const, title: "Avoid token", requiresTrade: false, detail: "No buy transaction should be prepared." };
   if (action === "manual_review") return { txAction: "no_action" as const, title: "Manual review required", requiresTrade: false, detail: "Manual review blocks transaction preparation." };
   if (action === "prepare_transaction") return { txAction: "swap" as const, title: "Prepare transaction", requiresTrade: true, detail: "Prepare a user-approved transaction preview." };
+  if (action === "create_trustline") return { txAction: "trustline" as const, title: "Create trustline", requiresTrade: false, detail: "Prepare a trustline transaction for a Stellar asset." };
 
   return { txAction: "no_action" as const, title: "No action", requiresTrade: false, detail: "No transaction is required." };
 }
@@ -69,39 +78,9 @@ function estimateProjectedRisk(currentRiskScore: number, percent: number) {
   return Math.max(0, currentRiskScore - reduction);
 }
 
-function getQuotePlan(input: {
-  requiresTrade: boolean;
-  fromToken: string;
-  toToken: string;
-  estimatedValueUsd: number;
-  slippageBps: number;
-  priceImpactBps: number;
-  gasEstimateUsd: number;
-  quoteAvailable?: boolean;
-  expectedOutputAmount?: number;
-}): NonNullable<TransactionPreview["quote"]> | undefined {
-  if (!input.requiresTrade) {
-    return undefined;
-  }
-
-  return {
-    provider: "planned_dex_aggregator",
-    route: [input.fromToken, input.toToken],
-    expectedOutputToken: input.toToken,
-    expectedOutputAmount: input.expectedOutputAmount,
-    estimatedValueUsd: input.estimatedValueUsd,
-    priceImpactBps: input.priceImpactBps,
-    slippageBps: input.slippageBps,
-    gasEstimateUsd: input.gasEstimateUsd,
-    status: input.quoteAvailable ? "planned" : "unavailable",
-    detail: input.quoteAvailable
-      ? "DEX aggregator quote fields are present for user review."
-      : "No live quote provider result is available; this plan is not executable.",
-  };
-}
-
 function getSimulationPlan(input: {
   requiresTrade: boolean;
+  isStellar?: boolean;
   simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
   revertReason?: string;
 }): NonNullable<TransactionPreview["simulation"]> {
@@ -111,6 +90,19 @@ function getSimulationPlan(input: {
       status: "not_required",
       checks: ["No blockchain transaction required for this action."],
       detail: "Simulation is not required.",
+    };
+  }
+
+  if (input.isStellar) {
+    return {
+      provider: "stellar_soroban",
+      status: input.simulationStatus ?? "pending",
+      checks: ["Soroban swap simulation", "Classic path payment simulation", "Footprint verification", "Fee estimation"],
+      revertReason: input.revertReason,
+      detail:
+        input.simulationStatus === "failed"
+          ? input.revertReason ?? "Stellar swap simulation failed."
+          : "Stellar swap simulation via Soroban RPC is planned before confirmation.",
     };
   }
 
@@ -126,6 +118,40 @@ function getSimulationPlan(input: {
   };
 }
 
+function getQuotePlan(input: {
+  requiresTrade: boolean;
+  isStellar?: boolean;
+  fromToken: string;
+  toToken: string;
+  estimatedValueUsd: number;
+  slippageBps: number;
+  priceImpactBps: number;
+  gasEstimateUsd: number;
+  quoteAvailable?: boolean;
+  expectedOutputAmount?: number;
+}): NonNullable<TransactionPreview["quote"]> | undefined {
+  if (!input.requiresTrade) {
+    return undefined;
+  }
+
+  return {
+    provider: input.isStellar ? "stellar_aggregator" : "planned_dex_aggregator",
+    route: [input.fromToken, input.toToken],
+    expectedOutputToken: input.toToken,
+    expectedOutputAmount: input.expectedOutputAmount,
+    estimatedValueUsd: input.estimatedValueUsd,
+    priceImpactBps: input.priceImpactBps,
+    slippageBps: input.slippageBps,
+    gasEstimateUsd: input.gasEstimateUsd,
+    status: input.quoteAvailable ? (input.isStellar ? "fresh" : "planned") : "unavailable",
+    detail: input.quoteAvailable
+      ? input.isStellar
+        ? "Stellar DEX aggregator quote is fresh for user review."
+        : "DEX aggregator quote fields are present for user review."
+      : "No live quote provider result is available; this plan is not executable.",
+  };
+}
+
 export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPreview {
   const executionPolicy = buildExecutionPolicy(input.rules);
   const action = normalizeAction(input.action);
@@ -138,8 +164,11 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
   const slippageBps = input.slippageBps ?? executionPolicy.maxSlippageBps;
   const priceImpactBps = input.priceImpactBps ?? (estimatedValueUsd > 5_000 ? 180 : estimatedValueUsd > 1_000 ? 75 : 25);
   const gasEstimateUsd = input.gasEstimateUsd ?? (plan.requiresTrade ? 3.5 : 0);
+  const isStellar = getChainFamily(input.network) === "stellar";
+
   const simulation = getSimulationPlan({
     requiresTrade: plan.requiresTrade,
+    isStellar,
     simulationStatus: input.simulationStatus,
     revertReason: input.simulationRevertReason,
   });
@@ -159,6 +188,7 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
   );
   const quote = getQuotePlan({
     requiresTrade: plan.requiresTrade,
+    isStellar,
     fromToken,
     toToken,
     estimatedValueUsd,
@@ -168,24 +198,27 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
     quoteAvailable: input.quoteAvailable,
     expectedOutputAmount: input.expectedOutputAmount,
   });
-  const quoteMissing = plan.requiresTrade && quote?.status !== "planned";
+  const trustlineAction = action === "create_trustline";
+  const quoteMissing = !trustlineAction && plan.requiresTrade && quote?.status !== "planned" && quote?.status !== "fresh";
   const blockedReason = policyStatus.violations[0] ?? (quoteMissing ? "Live quote provider result is required before preparing an executable transaction." : undefined);
   const executionReady = plan.requiresTrade && policyStatus.allowed && !quoteMissing;
   const idempotencyKey = input.decisionId ? `${input.walletAddress ?? "unknown"}:${input.decisionId}:${action}:${fromToken}:${toToken}:${percent}` : undefined;
   const preview: TransactionPreview = {
     title: blockedReason
       ? "Transaction blocked by policy"
-      : plan.requiresTrade
-        ? `${plan.title}: ${percent}% ${fromToken} to ${toToken}`
-        : plan.title,
-    action: plan.txAction,
+      : trustlineAction
+        ? `Create trustline for ${input.stellarAssetCode ?? fromToken}:${input.stellarIssuer ?? ""}`
+        : plan.requiresTrade
+          ? `${plan.title}: ${percent}% ${fromToken} to ${toToken}`
+          : plan.title,
+    action: trustlineAction ? "trustline" : plan.txAction,
     fromToken,
     toToken,
     percent,
     estimatedValueUsd,
     currentRiskScore,
     projectedRiskScore: plan.requiresTrade && executionReady ? estimateProjectedRisk(currentRiskScore, percent) : currentRiskScore,
-    requiresApproval: executionReady,
+    requiresApproval: trustlineAction ? executionReady : executionReady,
     executionReady,
     network: input.network ?? "GOAT Network",
     slippageBps,
@@ -206,11 +239,11 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
     quote,
     simulation,
     approvalRisk: {
-      infiniteApprovalWarning: plan.requiresTrade,
-      existingAllowanceCheck: plan.requiresTrade ? "required" : "not_required",
-      revokeSuggestion: plan.requiresTrade ? `Review and revoke unused ${fromToken} allowance after execution.` : undefined,
-      permitSupport: "planned",
-      permit2Support: "planned",
+      infiniteApprovalWarning: plan.requiresTrade && !trustlineAction,
+      existingAllowanceCheck: plan.requiresTrade && !trustlineAction ? "required" : "not_required",
+      revokeSuggestion: plan.requiresTrade && !trustlineAction ? `Review and revoke unused ${fromToken} allowance after execution.` : undefined,
+      permitSupport: trustlineAction ? "unsupported" : "planned",
+      permit2Support: trustlineAction ? "unsupported" : "planned",
     },
     lifecycle: {
       status: blockedReason ? "expired" : "prepared",
@@ -224,9 +257,11 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
       userApproved: false,
       decisionId: input.decisionId,
     },
-    approvalSteps: plan.requiresTrade
-      ? ["Review agent reasoning", "Review quote and policy status", "Run/confirm simulation", "Approve in connected wallet", "Save transaction hash after broadcast"]
-      : [plan.detail],
+    approvalSteps: trustlineAction
+      ? ["Review issuer risk and clawback flags", "Review reserve requirements", "Approve trustline creation in connected wallet", "Save transaction hash after broadcast"]
+      : plan.requiresTrade
+        ? ["Review agent reasoning", "Review quote and policy status", "Run/confirm simulation", "Approve in connected wallet", "Save transaction hash after broadcast"]
+        : [plan.detail],
   };
 
   if (blockedReason) {

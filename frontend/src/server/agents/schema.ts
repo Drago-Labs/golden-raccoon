@@ -20,6 +20,7 @@ export const agentRecommendedActionSchema = z.enum([
   "avoid",
   "manual_review",
   "prepare_transaction",
+  "create_trustline",
   "no_action",
 ]);
 

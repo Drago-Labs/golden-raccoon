@@ -76,6 +76,7 @@ export type AgentRecommendedAction =
   | "avoid"
   | "manual_review"
   | "prepare_transaction"
+  | "create_trustline"
   | "no_action";
 
 export type AgentResult = {
@@ -220,9 +221,82 @@ export type AgentDecision = {
   createdAt: string;
 };
 
+export type StellarTransactionMeta = {
+  sequence?: string;
+  feeCharged?: number; // stroop fee actually paid
+  feeBid?: number; // stroop fee bid
+  operationCount?: number;
+  ledger?: number;
+  timeBounds?: {
+    minTime?: number;
+    maxTime?: number;
+  };
+  ledgerBounds?: {
+    minLedger?: number;
+    maxLedger?: number;
+  };
+  envelopeXdr?: string;
+  resultXdr?: string;
+  memo?: string;
+  memoType?: "text" | "id" | "hash" | "return";
+  signers?: string[];
+  sourceAccount?: string;
+};
+
+export type StellarTrustlinePreview = {
+  assetCode: string;
+  issuer: string;
+  contractId?: string;
+  isNative: boolean;
+  reserveRequiredXlm: number;
+  currentXlmBalance: number;
+  sufficientReserve: boolean;
+  issuerFlags?: {
+    authRequired?: boolean;
+    authRevocable?: boolean;
+    authClawbackEnabled?: boolean;
+    authImmutable?: boolean;
+  };
+  existingTrustline: boolean;
+  blockedReason?: "clawback_enabled" | "revocable_auth" | "insufficient_reserve" | "wrong_issuer" | "network_mismatch" | "issuer_unknown";
+  /** Transaction metadata for preview, populated after simulation */
+  transactionMeta?: StellarTransactionMeta;
+};
+
+export type StellarSwapQuote = {
+  provider: "soroswap" | "stellar_aggregator" | "planned_stellar_dex";
+  routeType: "classic_path_payment" | "soroban_swap" | "mixed";
+  route: string[];
+  expectedOutputAmount: number;
+  estimatedValueUsd: number;
+  priceImpactBps: number;
+  slippageBps: number;
+  minReceiveAmount: number;
+  pathPaymentOps?: Array<{
+    type: "path_payment_strict_send" | "path_payment_strict_receive";
+    sendAsset: string;
+    sendAmount: string;
+    destAsset: string;
+    destAmount: string;
+    path: string[];
+  }>;
+  sorobanSimulation?: {
+    contractId: string;
+    method: string;
+    args: string[];
+    sourceAccount: string;
+    footprint: string[];
+    fee?: number;
+  };
+  status: "fresh" | "stale" | "simulated" | "unavailable";
+  fetchedAt: string;
+  expiresAt: string;
+  detail: string;
+};
+
 export type TransactionPreview = {
   title: string;
-  action?: "swap" | "reduce_exposure" | "watchlist" | "no_action";
+  action?: "swap" | "reduce_exposure" | "watchlist" | "trustline" | "no_action";
   fromToken?: string;
   toToken?: string;
   percent?: number;
@@ -237,10 +311,12 @@ export type TransactionPreview = {
   approvalSteps?: string[];
   executionReady?: boolean;
   lifecycle?: {
-    status: "prepared" | "user_rejected" | "submitted" | "confirmed" | "failed" | "replaced" | "expired";
+    status: "prepared" | "user_rejected" | "submitted" | "confirmed" | "failed" | "replaced" | "expired" | "pending";
     expiresAt?: string;
     idempotencyKey?: string;
   };
+  stellarTrustline?: StellarTrustlinePreview;
+  stellarQuote?: StellarSwapQuote;
   approvalRisk?: {
     infiniteApprovalWarning: boolean;
     existingAllowanceCheck: "required" | "not_required";
@@ -265,7 +341,7 @@ export type TransactionPreview = {
     violations: string[];
   };
   quote?: {
-    provider: "planned_dex_aggregator";
+    provider: "planned_dex_aggregator" | "soroswap" | "stellar_aggregator";
     route: string[];
     expectedOutputToken: string;
     expectedOutputAmount?: number;
@@ -273,11 +349,11 @@ export type TransactionPreview = {
     priceImpactBps: number;
     slippageBps: number;
     gasEstimateUsd: number;
-    status: "planned" | "unavailable";
+    status: "planned" | "fresh" | "simulated" | "unavailable";
     detail: string;
   };
   simulation?: {
-    provider: "planned_tenderly" | "not_required";
+    provider: "planned_tenderly" | "not_required" | "stellar_soroban" | "stellar_classic";
     status: "not_required" | "pending" | "passed" | "failed" | "unavailable";
     checks: string[];
     revertReason?: string;
@@ -454,7 +530,7 @@ export type TokenScanResult = {
 
 export type TransactionRecord = {
   hash: string;
-  type: "swap" | "approval" | "agent_log" | "transfer";
+  type: "swap" | "approval" | "agent_log" | "transfer" | "trustline_create" | "trustline_change";
   decisionAction?: AgentRecommendedAction;
   asset: string;
   valueUsd: number;
@@ -466,6 +542,15 @@ export type TransactionRecord = {
   decisionId?: string;
   simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
   policyStatus?: TransactionPreview["policyStatus"];
+  stellarDetails?: {
+    sequence?: string;
+    feeCharged?: number;
+    operationCount?: number;
+    ledger?: number;
+    envelopeXdr?: string;
+    resultXdr?: string;
+    trustlineAsset?: string;
+  };
 };
 
 export type AgentRunRecord = {
