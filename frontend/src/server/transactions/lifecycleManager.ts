@@ -440,14 +440,15 @@ function buildChainExpectation(
   // Stellar verifier is symmetric with the EVM branch now: project amount
   // into amountBaseUnits via the same scaling helper so the adapter can do a
   // BigInt-safe comparison on integer-shaped base units. Asset identity
-  // (assetKey) is forwarded unchanged.
+  // (assetKey) is forwarded unchanged. Spread then augment so the inferred
+  // type carries amountBaseUnits unambiguously without re-declaring every
+  // field by hand.
   const stellarEffects = effects?.map((effect) => {
-    const projected: typeof effect = { ...effect };
     const baseUnits = scaleAmountToBaseUnits(effect.amount, effect);
-    if (baseUnits !== undefined) {
-      projected.amountBaseUnits = baseUnits.toString();
-    }
-    return projected;
+    return {
+      ...effect,
+      ...(baseUnits !== undefined ? { amountBaseUnits: baseUnits.toString() } : {}),
+    };
   });
   const stellarExpectation: StellarVerificationExpectation = {};
   if (wallet) stellarExpectation.walletAddress = wallet;
