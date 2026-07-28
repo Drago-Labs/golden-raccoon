@@ -415,7 +415,7 @@ function buildChainExpectation(
     method: effect.method,
     amount: effect.amount,
     assetKey: effect.assetKey,
-    decimals: (effect as { decimals?: number }).decimals,
+    decimals: effect.decimals,
   }));
 
   if (family === "evm") {
@@ -437,14 +437,11 @@ function buildChainExpectation(
     return evmExpectation;
   }
 
-  const stellarEffects = expectation.expectedEffects?.map((effect) => ({
-    kind: effect.kind,
-    fromAddress: effect.fromAddress ?? effect.fromToken,
-    toAddress: effect.toAddress ?? effect.toToken,
-    contractAddress: effect.contractAddress,
-    method: effect.method,
-    assetKey: effect.assetKey,
-  }));
+  // Stellar verifier reads effect.amount directly; mirror the EVM projection so
+  // the symmetric amount + decimals fields reach the adapter unchanged. Asset
+  // identity (assetKey) is forwarded so the verifier can correlate to a known
+  // on-chain asset if the caller pre-supplied one.
+  const stellarEffects = effects;
   const stellarExpectation: StellarVerificationExpectation = {};
   if (wallet) stellarExpectation.walletAddress = wallet;
   if (expectation.sourceAccount) stellarExpectation.sourceAccount = expectation.sourceAccount;
