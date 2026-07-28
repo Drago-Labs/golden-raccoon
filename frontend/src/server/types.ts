@@ -496,6 +496,7 @@ export type TransactionExpectedEffect = {
   contractAddress?: string;
   method?: string;
   assetKey?: string;
+  decimals?: number;
 };
 
 export type TransactionRecord = {

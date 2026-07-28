@@ -14,6 +14,7 @@ export type EvmVerificationExpectation = {
     method?: string;
     methodSelector?: string;
     amountBaseUnits?: bigint | string;
+    decimals?: number;
     requireObservedSource?: boolean;
   }>;
 };

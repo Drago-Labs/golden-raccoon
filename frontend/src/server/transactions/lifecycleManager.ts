@@ -1,5 +1,5 @@
 import type { Hash } from "viem";
-import { toFunctionSelector } from "viem";
+import { parseUnits, toFunctionSelector } from "viem";
 import type { ChainFamily } from "@/lib/chainIdentity";
 import { getChainFamily, isTransactionHashForChain } from "@/lib/chainIdentity";
 import {
@@ -353,36 +353,46 @@ function getProviderUrl(family: ChainFamily, network: string): string {
   return family === "stellar" ? `stellar:${network}` : `evm:${network}`;
 }
 
+function deriveEvmMethodSelector(method: string | undefined): string | undefined {
+  if (!method) return undefined;
+  try {
+    return toFunctionSelector(method).toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+// Scale a human-readable decimal amount (e.g. "1.5") to base units (e.g. wei).
+// Delegates the decimal parsing to viem's parseUnits so we do not reimplement
+// fixed-point math inline — the helper only resolves which decimals to use.
+// Caller-supplied `decimals` on the effect is authoritative; if absent we fall
+// back to a coarse name-based heuristic that covers the well-known stablecoins
+// and wraps to 18 otherwise. Production callers should always set `decimals`
+// explicitly via a chain asset registry; the heuristic is intentional last resort.
 function inferEvmTokenDecimals(contractOrSymbol: string | undefined): number {
   if (!contractOrSymbol) return 18;
   const normalized = contractOrSymbol.trim().toLowerCase();
-  if (normalized === "usdc" || normalized.includes("usdc")) return 6;
+  if (normalized === "usdc" || normalized === "usdc.e" || normalized.includes("/usdc")) return 6;
   if (normalized.includes("usdt")) return 6;
   if (normalized.includes("dai")) return 18;
   if (normalized.includes("wbtc")) return 8;
   return 18;
 }
 
-function scaleAmountToBaseUnits(amount: string | undefined, contractOrSymbol: string | undefined): bigint | undefined {
-  if (amount === undefined) return undefined;
-  try {
-    const decimals = inferEvmTokenDecimals(contractOrSymbol);
-    const trimmed = amount.trim();
-    if (!trimmed) return undefined;
-    const [whole, fractionRaw = ""] = trimmed.split(".");
-    if (!/^\d*\.?\d*$/.test(trimmed)) return undefined;
-    const fraction = (fractionRaw + "0".repeat(decimals)).slice(0, decimals);
-    const combined = decimals === 0 ? whole : `${whole}${fraction}`;
-    return BigInt(combined || "0");
-  } catch {
-    return undefined;
+function resolveEvmDecimals(effect: { decimals?: number; contractAddress?: string; assetKey?: string }): number {
+  if (typeof effect.decimals === "number" && Number.isInteger(effect.decimals) && effect.decimals >= 0 && effect.decimals <= 36) {
+    return effect.decimals;
   }
+  return inferEvmTokenDecimals(effect.contractAddress ?? effect.assetKey);
 }
 
-function deriveEvmMethodSelector(method: string | undefined): string | undefined {
-  if (!method) return undefined;
+function scaleAmountToBaseUnits(
+  amount: string | undefined,
+  effect: { decimals?: number; contractAddress?: string; assetKey?: string },
+): bigint | undefined {
+  if (amount === undefined) return undefined;
   try {
-    return toFunctionSelector(method).toLowerCase();
+    return parseUnits(amount, resolveEvmDecimals(effect));
   } catch {
     return undefined;
   }
@@ -405,6 +415,7 @@ function buildChainExpectation(
     method: effect.method,
     amount: effect.amount,
     assetKey: effect.assetKey,
+    decimals: (effect as { decimals?: number }).decimals,
   }));
 
   if (family === "evm") {
@@ -414,7 +425,7 @@ function buildChainExpectation(
         requireObservedSource: true,
         methodSelector: deriveEvmMethodSelector(effect.method),
       };
-      const baseUnits = scaleAmountToBaseUnits(effect.amount, effect.contractAddress);
+      const baseUnits = scaleAmountToBaseUnits(effect.amount, effect);
       if (baseUnits !== undefined) {
         enriched.amountBaseUnits = baseUnits.toString();
       }
