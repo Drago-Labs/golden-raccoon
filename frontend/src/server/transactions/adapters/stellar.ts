@@ -379,9 +379,26 @@ function verifyStellarEffects(response: StellarRpcGetResponse, expectation: Stel
           return { matched: false, detail: `${effect.kind} expected toAddress ${effect.toAddress}, observed ${opTo ?? "absent"}` };
         }
       }
-      if (effect.amount) {
+      if (effect.amountBaseUnits || effect.amount) {
         const opAmount = typeof paymentOp.amount === "string" ? paymentOp.amount : undefined;
-        if (opAmount && opAmount !== effect.amount && BigInt(opAmount) !== BigInt(effect.amount)) {
+        // Prefer the pre-scaled base-units projection (lifecycle sets this via
+        // viem.parseUnits); it side-steps the BigInt("decimal-string") SyntaxError
+        // that would crash the poll path on human-readable decimal inputs. Fall
+        // back to effect.amount only when it is non-decimal so a malformed
+        // expectation surfaces as a clean mismatch instead of an uncaught throw.
+        const expectedBaseUnits = effect.amountBaseUnits
+          ?? (/^\d+$/.test(effect.amount ?? "") ? effect.amount : undefined);
+        if (expectedBaseUnits) {
+          try {
+            const expectedBig = BigInt(expectedBaseUnits);
+            const opBig = opAmount !== undefined ? BigInt(opAmount) : undefined;
+            if (opBig === undefined || opBig !== expectedBig) {
+              return { matched: false, detail: `${effect.kind} expected amount ${expectedBaseUnits} base units, observed ${opAmount ?? "absent"}` };
+            }
+          } catch (error) {
+            return { matched: false, detail: `${effect.kind} amount comparison failed: ${error instanceof Error ? error.message : "unknown"}` };
+          }
+        } else if (effect.amount && opAmount && opAmount !== effect.amount) {
           return { matched: false, detail: `${effect.kind} expected amount ${effect.amount}, observed ${opAmount}` };
         }
       }

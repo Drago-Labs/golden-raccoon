@@ -437,11 +437,18 @@ function buildChainExpectation(
     return evmExpectation;
   }
 
-  // Stellar verifier reads effect.amount directly; mirror the EVM projection so
-  // the symmetric amount + decimals fields reach the adapter unchanged. Asset
-  // identity (assetKey) is forwarded so the verifier can correlate to a known
-  // on-chain asset if the caller pre-supplied one.
-  const stellarEffects = effects;
+  // Stellar verifier is symmetric with the EVM branch now: project amount
+  // into amountBaseUnits via the same scaling helper so the adapter can do a
+  // BigInt-safe comparison on integer-shaped base units. Asset identity
+  // (assetKey) is forwarded unchanged.
+  const stellarEffects = effects?.map((effect) => {
+    const projected: typeof effect = { ...effect };
+    const baseUnits = scaleAmountToBaseUnits(effect.amount, effect);
+    if (baseUnits !== undefined) {
+      projected.amountBaseUnits = baseUnits.toString();
+    }
+    return projected;
+  });
   const stellarExpectation: StellarVerificationExpectation = {};
   if (wallet) stellarExpectation.walletAddress = wallet;
   if (expectation.sourceAccount) stellarExpectation.sourceAccount = expectation.sourceAccount;

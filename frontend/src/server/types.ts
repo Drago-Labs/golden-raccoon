@@ -493,6 +493,7 @@ export type TransactionExpectedEffect = {
   fromAddress?: string;
   toAddress?: string;
   amount?: string;
+  amountBaseUnits?: string;
   contractAddress?: string;
   method?: string;
   assetKey?: string;

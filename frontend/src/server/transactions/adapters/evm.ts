@@ -13,7 +13,7 @@ export type EvmVerificationExpectation = {
     contractAddress?: string;
     method?: string;
     methodSelector?: string;
-    amountBaseUnits?: bigint | string;
+    amountBaseUnits?: string;
     decimals?: number;
     requireObservedSource?: boolean;
   }>;
