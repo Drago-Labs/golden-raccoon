@@ -95,7 +95,7 @@ export async function getRiskPublicationPreview(
       readWriteCount = builder.getReadWrite().length;
     }
     // Use the prepared transaction's fee as a proxy for the resource fee
-    minResourceFee = prepared.fee.toString();
+    minResourceFee = prepared.fee;
   } catch {
     // Soroban data may not be present for non-soroban transactions
   }
