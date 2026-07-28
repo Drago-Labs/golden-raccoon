@@ -168,3 +168,62 @@ create index if not exists recommendations_wallet_created_idx on recommendations
 create index if not exists transactions_wallet_created_idx on transactions(wallet_address, created_at desc);
 create index if not exists approvals_wallet_created_idx on approvals(wallet_address, created_at desc);
 create index if not exists x402_payment_receipts_resource_created_idx on x402_payment_receipts(protected_resource, created_at desc);
+
+-- ─── Discovery service tables ────────────────────────────────────────────────
+
+create table if not exists discovery_candidates (
+  id uuid primary key default gen_random_uuid(),
+  canonical_key text not null unique,
+  chain_family text not null check (chain_family in ('evm', 'stellar')),
+  chain_id text not null,
+  address text not null,
+  asset_key text not null,
+  symbol text,
+  token_name text,
+  first_observed_at timestamptz not null default now(),
+  last_observed_at timestamptz not null default now(),
+  observation_count integer not null default 1,
+  latest_market jsonb not null default '{}'::jsonb,
+  latest_evidence jsonb not null default '[]'::jsonb,
+  latest_risk_score integer,
+  latest_risk_level text check (latest_risk_level in ('low', 'medium', 'high', 'critical', null)),
+  last_observed_by text not null check (last_observed_by in ('dexscreener_new_pairs', 'stellar_market'))
+);
+
+create table if not exists discovery_observations (
+  id uuid primary key default gen_random_uuid(),
+  observation_ext_id text not null unique,
+  canonical_key text not null,
+  chain_family text not null,
+  chain_id text not null,
+  address text not null,
+  asset_key text not null,
+  symbol text,
+  token_name text,
+  observed_by text not null check (observed_by in ('dexscreener_new_pairs', 'stellar_market')),
+  observed_at timestamptz not null,
+  market jsonb not null default '{}'::jsonb,
+  evidence jsonb not null default '[]'::jsonb,
+  risk_score integer,
+  risk_level text check (risk_level in ('low', 'medium', 'high', 'critical', null)),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists discovery_cursors (
+  id uuid primary key default gen_random_uuid(),
+  provider_kind text not null,
+  chain_id text not null,
+  cursor text not null,
+  updated_at timestamptz not null,
+  consecutive_failures integer not null default 0,
+  next_allowed_poll_ms bigint not null default 0,
+  created_at timestamptz not null default now(),
+  unique(provider_kind, chain_id)
+);
+
+create index if not exists discovery_candidates_canonical_key_idx on discovery_candidates(canonical_key);
+create index if not exists discovery_candidates_chain_id_idx on discovery_candidates(chain_id);
+create index if not exists discovery_candidates_last_observed_at_idx on discovery_candidates(last_observed_at desc);
+create index if not exists discovery_observations_canonical_key_idx on discovery_observations(canonical_key);
+create index if not exists discovery_observations_observed_at_idx on discovery_observations(observed_at desc);
+create index if not exists discovery_cursors_provider_chain_idx on discovery_cursors(provider_kind, chain_id);
