@@ -4,9 +4,9 @@
 | --- | --- |
 | Issue | Drago-Labs/golden-raccoon#16 |
 | Authors | Golden Raccoon contributors |
-| Status | Draft for maintainer review |
+| Status | Implementation-ready, awaiting maintainer approval |
 | Roadmap coverage | V2-061, V2-062, V2-063, prerequisite decisions for V2-066 / V2-067 |
-| Target networks | **Maintainer sign-off requested.** Primary targets: EVM — GOAT Network (id 48816); Soroban — Stellar Testnet (pubnet-equivalent rollout deferred to a follow-up audit). Base Sepolia is documented as a secondary testnet in §9.6 for parallel coverage. |
+| Target networks | **Maintainer sign-off requested on §9.1 / §9.5.** Primary targets proposed by the contributor: EVM — GOAT Network (id 48816); Soroban — Stellar Testnet (pubnet-equivalent rollout deferred to a follow-up audit). Base Sepolia is documented as a secondary parallel testnet in §9.6. |
 | Out of scope | Implementing or deploying the contracts; adding fund custody, swaps, or autonomous execution; choosing a production admin key inside this PR. |
 
 This document is the implementation-ready contract specification that closes V2 contract requirements (V2-061..V2-063 and the prerequisite decisions for V2-066 / V2-067). It does not introduce implementation code. The matching test matrix is `docs/V2_CONTRACT_TEST_MATRIX.md`.
@@ -491,7 +491,9 @@ The contributor proposes GOAT Network (id 48816) as the primary EVM testnet and 
 
 ### 9.5 Open questions for maintainer review
 
-1. Confirm the targeted EVM testnet — **proposed**: GOAT Network (id 48816) primary, Base Sepolia documented as secondary (§9.1).
+The contributor proposes concrete answers inline so the maintainer review can either confirm them in a single approving comment or replace any item with the maintainer's own preference.
+
+1. Confirm the targeted EVM testnet — **proposed**: GOAT Network (id 48816) primary, Base Sepolia documented as secondary (§9.1, §9.6).
 2. Confirm the Stellar target — **proposed**: Stellar Testnet dev now, Stellar Pubnet deferred until audit (§9.3).
 3. Confirm the UUPS proxy is acceptable for V2 (alternatives: minimal proxy, beacon, or transparent). **proposed**: UUPS, with §5.7 timelock and cancel path.
 4. Confirm the upgrade delay window (24h minimum, 30d maximum). **proposed**: 24h minimum, 30d maximum.
@@ -537,9 +539,15 @@ The contributor proposes GOAT Network (id 48816) as the primary EVM testnet and 
 | Frontend IDs/hashes have canonical encoding rules. | §3 (frontend identifiers), §8 (canonical encoding reference) |
 | Threats, authorization, pause/recovery, and upgrade assumptions are documented. | §10 (threats and assumptions), §5.5, §5.6, §5.7, §6.5, §6.6, §6.7 |
 | The test matrix is detailed enough to implement without product guesses. | `docs/V2_CONTRACT_TEST_MATRIX.md` |
-| Maintainers explicitly approve the target networks before implementation. | §9.1 (network targets), §9.5 (open questions) |
+| Maintainers explicitly approve the target networks before implementation. | §9.1 (network targets), §9.5 (open questions, including contributor-proposed answers), §9.6 (Base Sepolia secondary testnet) |
 
-The spec is **draft** until the maintainer approves the open questions in §9.5.
+The spec is **implementation-ready** once the maintainer approves the open questions in §9.5; the contributor's proposed answers are inline in §9.5 so an approving comment can lock the choices in a single review.
+
+### 9.6 Secondary parallel coverage (Base Sepolia)
+
+- Base Sepolia is documented as the parallel EVM testnet for coverage parity. It is **not** the primary EVM target — GOAT Network (id 48816) is.
+- The Matrix at `docs/V2_CONTRACT_TEST_MATRIX.md` does **not** add Base-Sepolia-only tests in this PR. Test parity for Base Sepolia is a follow-up that requires the maintainer to (a) confirm Base Sepolia as a maintainer-supported secondary, and (b) allocate owner-controlled infrastructure for it.
+- If the maintainer does not sign Base Sepolia off in this PR, §9.6 collapses to a single line: "Base Sepolia is not in scope for V2; revisit during the audit phase if needed."
 
 ---
 
