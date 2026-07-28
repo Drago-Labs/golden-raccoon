@@ -229,7 +229,7 @@ export function getEvmChainAdapter(options: EvmAdapterOptions): {
         let observedValue: bigint | undefined;
         try {
           const abiItem = effect.kind === "approval" ? ERC20_ABI_ITEM_APPROVAL : ERC20_ABI_ITEM_TRANSFER;
-          const decoded = decodeEventLog({ abi: [abiItem], data: matchingLog.data as `0x${string}` ?? "0x", topics: matchingLog.topics as ReadonlyArray<`0x${string}`> });
+          const decoded = decodeEventLog({ abi: [abiItem], data: (matchingLog.data ?? "0x") as `0x${string}`, topics: [...(matchingLog.topics ?? [])] as unknown as [`0x${string}`, ...`0x${string}`[]] });
           observedValue = decoded.args.value as bigint;
         } catch (error) {
           return { matched: false, detail: `${effect.kind} expected amount ${String(effect.amountBaseUnits)} but log decoding failed: ${error instanceof Error ? error.message : "unknown"}` };
@@ -365,7 +365,7 @@ export function getEvmChainAdapter(options: EvmAdapterOptions): {
 
         const verification = verifyReceiptEffects(
           transaction ? { from: transaction.from, to: transaction.to ?? null, input: transaction.input } : undefined,
-          receipt ? { status: receipt.status, contractAddress: receipt.contractAddress ?? null, logs: receipt.logs as ReadonlyArray<{ address?: string; topics?: ReadonlyArray<string | null | undefined>; data?: string }> } } : undefined,
+          receipt ? { status: receipt.status, contractAddress: receipt.contractAddress ?? null, logs: receipt.logs as ReadonlyArray<{ address?: string; topics?: ReadonlyArray<string | null | undefined>; data?: string }> } : undefined,
           expectation,
         );
 

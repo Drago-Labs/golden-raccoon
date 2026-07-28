@@ -1,4 +1,5 @@
 import type { Hash } from "viem";
+import { toFunctionSelector } from "viem";
 import type { ChainFamily } from "@/lib/chainIdentity";
 import { getChainFamily, isTransactionHashForChain } from "@/lib/chainIdentity";
 import {
@@ -352,6 +353,41 @@ function getProviderUrl(family: ChainFamily, network: string): string {
   return family === "stellar" ? `stellar:${network}` : `evm:${network}`;
 }
 
+function inferEvmTokenDecimals(contractOrSymbol: string | undefined): number {
+  if (!contractOrSymbol) return 18;
+  const normalized = contractOrSymbol.trim().toLowerCase();
+  if (normalized === "usdc" || normalized.includes("usdc")) return 6;
+  if (normalized.includes("usdt")) return 6;
+  if (normalized.includes("dai")) return 18;
+  if (normalized.includes("wbtc")) return 8;
+  return 18;
+}
+
+function scaleAmountToBaseUnits(amount: string | undefined, contractOrSymbol: string | undefined): bigint | undefined {
+  if (amount === undefined) return undefined;
+  try {
+    const decimals = inferEvmTokenDecimals(contractOrSymbol);
+    const trimmed = amount.trim();
+    if (!trimmed) return undefined;
+    const [whole, fractionRaw = ""] = trimmed.split(".");
+    if (!/^\d*\.?\d*$/.test(trimmed)) return undefined;
+    const fraction = (fractionRaw + "0".repeat(decimals)).slice(0, decimals);
+    const combined = decimals === 0 ? whole : `${whole}${fraction}`;
+    return BigInt(combined || "0");
+  } catch {
+    return undefined;
+  }
+}
+
+function deriveEvmMethodSelector(method: string | undefined): string | undefined {
+  if (!method) return undefined;
+  try {
+    return toFunctionSelector(method).toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
 function buildChainExpectation(
   family: ChainFamily,
   expectation: ConfirmationExpectation | undefined,
@@ -367,22 +403,41 @@ function buildChainExpectation(
     toAddress: effect.toAddress ?? effect.toToken,
     contractAddress: effect.contractAddress,
     method: effect.method,
+    amount: effect.amount,
     assetKey: effect.assetKey,
   }));
 
   if (family === "evm") {
+    const evmEffects = effects?.map((effect) => {
+      const enriched: NonNullable<EvmVerificationExpectation["expectedEffects"]>[number] = {
+        ...effect,
+        requireObservedSource: true,
+        methodSelector: deriveEvmMethodSelector(effect.method),
+      };
+      const baseUnits = scaleAmountToBaseUnits(effect.amount, effect.contractAddress);
+      if (baseUnits !== undefined) {
+        enriched.amountBaseUnits = baseUnits.toString();
+      }
+      return enriched;
+    });
     const evmExpectation: EvmVerificationExpectation = {};
     if (wallet) evmExpectation.walletAddress = wallet;
-    if (effects) evmExpectation.expectedEffects = effects;
+    if (evmEffects && evmEffects.length > 0) evmExpectation.expectedEffects = evmEffects;
     return evmExpectation;
   }
 
-  const stellarExpectation: StellarVerificationExpectation = {
-    expectedEffects: expectation.expectedEffects,
-  };
+  const stellarEffects = expectation.expectedEffects?.map((effect) => ({
+    kind: effect.kind,
+    fromAddress: effect.fromAddress ?? effect.fromToken,
+    toAddress: effect.toAddress ?? effect.toToken,
+    contractAddress: effect.contractAddress,
+    method: effect.method,
+    assetKey: effect.assetKey,
+  }));
+  const stellarExpectation: StellarVerificationExpectation = {};
   if (wallet) stellarExpectation.walletAddress = wallet;
   if (expectation.sourceAccount) stellarExpectation.sourceAccount = expectation.sourceAccount;
-  if (effects) stellarExpectation.expectedEffects = expectation.expectedEffects;
+  if (stellarEffects && stellarEffects.length > 0) stellarExpectation.expectedEffects = stellarEffects;
   return stellarExpectation;
 }
 
