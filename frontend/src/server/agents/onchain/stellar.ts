@@ -13,6 +13,45 @@ export type StellarOnchainAgentInput = {
   assetType?: "native" | "classic" | "contract" | "issuer_account";
 };
 
+export type StellarOnchainProviders = {
+  fetchRpcHealth?: () => Promise<{
+    healthy: boolean;
+    status: string;
+    network: string;
+    passphrase: string;
+    protocolVersion: number;
+    latestLedger: number;
+    closeTime: number;
+    checkedAt: string;
+    latencyMs: number;
+    providerUrl: string;
+    fallbackUsed: boolean;
+    attempts: number;
+  }>;
+  fetchContractState?: (contractId: string, chain: string) => Promise<{
+    deployed: boolean;
+    type: string;
+    wasmHash?: string;
+    lastModifiedLedgerSeq?: number;
+    liveUntilLedgerSeq?: number;
+    latestLedger?: number;
+  } | null>;
+  fetchClassicAssetRecord?: (chain: string, code: string, issuer: string) => Promise<StellarAssetRecord | null>;
+  fetchIssuerAccount?: (chain: string, issuer: string) => Promise<{
+    id?: string;
+    accountId?: string;
+    sequence?: string;
+    subentryCount?: number;
+    flags?: {
+      auth_required?: boolean;
+      auth_revocable?: boolean;
+      auth_immutable?: boolean;
+      auth_clawback_enabled?: boolean;
+    };
+    balances?: Array<Record<string, unknown>>;
+  } | null>;
+};
+
 type StellarAssetRecord = {
   asset_code: string;
   asset_issuer: string;
@@ -94,7 +133,7 @@ async function getIssuerAccount(identity: StellarAssetIdentity, chain: string) {
   return server.loadAccount(issuer);
 }
 
-export async function runStellarOnchainAgent(input: StellarOnchainAgentInput): Promise<AgentResult> {
+export async function runStellarOnchainAgent(input: StellarOnchainAgentInput, providers?: StellarOnchainProviders): Promise<AgentResult> {
   const identity = resolveIdentity(input);
 
   if (!identity) {
@@ -112,10 +151,18 @@ export async function runStellarOnchainAgent(input: StellarOnchainAgentInput): P
 
   const startedAt = performance.now();
   const [healthResult, contractResult, assetResult, issuerResult] = await Promise.allSettled([
-    getStellarRpcHealth(input.chain),
-    "contractId" in identity ? getContractState(identity.contractId, input.chain) : Promise.resolve(null),
-    getClassicAssetRecord(identity, input.chain),
-    getIssuerAccount(identity, input.chain),
+    providers?.fetchRpcHealth ? providers.fetchRpcHealth() : getStellarRpcHealth(input.chain),
+    "contractId" in identity
+      ? providers?.fetchContractState
+        ? providers.fetchContractState(identity.contractId, input.chain)
+        : getContractState(identity.contractId, input.chain)
+      : Promise.resolve(null),
+    providers?.fetchClassicAssetRecord && identity.type === "classic"
+      ? providers.fetchClassicAssetRecord(input.chain, identity.symbol, identity.issuer)
+      : getClassicAssetRecord(identity, input.chain),
+    providers?.fetchIssuerAccount && (identity.type === "classic" || identity.type === "issuer_account")
+      ? providers.fetchIssuerAccount(input.chain, identity.issuer)
+      : getIssuerAccount(identity, input.chain),
   ]);
   const checkedAt = new Date().toISOString();
   const health = healthResult.status === "fulfilled" ? healthResult.value : null;
