@@ -510,6 +510,14 @@ export type StorageHealth = {
   };
 };
 
+export type X402ChainFamily = "evm" | "stellar";
+
+export type X402PayerIdentity = {
+  chainFamily: X402ChainFamily;
+  payer?: string;
+  transactionHash?: string;
+};
+
 export type X402PaymentReceipt = {
   id: string;
   requestId: string;
@@ -517,6 +525,8 @@ export type X402PaymentReceipt = {
   walletAddress?: string;
   payer?: string;
   transactionHash?: string;
+  chainFamily: X402ChainFamily;
+  payerIdentity?: X402PayerIdentity;
   network: string;
   asset: string;
   amount: string;
@@ -525,6 +535,7 @@ export type X402PaymentReceipt = {
   facilitatorUrl: string;
   protectedResource: string;
   requestBodyHash: string;
+  paymentExpiry?: string;
   verificationStatus: "payment_required" | "verified" | "settled" | "failed" | "duplicate" | "expired";
   createdAt: string;
   updatedAt: string;

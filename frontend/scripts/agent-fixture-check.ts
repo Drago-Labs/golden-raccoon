@@ -1142,6 +1142,8 @@ function runX402Checks() {
     X402_PRICE_USD: process.env.X402_PRICE_USD,
     X402_NETWORK: process.env.X402_NETWORK,
     X402_FACILITATOR_URL: process.env.X402_FACILITATOR_URL,
+    X402_STELLAR_ENABLED: process.env.X402_STELLAR_ENABLED,
+    X402_PAYMENT_EXPIRY_SECONDS: process.env.X402_PAYMENT_EXPIRY_SECONDS,
     CDP_API_KEY_ID: process.env.CDP_API_KEY_ID,
     CDP_API_KEY_SECRET: process.env.CDP_API_KEY_SECRET,
   };
@@ -1150,6 +1152,8 @@ function runX402Checks() {
   process.env.X402_PRICE_USD = "$0.01";
   process.env.X402_NETWORK = "eip155:84532";
   process.env.X402_FACILITATOR_URL = "https://x402.org/facilitator";
+  delete process.env.X402_STELLAR_ENABLED;
+  delete process.env.X402_PAYMENT_EXPIRY_SECONDS;
 
   const config = getX402RuntimeConfig();
   const validation = validateX402RuntimeConfig(config);
@@ -1157,10 +1161,14 @@ function runX402Checks() {
 
   assert(validation.ok, `x402 config should validate in fixture: ${validation.issues.join(", ")}`);
   assert(config.protectedResource === "/api/x402/deep-scan", "x402 protected resource must be the premium deep scan endpoint.");
+  assert(config.chainFamily === "evm", "EVM network config must detect evm chain family.");
+  assert(config.paymentExpirySeconds === 300, "Payment expiry must default to 300 seconds.");
+  assert(config.supportedSchemes.includes("exact"), "EVM config must support exact scheme.");
   assert(Array.isArray(routeConfig.accepts), "x402 route config must expose payment requirements.");
   assert(routeConfig.accepts[0]?.payTo === config.payTo, "x402 route config must bind the expected recipient.");
   assert(routeConfig.accepts[0]?.network === config.network, "x402 route config must bind the expected network.");
 
+  // Test: fresh payment passes guard
   const request = new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
     headers: { "PAYMENT-SIGNATURE": "fixture-payment-signature" },
   });
@@ -1171,6 +1179,10 @@ function runX402Checks() {
   });
 
   assert(guard.ok, "Fresh x402 payment signature must pass idempotency guard.");
+  assert(guard.paymentDetails.chainFamily === "evm", "Payment details must expose evm chain family.");
+  assert(typeof guard.requestBodyHash === "string" && guard.requestBodyHash.length === 64, "Payment must bind to exact request body hash.");
+
+  // Test: receipt with chain family
   const receipt = createX402PaymentReceipt({
     requestId: guard.requestId,
     paymentHeaderHash: guard.paymentHeaderHash,
@@ -1183,11 +1195,14 @@ function runX402Checks() {
     protectedResource: config.protectedResource,
     requestBodyHash: guard.requestBodyHash,
     verificationStatus: "verified",
+    chainFamily: "evm",
   });
 
   assert(receipt.id.startsWith("x402_"), "x402 payment receipts must use x402 ids.");
+  assert(receipt.chainFamily === "evm", "x402 receipt must store evm chain family.");
   assert(getX402PaymentReceiptByHeaderHash(hashPaymentHeader("fixture-payment-signature"))?.id === receipt.id, "x402 receipts must be retrievable by payment header hash.");
 
+  // Test: duplicate payment rejected
   const duplicate = assertFreshX402Payment({
     request,
     requestBody: { query: "GOAT", chain: "base" },
@@ -1196,10 +1211,76 @@ function runX402Checks() {
 
   assert(!duplicate.ok && duplicate.status === 409, "Duplicate x402 payment signature must be rejected before premium work runs.");
 
+  // Test: amount mismatch with x402 middleware headers
+  const amountMismatch = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: { "PAYMENT-SIGNATURE": "fixture-amount-mismatch", "X-PAYMENT-AMOUNT": "$0.99" },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!amountMismatch.ok && amountMismatch.error === "payment_amount_mismatch", "Payment amount mismatch must be rejected before premium work runs.");
+
+  // Test: recipient mismatch
+  const recipientMismatch = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: { "PAYMENT-SIGNATURE": "fixture-recipient-mismatch", "X-PAYMENT-RECIPIENT": "0x0000000000000000000000000000000000000099" },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!recipientMismatch.ok && recipientMismatch.error === "payment_recipient_mismatch", "Payment recipient mismatch must be rejected before premium work runs.");
+
+  // Test: network mismatch
+  const networkMismatch = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: { "PAYMENT-SIGNATURE": "fixture-network-mismatch", "X-PAYMENT-NETWORK": "eip155:1" },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!networkMismatch.ok && networkMismatch.error === "payment_network_mismatch", "Payment network mismatch must be rejected before premium work runs.");
+
+  // Test: expired payment
+  const expired = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-expired",
+        "X-PAYMENT-SETTLED-AT": new Date(Date.now() - 600_000).toISOString(),
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!expired.ok && expired.error === "payment_expired", "Expired x402 payment must be rejected before premium work runs.");
+
+  // Test: payment with payer identity on headers
+  const withPayer = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-with-payer",
+        "X-PAYMENT-PAYER": "0x0000000000000000000000000000000000000001",
+        "X-PAYMENT-TX-HASH": "0x" + "a".repeat(64),
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(withPayer.ok, "Valid EVM payer identity must pass payment guard.");
+  assert(withPayer.paymentDetails.payer === "0x0000000000000000000000000000000000000001", "EVM payer must be exposed in payment details.");
+  assert(withPayer.paymentDetails.transactionHash === "0x" + "a".repeat(64), "EVM transaction hash must be exposed in payment details.");
+
+  // Test: price format validation
   process.env.X402_PRICE_USD = "0.01";
   const invalid = validateX402RuntimeConfig(getX402RuntimeConfig());
   assert(!invalid.ok && invalid.issues.some((issue) => issue.includes("X402_PRICE_USD")), "x402 price must keep dollar-prefixed format.");
 
+  // Test: Base mainnet requires CDP facilitator
   process.env.X402_PRICE_USD = "$0.01";
   process.env.X402_NETWORK = "eip155:8453";
   const invalidMainnetFacilitator = validateX402RuntimeConfig(getX402RuntimeConfig());
@@ -1208,11 +1289,82 @@ function runX402Checks() {
     "Base mainnet must reject the testnet-only facilitator.",
   );
 
+  // Test: CDP facilitator requires credentials
   process.env.X402_FACILITATOR_URL = "https://api.cdp.coinbase.com/platform/v2/x402";
   delete process.env.CDP_API_KEY_ID;
   delete process.env.CDP_API_KEY_SECRET;
   const invalidCdpAuth = validateX402RuntimeConfig(getX402RuntimeConfig());
   assert(!invalidCdpAuth.ok && invalidCdpAuth.issues.some((issue) => issue.includes("CDP_API_KEY_ID")), "CDP facilitator must require both API credentials.");
+
+  // Test: Stellar network config validation
+  process.env.X402_NETWORK = "stellar:testnet";
+  process.env.X402_PAY_TO = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+  process.env.X402_FACILITATOR_URL = "https://x402.org/facilitator";
+  process.env.X402_STELLAR_ENABLED = "1";
+  const stellarConfig = getX402RuntimeConfig();
+  assert(stellarConfig.chainFamily === "stellar", "Stellar network must detect stellar chain family.");
+  assert(stellarConfig.supportedSchemes.includes("exact-stellar"), "Stellar-enabled config must support exact-stellar scheme.");
+  assert(stellarConfig.asset === "USDC:stellar", "Stellar config must default to USDC:stellar asset.");
+
+  // Test: Stellar payment with valid payer
+  const stellarGuard = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=stellar", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-stellar-payer",
+        "X-PAYMENT-PAYER": "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+        "X-PAYMENT-TX-HASH": "a".repeat(64),
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "stellar" },
+    config: stellarConfig,
+  });
+
+  assert(stellarGuard.ok, "Valid Stellar payer identity must pass payment guard.");
+  assert(stellarGuard.paymentDetails.chainFamily === "stellar", "Stellar payment must expose stellar chain family.");
+  assert(stellarGuard.paymentDetails.payer === "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H", "Stellar payer must be exposed in payment details.");
+
+  // Test: invalid payer address format
+  const invalidPayer = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-invalid-payer",
+        "X-PAYMENT-PAYER": "not-a-valid-address",
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!invalidPayer.ok && invalidPayer.error === "invalid_payer_identity", "Invalid payer address format must be rejected.");
+
+  // Test: payer chain family mismatch (Stellar payer on EVM network)
+  const chainMismatch = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-chain-mismatch",
+        "X-PAYMENT-PAYER": "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!chainMismatch.ok && chainMismatch.error === "payer_chain_family_mismatch", "Stellar payer on EVM network must be rejected.");
+
+  // Test: invalid EVM transaction hash format
+  const invalidTxHash = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-invalid-tx",
+        "X-PAYMENT-PAYER": "0x0000000000000000000000000000000000000001",
+        "X-PAYMENT-TX-HASH": "not-a-tx-hash",
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!invalidTxHash.ok && invalidTxHash.error === "invalid_transaction_hash", "Invalid EVM transaction hash format must be rejected.");
 
   for (const [key, value] of Object.entries(previous)) {
     if (value === undefined) {

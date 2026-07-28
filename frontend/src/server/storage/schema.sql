@@ -133,6 +133,8 @@ create table if not exists x402_payment_receipts (
   wallet_address text,
   payer text,
   transaction_hash text,
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
+  payer_identity jsonb not null default '{}'::jsonb,
   network text not null,
   asset text not null,
   amount text not null,
@@ -141,6 +143,7 @@ create table if not exists x402_payment_receipts (
   facilitator_url text not null,
   protected_resource text not null,
   request_body_hash text not null,
+  payment_expiry timestamptz,
   verification_status text not null check (verification_status in ('payment_required', 'verified', 'settled', 'failed', 'duplicate', 'expired')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

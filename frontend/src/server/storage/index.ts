@@ -347,9 +347,14 @@ export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | 
   }
 
   const createdAt = input.createdAt ?? new Date().toISOString();
+  const chainFamily = input.chainFamily ?? "evm";
   const record: X402PaymentReceipt = {
     id: createRecordId("x402"),
     ...input,
+    chainFamily,
+    payerIdentity: input.payer || input.transactionHash
+      ? { chainFamily, payer: input.payer, transactionHash: input.transactionHash }
+      : undefined,
     createdAt,
     updatedAt: input.updatedAt ?? createdAt,
   };

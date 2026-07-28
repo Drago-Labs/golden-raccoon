@@ -70,9 +70,36 @@ const checks = [
     expectedStatus: 402,
     validate: (_body, response) => Boolean(response.headers.get("payment-required") || response.headers.get("x-payment-required")),
   },
+  {
+    name: "x402 duplicate payment rejected",
+    path: "/api/x402/deep-scan?query=GOAT&chain=base",
+    init: { method: "GET", headers: { Accept: "application/json", "PAYMENT-SIGNATURE": "smoke-duplicate-sig" } },
+    skip: !process.env.SMOKE_DUPLICATE_X402_ENABLED,
+    validate: (body) => body.error === "duplicate_x402_payment",
+    expectedStatus: 409,
+  },
+  {
+    name: "x402 terms exposes payment config",
+    path: "/api/x402/terms",
+    init: { method: "GET", headers: { Accept: "application/json" } },
+    validate: (body) => typeof body.priceUsd === "string" && typeof body.network === "string" && typeof body.payTo === "string",
+  },
+  {
+    name: "x402 deep scan premium unlock with valid payment sig",
+    path: "/api/x402/deep-scan?query=GOAT&chain=base",
+    init: { method: "GET", headers: { Accept: "application/json", "PAYMENT-SIGNATURE": "smoke-valid-payment-sig-" + Date.now().toString(36) } },
+    skip: !process.env.SMOKE_X402_FULL,
+    expectedStatus: 200,
+    validate: (body) => body.premium?.unlocked === true && body.premium?.tier === "deep_scan" && body.scan !== undefined,
+  },
 ];
 
 for (const check of checks) {
+  if (check.skip) {
+    console.log(`smoke-api: ${check.name} skipped`);
+    continue;
+  }
+
   const response = await fetch(`${baseUrl}${check.path}`, check.init);
 
   if (check.expectedStatus && response.status !== check.expectedStatus) {
