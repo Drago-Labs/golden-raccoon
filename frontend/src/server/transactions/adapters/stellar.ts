@@ -336,19 +336,75 @@ function toLedgerNumber(value: unknown): number | undefined {
 
 function verifyStellarEffects(response: StellarRpcGetResponse, expectation: StellarVerificationExpectation | undefined) {
   if (!expectation) return { matched: true, detail: undefined as string | undefined };
-  if (expectation.sourceAccount) {
-    const sourceAccount = (response as unknown as Record<string, unknown>).sourceAccount;
-    if (typeof sourceAccount === "string" && sourceAccount !== expectation.sourceAccount) {
-      return { matched: false, detail: `Stellar sourceAccount ${sourceAccount} does not match expected ${expectation.sourceAccount}` };
+
+  const responseRecord = response as unknown as Record<string, unknown>;
+  const observedSource = typeof responseRecord.sourceAccount === "string" ? responseRecord.sourceAccount : undefined;
+  const expectedSource = expectation.sourceAccount ?? expectation.walletAddress;
+
+  if (expectedSource) {
+    if (!observedSource) {
+      return { matched: false, detail: `expected Stellar sourceAccount ${expectedSource} but response.sourceAccount is absent` };
+    }
+    if (observedSource.toLowerCase() !== expectedSource.toLowerCase()) {
+      return { matched: false, detail: `Stellar sourceAccount ${observedSource} does not match expected ${expectedSource}` };
     }
   }
+
+  const operations = responseRecord.operations;
+  const operationsList = Array.isArray(operations) ? operations as Array<Record<string, unknown>> : undefined;
+
   for (const effect of expectation.expectedEffects ?? []) {
     if (effect.kind === "publish_risk") {
-      const operations = (response as unknown as Record<string, unknown>).operations as unknown;
-      if (!Array.isArray(operations) || !operations.some((operation) => (operation as { type?: string }).type === "invokeHostFunction")) {
-        return { matched: false, detail: `publish_risk expected invokeHostFunction effect, observed ${Array.isArray(operations) ? operations.map((o) => (o as { type?: string }).type) : "none"}` };
+      if (!operationsList || !operationsList.some((operation) => operation.type === "invokeHostFunction")) {
+        return { matched: false, detail: `publish_risk expected invokeHostFunction operation, observed ${operationsList ? operationsList.map((o) => String(o.type ?? "unknown")) : "none"}` };
+      }
+      continue;
+    }
+
+    if (effect.kind === "transfer" || effect.kind === "swap") {
+      if (!operationsList) {
+        return { matched: false, detail: `${effect.kind} expected at least one payment/transfer/invokeHostFunction operation, observed none` };
+      }
+      const paymentOp = operationsList.find((operation) => operation.type === "payment" || operation.type === "pathPaymentStrictSend" || operation.type === "pathPaymentStrictReceive");
+      if (!paymentOp) {
+        return { matched: false, detail: `${effect.kind} expected payment-style operation, observed ${operationsList.map((o) => String(o.type ?? "unknown"))}` };
+      }
+      if (effect.fromAddress || effect.toAddress) {
+        const opFrom = typeof paymentOp.from === "string" ? paymentOp.from : undefined;
+        const opTo = typeof paymentOp.to === "string" ? paymentOp.to : (typeof paymentOp.destination === "string" ? paymentOp.destination : undefined);
+        if (effect.fromAddress && (!opFrom || opFrom.toLowerCase() !== effect.fromAddress.toLowerCase())) {
+          return { matched: false, detail: `${effect.kind} expected fromAddress ${effect.fromAddress}, observed ${opFrom ?? "absent"}` };
+        }
+        if (effect.toAddress && (!opTo || opTo.toLowerCase() !== effect.toAddress.toLowerCase())) {
+          return { matched: false, detail: `${effect.kind} expected toAddress ${effect.toAddress}, observed ${opTo ?? "absent"}` };
+        }
+      }
+      if (effect.amount) {
+        const opAmount = typeof paymentOp.amount === "string" ? paymentOp.amount : undefined;
+        if (opAmount && opAmount !== effect.amount && BigInt(opAmount) !== BigInt(effect.amount)) {
+          return { matched: false, detail: `${effect.kind} expected amount ${effect.amount}, observed ${opAmount}` };
+        }
+      }
+      continue;
+    }
+
+    if (effect.kind === "approval") {
+      if (!operationsList) {
+        return { matched: false, detail: `approval expected an authorize trustline or setOptions operation, observed none` };
+      }
+      const matches = operationsList.some((operation) => operation.type === "allowTrust" || operation.type === "setTrustLineFlags" || operation.type === "setOptions");
+      if (!matches) {
+        return { matched: false, detail: `approval expected allowTrust/setTrustLineFlags/setOptions operation, observed ${operationsList.map((o) => String(o.type ?? "unknown"))}` };
+      }
+      continue;
+    }
+
+    if (effect.kind === "contract_call") {
+      if (!operationsList || !operationsList.some((operation) => operation.type === "invokeHostFunction")) {
+        return { matched: false, detail: `contract_call expected invokeHostFunction operation, observed ${operationsList ? operationsList.map((o) => String(o.type ?? "unknown")) : "none"}` };
       }
     }
   }
+
   return { matched: true, detail: undefined as string | undefined };
 }

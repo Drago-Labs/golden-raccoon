@@ -1566,6 +1566,43 @@ async function runTransactionLifecycleChecks() {
   appendLifecycleEventByName(`0x${"f".repeat(64)}`, "user_rejected", { reason: "User clicked reject in wallet." });
   assert(listTransactionLifecycleEvents(`0x${"f".repeat(64)}`).some((event) => event.event === "user_rejected"), "Lifecycle event store must keep manual user_rejected events.");
 
+  // ---- Stellar terminal user_rejected E2E integration coverage ----
+  const stellarRejectedHash = `${"a".repeat(63)}b`;
+  const stellarRejectedWallet = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const stellarRejectedPrep = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarRejectedWallet,
+    sourceAccount: stellarRejectedWallet,
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: stellarRejectedHash,
+    idempotencyKey: "idem_stellar_user_rejected_e2e",
+  });
+  assert(stellarRejectedPrep.transaction.lifecycleStatus === "submitted", "Stellar user_rejected fixture requires a fresh submitted record.");
+  const stellarRejected = await recordUserRejection(stellarRejectedHash, { walletAddress: stellarRejectedWallet, reason: "User clicked reject in Stellar wallet." });
+  assert(stellarRejected.lifecycleStatus === "user_rejected", "Stellar recordUserRejection must mark the transaction as user_rejected.");
+  assert(isImmutableTerminal(stellarRejected.lifecycleStatus as TransactionLifecycleStatus), "Stellar user_rejected must be flagged as immutable terminal.");
+  assert(listTransactionLifecycleEvents(stellarRejectedHash).some((event) => event.event === "user_rejected"), "Stellar user_rejected transactions must append a user_rejected lifecycle event.");
+
+  const stellarRejectApi = await rejectExecution(
+    new Request("http://localhost/api/execute/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        txHash: stellarRejectedHash,
+        walletAddress: stellarRejectedWallet,
+        reason: "Stellar wallet UI cancelled.",
+        source: "wallet",
+      }),
+    }),
+  );
+  assert(stellarRejectApi.status === 200, "Reject API must accept Stellar user_rejected for known hashes.");
+  const stellarRejectJson = await stellarRejectApi.json();
+  assert(stellarRejectJson.status === "user_rejected", "Reject API response must surface user_rejected for Stellar hashes.");
+  assert(getTransactionRecord(stellarRejectedHash)?.lifecycleStatus === "user_rejected", "Reject API must persist user_rejected terminal state for Stellar hashes in storage.");
+  clearStellarSimulator();
+
   const txMissing = (() => {
     try {
       const recorded = getTransactionRecord(`0x${"9".repeat(64)}`);

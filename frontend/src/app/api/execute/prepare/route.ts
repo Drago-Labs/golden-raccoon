@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { buildExecutionPreviewFromPortfolio } from "@/server/agents/execution";
@@ -43,10 +43,24 @@ const bodySchema = z.object({
   })).optional(),
 });
 
+function canonicalizeSeed(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 function buildIdempotencyKey(input: { walletAddress?: string; network?: string; decisionId?: string; asset?: string; providedKey?: string }) {
   if (input.providedKey) return input.providedKey;
-  const seed = [input.walletAddress ?? "_", input.network ?? "_", input.decisionId ?? "_", input.asset ?? "_"].join("|");
-  return `auto:${seed}:${randomUUID()}`;
+  // Deterministic auto-derived key: same inputs always collide to the same prepared
+  // record. The caller is expected to supply an explicit idempotencyKey for nonce-like
+  // distinct prepares; this fallback is for cases where the caller intentionally wants
+  // retry safety on the same logical intent.
+  const seed = [
+    canonicalizeSeed(input.walletAddress ?? "_"),
+    canonicalizeSeed(input.network ?? "_"),
+    canonicalizeSeed(input.decisionId ?? "_"),
+    canonicalizeSeed(input.asset ?? "_"),
+  ].join("|");
+  const digest = createHash("sha256").update(seed).digest("hex");
+  return `auto:${digest}`;
 }
 
 export async function POST(request: Request) {

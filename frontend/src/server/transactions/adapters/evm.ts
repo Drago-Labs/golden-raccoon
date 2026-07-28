@@ -1,4 +1,4 @@
-import { createPublicClient, http, recoverTransactionAddress, type Hash, type PublicClient } from "viem";
+import { createPublicClient, decodeEventLog, http, keccak256, parseAbiItem, recoverTransactionAddress, toFunctionSelector, type Hash, type PublicClient } from "viem";
 import type { ChainFamily } from "@/lib/chainIdentity";
 import { isTransactionHashForChain } from "@/lib/chainIdentity";
 
@@ -12,8 +12,41 @@ export type EvmVerificationExpectation = {
     toAddress?: string;
     contractAddress?: string;
     method?: string;
+    methodSelector?: string;
+    amountBaseUnits?: bigint | string;
+    requireObservedSource?: boolean;
   }>;
 };
+
+const ERC20_TRANSFER_TOPIC0 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+const ERC20_APPROVAL_TOPIC0 = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac14c23ccaa9";
+const ERC20_ABI_ITEM_TRANSFER = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
+const ERC20_ABI_ITEM_APPROVAL = parseAbiItem("event Approval(address indexed owner, address indexed spender, uint256 value)");
+
+function extractMethodSelector(input: string | undefined): string | undefined {
+  if (!input) return undefined;
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("0x") || trimmed.length < 10) return undefined;
+  return trimmed.slice(0, 10).toLowerCase();
+}
+
+function deriveMethodSelectorFromSignature(method: string): string | undefined {
+  try {
+    return toFunctionSelector(method).toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+function compareAmounts(expected: bigint | string | undefined, observed: bigint | undefined): { matched: boolean; detail?: string } {
+  if (expected === undefined) return { matched: true };
+  if (observed === undefined) return { matched: false, detail: `expected amount ${String(expected)}, none observed in receipt logs` };
+  const expectedBigInt = typeof expected === "string" ? BigInt(expected) : expected;
+  if (observed !== expectedBigInt) {
+    return { matched: false, detail: `expected amount ${expectedBigInt.toString()}, observed ${observed.toString()}` };
+  }
+  return { matched: true };
+}
 
 export type EvmSubmitResult = {
   hash: Hash;
@@ -122,35 +155,89 @@ export function getEvmChainAdapter(options: EvmAdapterOptions): {
   const providerUrl = getEvmRpcUrl(options);
 
   function verifyReceiptEffects(
-    transaction: { from?: string; to?: string | null } | undefined,
-    receipt: { status?: string; contractAddress?: string | null } | undefined,
+    transaction: { from?: string; to?: string | null; input?: string } | undefined,
+    receipt: { status?: string; contractAddress?: string | null; logs?: ReadonlyArray<{ address?: string; topics?: ReadonlyArray<string | null | undefined>; data?: string }> } | undefined,
     expectation: EvmVerificationExpectation | undefined,
-  ) {
-    if (!expectation) return { matched: true, detail: undefined as string | undefined };
+  ): { matched: boolean; detail?: string } {
+    if (!expectation) return { matched: true };
 
-    if (expectation.walletAddress && transaction?.from) {
+    if (expectation.walletAddress !== undefined) {
+      if (!transaction?.from) {
+        return { matched: false, detail: `expected wallet ${expectation.walletAddress} but transaction.from is absent` };
+      }
       if (transaction.from.toLowerCase() !== expectation.walletAddress.toLowerCase()) {
         return { matched: false, detail: `on-chain sender ${transaction.from} does not match expected wallet ${expectation.walletAddress}` };
       }
     }
 
     const effects = expectation.expectedEffects ?? [];
+    const observedSelector = extractMethodSelector(transaction?.input);
+
     for (const effect of effects) {
-      if (effect.fromAddress && transaction?.from && transaction.from.toLowerCase() !== effect.fromAddress.toLowerCase()) {
-        return { matched: false, detail: `${effect.kind} expected fromAddress ${effect.fromAddress}, observed ${transaction.from}` };
-      }
-      if (effect.toAddress) {
-        const observedTo = transaction?.to ?? receipt?.contractAddress ?? null;
-        if (!observedTo || (typeof observedTo === "string" && observedTo.toLowerCase() !== effect.toAddress.toLowerCase())) {
-          return { matched: false, detail: `${effect.kind} expected toAddress ${effect.toAddress}` };
+      if (effect.requireObservedSource !== false && effect.fromAddress) {
+        if (!transaction?.from) {
+          return { matched: false, detail: `${effect.kind} expected fromAddress ${effect.fromAddress}, observed absent (transaction.from missing)` };
+        }
+        if (transaction.from.toLowerCase() !== effect.fromAddress.toLowerCase()) {
+          return { matched: false, detail: `${effect.kind} expected fromAddress ${effect.fromAddress}, observed ${transaction.from}` };
         }
       }
-      if (effect.contractAddress && receipt?.contractAddress && receipt.contractAddress.toLowerCase() !== effect.contractAddress.toLowerCase()) {
-        return { matched: false, detail: `${effect.kind} expected contractAddress ${effect.contractAddress}, observed ${receipt.contractAddress}` };
+
+      if (effect.toAddress) {
+        const observedTo = transaction?.to ?? receipt?.contractAddress ?? null;
+        if (!observedTo) {
+          return { matched: false, detail: `${effect.kind} expected toAddress ${effect.toAddress}, observed absent` };
+        }
+        if (observedTo.toString().toLowerCase() !== effect.toAddress.toLowerCase()) {
+          return { matched: false, detail: `${effect.kind} expected toAddress ${effect.toAddress}, observed ${observedTo}` };
+        }
+      }
+
+      const expectedSelector = (effect.methodSelector ?? (effect.method ? deriveMethodSelectorFromSignature(effect.method) : undefined))?.toLowerCase();
+      if (expectedSelector && observedSelector && observedSelector !== expectedSelector) {
+        return { matched: false, detail: `${effect.kind} expected method selector ${expectedSelector} (signature: ${effect.method}), observed ${observedSelector}` };
+      }
+
+      if (effect.contractAddress) {
+        const wantContract = effect.contractAddress.toLowerCase();
+        const receiptContractMatches = !!receipt?.contractAddress && receipt.contractAddress.toLowerCase() === wantContract;
+        const logMatches = Array.isArray(receipt?.logs) && receipt!.logs!.some((log) => (log.address ?? "").toLowerCase() === wantContract);
+        if (!receiptContractMatches && !logMatches) {
+          return { matched: false, detail: `${effect.kind} expected contract address ${effect.contractAddress}; not observed in receipt.contractAddress or logs` };
+        }
+      }
+
+      // Amount verification: only runs when amountBaseUnits is supplied and the effect is a
+      // value-bearing event (transfer/approval/swap). Skips silently otherwise so legacy
+      // simulator fixtures remain green.
+      if (effect.amountBaseUnits !== undefined && (effect.kind === "transfer" || effect.kind === "approval" || effect.kind === "swap")) {
+        const targetTopic0 = effect.kind === "approval" ? ERC20_APPROVAL_TOPIC0 : ERC20_TRANSFER_TOPIC0;
+        const candidateLogs = Array.isArray(receipt?.logs) ? receipt!.logs! : [];
+        const matchingLog = effect.contractAddress
+          ? candidateLogs.find((log) => (log.topics?.[0] ?? "").toLowerCase() === targetTopic0 && (log.address ?? "").toLowerCase() === effect.contractAddress!.toLowerCase())
+          : candidateLogs.find((log) => (log.topics?.[0] ?? "").toLowerCase() === targetTopic0);
+
+        if (!matchingLog) {
+          return { matched: false, detail: `${effect.kind} expected amount ${String(effect.amountBaseUnits)} but no matching ${effect.kind === "approval" ? "Approval" : "Transfer"} log observed` };
+        }
+
+        let observedValue: bigint | undefined;
+        try {
+          const abiItem = effect.kind === "approval" ? ERC20_ABI_ITEM_APPROVAL : ERC20_ABI_ITEM_TRANSFER;
+          const decoded = decodeEventLog({ abi: [abiItem], data: matchingLog.data as `0x${string}` ?? "0x", topics: matchingLog.topics as ReadonlyArray<`0x${string}`> });
+          observedValue = decoded.args.value as bigint;
+        } catch (error) {
+          return { matched: false, detail: `${effect.kind} expected amount ${String(effect.amountBaseUnits)} but log decoding failed: ${error instanceof Error ? error.message : "unknown"}` };
+        }
+
+        const amountCompare = compareAmounts(effect.amountBaseUnits, observedValue);
+        if (!amountCompare.matched) {
+          return { matched: false, detail: amountCompare.detail ?? `${effect.kind} amount mismatch` };
+        }
       }
     }
 
-    return { matched: true, detail: undefined as string | undefined };
+    return { matched: true };
   }
 
   return {
@@ -233,8 +320,8 @@ export function getEvmChainAdapter(options: EvmAdapterOptions): {
         const blockNumber = BigInt(1);
         const gasUsed = BigInt(21_000);
         const effectiveGasPrice = BigInt(1_000_000_000);
-        const receipt = { status: "success", contractAddress: null } as const;
-        const transaction = { from: expectation?.walletAddress, to: null as string | null };
+        const receipt = { status: "success", contractAddress: null, logs: [] } as const;
+        const transaction = { from: expectation?.walletAddress, to: null as string | null, input: "0x" } as const;
         const verification = verifyReceiptEffects(transaction, receipt, expectation);
 
         return {
@@ -272,8 +359,8 @@ export function getEvmChainAdapter(options: EvmAdapterOptions): {
         }
 
         const verification = verifyReceiptEffects(
-          transaction ? { from: transaction.from, to: transaction.to ?? null } : undefined,
-          receipt ? { status: receipt.status, contractAddress: receipt.contractAddress ?? null } : undefined,
+          transaction ? { from: transaction.from, to: transaction.to ?? null, input: transaction.input } : undefined,
+          receipt ? { status: receipt.status, contractAddress: receipt.contractAddress ?? null, logs: receipt.logs as ReadonlyArray<{ address?: string; topics?: ReadonlyArray<string | null | undefined>; data?: string }> } } : undefined,
           expectation,
         );
 
