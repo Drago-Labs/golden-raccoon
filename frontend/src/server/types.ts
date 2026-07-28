@@ -220,6 +220,67 @@ export type AgentDecision = {
   createdAt: string;
 };
 
+export type EvmTransactionPayload = {
+  /** Discriminant for client-side dispatch */
+  chainFamily: "evm";
+  chainId: number;
+  chainName: string;
+  /**
+   * The EVM transaction request for the wallet.
+   *
+   * NOTE: `gas`, `maxFeePerGas`, and `maxPriorityFeePerGas` are typed as
+   * `bigint` for wagmi compatibility but they DO NOT survive JSON
+   * serialisation (the payload is built server-side and sent to the client via
+   * the API).  These fields are currently left unset; the connected wallet
+   * will estimate gas automatically.  If they need to be specified in a future
+   * iteration, set them client-side after deserialisation, not server-side.
+   */
+  txRequest: {
+    from: `0x${string}`;
+    to: `0x${string}`;
+    data: `0x${string}`;
+    value?: `0x${string}`;
+    /** @see https://wagmi.sh/react/api/hooks/useSendTransaction */
+    gas?: bigint;
+    maxFeePerGas?: bigint;
+    maxPriorityFeePerGas?: bigint;
+  };
+  /** Human‑readable summary for the preview */
+  fromToken: string;
+  toToken: string;
+  amount: string;
+  estimatedValueUsd: number;
+  expectedOutputAmount?: string;
+  slippageBps: number;
+  gasEstimateUsd: number;
+  /** Minimum output amount after slippage (for user confirmation) */
+  minOutputAmount?: string;
+};
+
+export type StellarTransactionPayload = {
+  /** Discriminant for client-side dispatch */
+  chainFamily: "stellar";
+  network: string;
+  networkPassphrase: string;
+  sourceAccount: string;
+  /** Unsigned Stellar transaction XDR base64 */
+  transactionXdr: string;
+  /** Operations summary */
+  operations: Array<{ type: string; asset?: string; amount?: string; destination?: string; contractId?: string; function?: string }>;
+  /** Human‑readable summary */
+  fromAsset: string;
+  toAsset: string;
+  amount: string;
+  estimatedValueUsd: number;
+  expectedOutputAmount?: string;
+  slippageBps: number;
+  resourceFee?: string;
+  /** Minimum output amount after slippage */
+  minOutputAmount?: string;
+};
+
+export type PreparedTransactionPayload = EvmTransactionPayload | StellarTransactionPayload;
+
 export type TransactionPreview = {
   title: string;
   action?: "swap" | "reduce_exposure" | "watchlist" | "no_action";
@@ -231,11 +292,15 @@ export type TransactionPreview = {
   projectedRiskScore: number;
   requiresApproval: boolean;
   network: string;
+  /** Chain family – filled by the prepare endpoint */
+  chainFamily?: "evm" | "stellar";
   slippageBps?: number;
   priceImpactBps?: number;
   gasEstimateUsd?: number;
   approvalSteps?: string[];
   executionReady?: boolean;
+  /** The exact payload the wallet will be asked to sign */
+  payload?: PreparedTransactionPayload;
   lifecycle?: {
     status: "prepared" | "user_rejected" | "submitted" | "confirmed" | "failed" | "replaced" | "expired";
     expiresAt?: string;

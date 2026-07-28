@@ -741,9 +741,14 @@ async function runExecutionChecks() {
       method: "POST",
       body: JSON.stringify({
         walletAddress: "0xabc",
+        sessionAddress: "0xabc",
         txHash: `0x${"a".repeat(64)}`,
         userApproved: true,
+        action: "reduce_exposure",
         simulationStatus: "failed",
+        walletNetwork: "GOAT Network",
+        network: "GOAT Network",
+        preparedAt: new Date().toISOString(),
       }),
     }),
   );
@@ -754,11 +759,15 @@ async function runExecutionChecks() {
       method: "POST",
       body: JSON.stringify({
         walletAddress: "0xabc",
+        sessionAddress: "0xabc",
         txHash: `0x${"c".repeat(64)}`,
         userApproved: true,
         action: "reduce_exposure",
         riskScore: 60,
         simulationStatus: "pending",
+        walletNetwork: "GOAT Network",
+        network: "GOAT Network",
+        preparedAt: new Date().toISOString(),
       }),
     }),
   );
@@ -768,22 +777,30 @@ async function runExecutionChecks() {
     new Request("http://localhost/api/execute/confirm", {
       method: "POST",
       body: JSON.stringify({
-        decisionWalletAddress: "0xabc",
-        walletAddress: "0xdef",
+        decisionWalletAddress: "0xdef",
+        walletAddress: "0xabc",
+        sessionAddress: "0xabc",
         txHash: `0x${"d".repeat(64)}`,
         userApproved: true,
+        action: "reduce_exposure",
+        walletNetwork: "GOAT Network",
+        network: "GOAT Network",
+        preparedAt: new Date().toISOString(),
       }),
     }),
   );
-  assert(walletMismatchResponse.status === 403, "Confirm must reject wallet mismatch.");
+  // Session address matches walletAddress, but decisionWalletAddress differs
+  assert(walletMismatchResponse.status === 403, "Confirm must reject decision wallet mismatch.");
 
   const invalidConfirmResponse = await confirmExecution(
     new Request("http://localhost/api/execute/confirm", {
       method: "POST",
       body: JSON.stringify({
         walletAddress: "0xabc",
+        sessionAddress: "0xabc",
         txHash: "not-a-tx",
         userApproved: true,
+        action: "reduce_exposure",
       }),
     }),
   );
@@ -795,14 +812,18 @@ async function runExecutionChecks() {
       body: JSON.stringify({
         decisionId: "decision_fixture",
         walletAddress: "0xabc",
+        sessionAddress: "0xabc",
         txHash: `0x${"b".repeat(64)}`,
         userApproved: true,
         network: "GOAT Network",
+        walletNetwork: "GOAT Network",
         action: "reduce_exposure",
         asset: "MEME",
         valueUsd: 25,
+        riskScore: 40,
         simulationStatus: "passed",
         policyAllowed: true,
+        preparedAt: new Date().toISOString(),
       }),
     }),
   );
@@ -814,8 +835,13 @@ async function runExecutionChecks() {
       body: JSON.stringify({
         decisionId: "decision_fixture",
         walletAddress: "0xabc",
+        sessionAddress: "0xabc",
         txHash: `0x${"b".repeat(64)}`,
         userApproved: true,
+        action: "reduce_exposure",
+        walletNetwork: "GOAT Network",
+        network: "GOAT Network",
+        preparedAt: new Date().toISOString(),
       }),
     }),
   );

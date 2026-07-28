@@ -30,7 +30,7 @@ function clampPercent(percent?: number) {
   return Math.min(100, Math.max(0, percent));
 }
 
-function normalizeAction(action?: string): AgentRecommendedAction {
+export function normalizeAction(action?: string): AgentRecommendedAction {
   if (action === "swap_to_stablecoin") {
     return "swap_to_stable";
   }
