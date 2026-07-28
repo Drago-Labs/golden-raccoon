@@ -1,4 +1,4 @@
-import { createPublicClient, decodeEventLog, http, keccak256, parseAbiItem, recoverTransactionAddress, toFunctionSelector, type Hash, type PublicClient } from "viem";
+import { createPublicClient, decodeEventLog, http, parseAbiItem, recoverTransactionAddress, toFunctionSelector, type Hash, type PublicClient } from "viem";
 import type { ChainFamily } from "@/lib/chainIdentity";
 import { isTransactionHashForChain } from "@/lib/chainIdentity";
 
@@ -193,9 +193,14 @@ export function getEvmChainAdapter(options: EvmAdapterOptions): {
         }
       }
 
-      const expectedSelector = (effect.methodSelector ?? (effect.method ? deriveMethodSelectorFromSignature(effect.method) : undefined))?.toLowerCase();
-      if (expectedSelector && observedSelector && observedSelector !== expectedSelector) {
-        return { matched: false, detail: `${effect.kind} expected method selector ${expectedSelector} (signature: ${effect.method}), observed ${observedSelector}` };
+          const expectedSelector = (effect.methodSelector ?? (effect.method ? deriveMethodSelectorFromSignature(effect.method) : undefined))?.toLowerCase();
+      if (expectedSelector) {
+        if (!observedSelector) {
+          return { matched: false, detail: `${effect.kind} expected method selector ${expectedSelector} but transaction.input is absent or too short` };
+        }
+        if (observedSelector !== expectedSelector) {
+          return { matched: false, detail: `${effect.kind} expected method selector ${expectedSelector} (signature: ${effect.method}), observed ${observedSelector}` };
+        }
       }
 
       if (effect.contractAddress) {
