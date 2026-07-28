@@ -16,6 +16,40 @@ import type {
 } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { validateAgentResult } from "@/server/agents/schema";
+import {
+  getPostgresStorageAdapter,
+  mirrorAlertDeliveryUpdate,
+  mirrorAlertDeliveryWrite,
+  mirrorAlertObservationWrite,
+  mirrorAlertRuleWrite,
+  mirrorAlertUpdate,
+  mirrorAlertWrite,
+} from "@/server/storage/postgresAdapter";
+
+/**
+ * Mirror alert-table writes to Postgres so the SQL contract in
+ * `schema.sql` is actually populated. The in-memory store remains the
+ * synchronous source of truth; mirror failures are surfaced via
+ * `getStorageHealth()` and never block the caller.
+ */
+function mirrorAlertRuleWriteDeferred(input: AlertRule) {
+  mirrorAlertRuleWrite(input);
+}
+function mirrorAlertObservationWriteDeferred(input: AlertObservation) {
+  mirrorAlertObservationWrite(input);
+}
+function mirrorAlertWriteDeferred(input: Alert) {
+  mirrorAlertWrite(input);
+}
+function mirrorAlertDeliveryWriteDeferred(input: AlertDelivery) {
+  mirrorAlertDeliveryWrite(input);
+}
+function mirrorAlertUpdateDeferred(input: Alert) {
+  mirrorAlertUpdate(input);
+}
+function mirrorAlertDeliveryUpdateDeferred(input: AlertDelivery) {
+  mirrorAlertDeliveryUpdate(input);
+}
 
 type CreateAgentRunInput = {
   walletAddress: string;
@@ -188,13 +222,20 @@ export function hashSourceSnapshot(value: unknown) {
 }
 
 export function getStorageHealth(): StorageHealth {
-  const supabaseConfigured = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const adapter = getPostgresStorageAdapter();
+  const snapshot = adapter.getHealthSnapshot();
 
-  if (supabaseConfigured) {
+  if (snapshot.connectionStringPresent) {
+    const detail = snapshot.connected
+      ? `Postgres adapter connected (since ${snapshot.connectedAt}). ${snapshot.mirrorSuccessCount} mirror writes succeeded, ${snapshot.mirrorFailureCount} failed.`
+      : snapshot.pgInstalled
+        ? `Postgres connection string present but adapter has not connected yet (${snapshot.lastError ?? "no attempt yet"}). The in-memory store stays the source of truth at runtime; mirror writes resume once the connection succeeds.`
+        : `Postgres connection string is configured but the \`pg\` client is not installed in this deployment. Run \`npm install pg\` to enable durable persistence; the runtime currently uses the in-memory store and the schema contract is fixed for adapter parity.`;
+
     return {
       provider: "supabase_postgres",
-      persistent: false,
-      detail: "Supabase env vars are configured. The MVP adapter still uses in-memory storage, but the function API and schema contract are fixed for adapter parity.",
+      persistent: snapshot.connected,
+      detail,
       schema: storageSchemaContract,
     };
   }
@@ -202,7 +243,7 @@ export function getStorageHealth(): StorageHealth {
   return {
     provider: "memory",
     persistent: false,
-    detail: "Using in-memory MVP storage. Records reset when the server process restarts.",
+    detail: "Using in-memory MVP storage. Records reset when the server process restarts. Set SUPABASE_DB_URL/POSTGRES_URL/DATABASE_URL plus `pg` to make alert storage durable.",
     schema: storageSchemaContract,
   };
 }
@@ -275,6 +316,7 @@ export function upsertAlertRule(input: AlertRule) {
   } else {
     getAlertRulesStore().unshift(normalized);
   }
+  mirrorAlertRuleWriteDeferred(normalized);
 
   return normalized;
 }
@@ -307,6 +349,7 @@ export function createAlertObservation(input: Omit<AlertObservation, "id" | "cre
   };
 
   getAlertObservationsStore().unshift(observation);
+  mirrorAlertObservationWriteDeferred(observation);
 
   return observation;
 }
@@ -339,6 +382,7 @@ export function createAlert(input: Omit<Alert, "id" | "triggeredAt">) {
   };
 
   getAlertsStore().unshift(alert);
+  mirrorAlertWriteDeferred(alert);
 
   return alert;
 }
@@ -351,6 +395,7 @@ export function updateAlert(id: string, walletAddress: string, patch: Partial<Al
   if (index < 0) return undefined;
 
   store[index] = { ...store[index], ...patch };
+  mirrorAlertUpdateDeferred(store[index]);
 
   return store[index];
 }
@@ -371,6 +416,7 @@ export function createAlertDelivery(input: Omit<AlertDelivery, "id" | "createdAt
   };
 
   getAlertDeliveriesStore().unshift(delivery);
+  mirrorAlertDeliveryWriteDeferred(delivery);
 
   return delivery;
 }
@@ -382,6 +428,7 @@ export function updateAlertDelivery(id: string, walletAddress: string, patch: Pa
   if (index < 0) return undefined;
 
   store[index] = { ...store[index], ...patch };
+  mirrorAlertDeliveryUpdateDeferred(store[index]);
 
   return store[index];
 }

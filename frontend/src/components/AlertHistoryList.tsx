@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, ChevronRight } from "lucide-react";
-import type { Alert, AlertDeliveryChannel, AlertSeverity, AlertStatus } from "@/server/types";
+import { Check, ChevronRight, Link2 } from "lucide-react";
+import type { Alert, AlertSeverity, AlertStatus } from "@/server/types";
 import { useWalletSession } from "@/hooks/useWalletSession";
 
 type EnrichedAlert = Alert & {
@@ -40,13 +40,13 @@ export function AlertHistoryList({ initialData }: { initialData?: AlertResponse 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const walletParam = address ?? "";
-
   useEffect(() => {
-    if (!walletParam) return;
+    if (!address) return;
     const controller = new AbortController();
 
-    fetch(`/api/alerts/alerts?walletAddress=${encodeURIComponent(walletParam)}&limit=200`, { cache: "no-store", signal: controller.signal })
+    // The server uses the cookie-derived wallet; we send no wallet in the
+    // query string so a user can not widen the scope by tampering with the URL.
+    fetch(`/api/alerts/alerts?limit=200`, { cache: "no-store", credentials: "include", signal: controller.signal })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("Failed to load alerts")))
       .then((payload: AlertResponse) => {
         if (!controller.signal.aborted) setData(payload);
@@ -57,7 +57,7 @@ export function AlertHistoryList({ initialData }: { initialData?: AlertResponse 
       });
 
     return () => controller.abort();
-  }, [walletParam]);
+  }, [address]);
 
   async function acknowledge(alertId: string) {
     if (!address) return;
@@ -65,8 +65,8 @@ export function AlertHistoryList({ initialData }: { initialData?: AlertResponse 
     setError(null);
     const response = await fetch(`/api/alerts/alerts/${alertId}/acknowledge`, {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ walletAddress: address }),
     });
     setBusyId(null);
     if (!response.ok) {
@@ -162,39 +162,108 @@ export function AlertHistoryList({ initialData }: { initialData?: AlertResponse 
                 </div>
               </button>
 
-              {isOpen ? (
-                <div className="mt-4 space-y-3 border-t border-white/10 pt-3 text-xs">
-                  <div>
-                    <div className="text-[10px] uppercase tracking-[0.18em] opacity-55">Before / After</div>
-                    <div className="mt-1 grid gap-3 sm:grid-cols-2">
-                      <div>
-                        <div className="font-medium text-white/82">Before</div>
-                        <p className="mt-1 text-white/58">{alert.evidenceBefore.label} · {alert.evidenceBefore.detail}</p>
-                      </div>
-                      <div>
-                        <div className="font-medium text-white/82">After</div>
-                        <p className="mt-1 text-white/58">{alert.evidenceAfter.label} · {alert.evidenceAfter.detail}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <div>
-                      <div className="text-[10px] uppercase tracking-[0.18em] opacity-55">Value</div>
-                      <div className="text-sm font-medium text-white/82">{alert.beforeValue} → {alert.afterValue}</div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] uppercase tracking-[0.18em] opacity-55">Source hash</div>
-                      <div className="text-sm font-mono text-white/72">{alert.evidenceData.sourceSnapshotHashAfter}</div>
-                    </div>
-                  </div>
-                  {alert.deliverySummary ? <DeliverySummary summary={alert.deliverySummary} /> : null}
-                </div>
-              ) : null}
+              {isOpen ? <AlertDetail alert={alert} /> : null}
             </article>
           );
         })}
       </div>
     </section>
+  );
+}
+
+export function AlertDetail({ alert }: { alert: EnrichedAlert }) {
+  const chain = alert.evidenceData.deteriorationObservationIds ?? [];
+
+  return (
+    <div className="mt-4 space-y-3 border-t border-white/10 pt-3 text-xs">
+      <div>
+        <div className="text-[10px] uppercase tracking-[0.18em] opacity-55">Before / After</div>
+        <div className="mt-1 grid gap-3 lg:grid-cols-2">
+          <EvidencePanel
+            eyebrow="Before"
+            observationId={alert.evidenceData.evidenceBeforeObservationId}
+            hash={alert.evidenceData.evidenceBeforeHash}
+            value={alert.beforeValue}
+            evidence={alert.evidenceBefore}
+            accent="emerald"
+          />
+          <EvidencePanel
+            eyebrow="After"
+            observationId={alert.evidenceData.evidenceAfterObservationId}
+            hash={alert.evidenceData.evidenceAfterHash}
+            value={alert.afterValue}
+            evidence={alert.evidenceAfter}
+            accent="amber"
+          />
+        </div>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.18em] opacity-55">Value</div>
+          <div className="text-sm font-medium text-white/82">{alert.beforeValue} → {alert.afterValue}</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.18em] opacity-55">Source snapshot (after)</div>
+          <div className="text-sm font-mono text-white/72">{alert.evidenceData.sourceSnapshotHashAfter}</div>
+          {alert.evidenceData.sourceSnapshotHashBefore ? (
+            <div className="mt-0.5 text-[10px] font-mono text-white/46">before: {alert.evidenceData.sourceSnapshotHashBefore}</div>
+          ) : null}
+        </div>
+      </div>
+
+      {chain.length > 1 ? (
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.18em] opacity-55">Deterioration chain ({chain.length} observations)</div>
+          <ol className="mt-1 space-y-1 text-[11px] font-mono text-white/72">
+            {chain.map((observationId, index) => (
+              <li key={observationId} className="flex items-center gap-2">
+                <span className="rounded-full border border-white/15 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-white/64">step {index + 1}</span>
+                <span className="truncate" title={observationId}>{observationId}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-1 text-[11px] text-white/46">Each step references an immutable observation row in storage; the original before-evidence is never overwritten.</p>
+        </div>
+      ) : null}
+
+      {alert.deliverySummary ? <DeliverySummary summary={alert.deliverySummary} /> : null}
+    </div>
+  );
+}
+
+function EvidencePanel({
+  eyebrow,
+  observationId,
+  hash,
+  value,
+  evidence,
+  accent,
+}: {
+  eyebrow: string;
+  observationId?: string;
+  hash?: string;
+  value: number;
+  evidence: { label?: string; detail?: string; sourceLabels?: string[] };
+  accent: "emerald" | "amber";
+}) {
+  const accentTone = accent === "emerald" ? "text-emerald-200" : "text-[#f2c86d]";
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+      <div className={`text-[10px] uppercase tracking-[0.18em] ${accentTone}`}>{eyebrow}</div>
+      <p className="mt-1 text-white/82">{evidence.label} · {evidence.detail}</p>
+      <div className="mt-2 grid gap-1 text-[10px] text-white/58">
+        <div className="flex items-center gap-1">
+          <Link2 className="h-3 w-3 opacity-60" />
+          <span className="font-mono">{observationId ?? "—"}</span>
+        </div>
+        <div className="font-mono">hash: <span className="text-white/72">{hash ?? "—"}</span></div>
+        <div className="font-mono">value: <span className="text-white/72">{value}</span></div>
+        {evidence.sourceLabels?.length ? (
+          <div className="font-mono">sources: <span className="text-white/72">{evidence.sourceLabels.join(", ")}</span></div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

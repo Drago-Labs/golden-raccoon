@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { checkRateLimitProfile } from "@/server/security/rateLimit";
+import { resolveWalletSession } from "@/server/security/walletSession";
 import { listAlertDeliveries, listAlerts, listAlertObservations, listAlertRules, summarizeDeliveries } from "@/server/storage";
 
 const querySchema = z.object({
+  // Wallet is informational only — the cookie-derived session wallet is
+  // authoritative. The query value is allowed to be present for client
+  // transparency, but must match the session, otherwise the route rejects
+  // the request with 403.
   walletAddress: z.string().min(1).optional(),
   status: z.enum(["triggered", "recovered", "acknowledged"]).optional(),
   limit: z.coerce.number().min(1).max(500).optional(),
@@ -24,7 +29,11 @@ export function GET(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const wallet = parsed.data.walletAddress?.trim().toLowerCase();
+
+  const session = resolveWalletSession(request, { suppliedWallet: parsed.data.walletAddress });
+  if (session.response) return session.response;
+  const wallet = session.wallet!;
+
   const alerts = listAlerts(wallet, parsed.data.status, parsed.data.limit);
   const enriched = alerts.map((alert) => {
     const deliveries = listAlertDeliveries(alert.id, wallet);

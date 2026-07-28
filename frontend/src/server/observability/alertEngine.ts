@@ -19,7 +19,7 @@ import { buildSanitizedAlertPayload } from "@/server/observability/alertSanitize
 import { deliverAlertToChannel } from "@/server/observability/alertDeliveries";
 
 export type AlertEvaluation =
-  | { outcome: "no_match"; reason: "rule_disabled" | "trigger_mismatch" | "key_mismatch" | "wallet_mismatch" | "cooldown" | "dedupe" | "below_threshold" | "no_history"; observation: AlertObservation; rule: AlertRule; previousAlert?: Alert }
+  | { outcome: "no_match"; reason: "rule_disabled" | "trigger_mismatch" | "key_mismatch" | "wallet_mismatch" | "cooldown" | "dedupe" | "below_threshold" | "no_history" | "incomplete_data"; observation: AlertObservation; rule: AlertRule; previousAlert?: Alert }
   | { outcome: "recovered"; observation: AlertObservation; rule: AlertRule; previousAlert: Alert; alert: Alert; deliveries: AlertDelivery[] }
   | { outcome: "deteriorated"; observation: AlertObservation; rule: AlertRule; previousAlert: Alert; alert: Alert }
   | { outcome: "triggered"; observation: AlertObservation; rule: AlertRule; alert: Alert; deliveries: AlertDelivery[] };
@@ -36,6 +36,21 @@ export function ruleAppliesToObservation(
   observation: Pick<AlertObservation, "walletAddress">,
 ): boolean {
   return rule.walletAddress.toLowerCase() === observation.walletAddress.toLowerCase();
+}
+
+/**
+ * Stable 32-bit djb2-style hash for evidence objects. Used to fix the
+ * before/after snapshot in storage so the UI can later attest to immutability.
+ */
+export function hashEvidence(evidence: AlertObservation["evidence"]): string {
+  const payload = JSON.stringify(evidence, Object.keys(evidence).sort());
+  let hash = 5381;
+
+  for (let index = 0; index < payload.length; index += 1) {
+    hash = (hash * 33) ^ payload.charCodeAt(index);
+  }
+
+  return `evh_${(hash >>> 0).toString(16)}`;
 }
 
 /**
@@ -185,7 +200,8 @@ type EngineDecision =
   | "dedupe"
   | "deteriorate"
   | "cooldown"
-  | "trigger";
+  | "trigger"
+  | "incomplete_data";
 
 export type DecisionResult = {
   decision: EngineDecision;
@@ -209,6 +225,17 @@ export function decideObservation(
   if (rule.triggerType !== observation.triggerType) return { decision: "trigger_mismatch", reasoning: "Trigger type mismatch." };
   if (!ruleAppliesToObservation(rule, observation)) return { decision: "wallet_mismatch", reasoning: "Wallet scope mismatch." };
   if (!matchesKey) return { decision: "key_mismatch", reasoning: "Observation key mismatch." };
+
+  // Risk observations derived from agent results with unavailable providers
+  // are tagged `incompleteData: true` at extraction time. Even when their
+  // raw signal crosses a threshold, they must never promote to alerts
+  // because the underlying data is missing. The `rpc_degradation`
+  // observation is the canonical signal for that condition and is the
+  // sole observation allowed to flow through when complete data is
+  // unavailable.
+  if (observation.incompleteData && observation.triggerType !== "rpc_degradation") {
+    return { decision: "incomplete_data", reasoning: "Observation derived from an incomplete result (unavailable provider)." };
+  }
 
   const evaluation = evaluateObservationVsRule(rule, observation);
   const walletAlerts = listAlerts(observation.walletAddress);
@@ -247,6 +274,17 @@ export function decideObservation(
 /**
  * Persist the engine's decision. Updates an active alert (recovery /
  * deterioration) or creates a fresh alert + delivery rows.
+ *
+ * Immutability contract:
+ *  - On trigger: alert is born with `evidenceBefore` from the prior
+ *    observation (or a "no prior" placeholder) and `evidenceAfter` from
+ *    the current observation. Both observation IDs and hashes are stored
+ *    on the alert row.
+ *  - On deterioration: `evidenceBefore` is NEVER overwritten. We append
+ *    the new observation to `deteriorationObservationIds`, refresh only
+ *    the latest snapshot (`evidenceAfter`) so the UI can render the
+ *    current "After" view, and update `afterValue` / hashes.
+ *  - On recovery: status flips to recovered; chain remains intact.
  */
 export function evaluateAndPersistObservation(
   observation: AlertObservation,
@@ -270,6 +308,8 @@ export function evaluateAndPersistObservation(
       return { outcome: "no_match", reason: "dedupe", observation, rule, previousAlert: decision.activeAlert as Alert };
     case "cooldown":
       return { outcome: "no_match", reason: "cooldown", observation, rule, ...(decision.lastResolved ? { previousAlert: decision.lastResolved } : {}) };
+    case "incomplete_data":
+      return { outcome: "no_match", reason: "incomplete_data", observation, rule };
     case "recovered":
     case "deteriorate":
     case "trigger":
@@ -291,16 +331,29 @@ export function evaluateAndPersistObservation(
   }
 
   if (decision.decision === "deteriorate") {
-    const updated = updateAlert(decision.activeAlert!.id, observation.walletAddress, {
+    const previous = decision.activeAlert!;
+    const chain = [...(previous.evidenceData.deteriorationObservationIds ?? [])];
+    if (!chain.includes(observation.id)) chain.push(observation.id);
+    const afterHash = hashEvidence(observation.evidence);
+
+    const updated = updateAlert(previous.id, observation.walletAddress, {
       afterValue: observation.value,
       evidenceAfter: observation.evidence,
+      message: buildAlertMessage(rule, observation, observation.direction),
+      evidenceData: {
+        ...previous.evidenceData,
+        evidenceAfterObservationId: observation.id,
+        sourceSnapshotHashAfter: observation.evidence.sourceSnapshotHash ?? `obs_hash_${observation.id}`,
+        evidenceAfterHash: afterHash,
+        deteriorationObservationIds: chain,
+      },
     });
 
     if (!updated) {
-      return { outcome: "no_match", reason: "dedupe", observation, rule, previousAlert: decision.activeAlert };
+      return { outcome: "no_match", reason: "dedupe", observation, rule, previousAlert: previous };
     }
 
-    return { outcome: "deteriorated", observation, rule, previousAlert: decision.activeAlert!, alert: updated };
+    return { outcome: "deteriorated", observation, rule, previousAlert: previous, alert: updated };
   }
 
   // decision === "trigger": build a fresh alert + fan out deliveries.
@@ -308,6 +361,12 @@ export function evaluateAndPersistObservation(
     (stored) => stored.observationKey === observation.observationKey && stored.id !== observation.id,
   );
   const previousObservation = walletObservations[0];
+  const beforeEvidence = previousObservation
+    ? previousObservation.evidence
+    : { ...observation.evidence, label: "no prior observation", detail: "first trigger" };
+  const beforeObservationId = previousObservation?.id;
+  const beforeHash = previousObservation ? hashEvidence(previousObservation.evidence) : hashEvidence(beforeEvidence);
+  const afterHash = hashEvidence(observation.evidence);
   const alert = createAlert({
     walletAddress: observation.walletAddress,
     ruleId: rule.id,
@@ -318,15 +377,18 @@ export function evaluateAndPersistObservation(
     message: buildAlertMessage(rule, observation, observation.direction),
     beforeValue: previousObservation?.value ?? observation.value,
     afterValue: observation.value,
-    evidenceBefore: previousObservation
-      ? previousObservation.evidence
-      : { ...observation.evidence, label: "no prior observation", detail: "first trigger" },
+    evidenceBefore: beforeEvidence,
     evidenceAfter: observation.evidence,
     evidenceData: {
       runId: observation.evidence.runId,
       observationId: observation.id,
+      evidenceBeforeObservationId: beforeObservationId,
+      evidenceAfterObservationId: observation.id,
       sourceSnapshotHashAfter: observation.evidence.sourceSnapshotHash ?? `obs_hash_${observation.id}`,
       ...(previousObservation?.evidence.sourceSnapshotHash ? { sourceSnapshotHashBefore: previousObservation.evidence.sourceSnapshotHash } : {}),
+      evidenceBeforeHash: beforeHash,
+      evidenceAfterHash: afterHash,
+      deteriorationObservationIds: [observation.id],
     },
   });
   const deliveries = fanOutDeliveries(alert, observation);

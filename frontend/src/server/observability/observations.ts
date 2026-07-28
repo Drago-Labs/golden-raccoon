@@ -64,12 +64,21 @@ function getSourceLabels(result: AgentResult) {
   return result.sources.map((source) => source.label);
 }
 
+function getUnavailableLabels(result: AgentResult): string[] {
+  return result.sources.filter((source) => source.status === "unavailable").map((source) => source.label);
+}
+
+function isResultIncomplete(result: AgentResult): boolean {
+  return result.sources.some((source) => source.status === "unavailable");
+}
+
 function buildObservation(input: {
   walletAddress: string;
   triggerType: AlertTriggerType;
   observationKey: string;
   value: number;
   evidence: AlertObservation["evidence"];
+  incompleteData?: boolean;
 }): AlertObservation {
   return {
     id: `obs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
@@ -80,6 +89,7 @@ function buildObservation(input: {
     direction: triggerDirection[input.triggerType],
     evidence: input.evidence,
     createdAt: new Date().toISOString(),
+    incompleteData: input.incompleteData,
   };
 }
 
@@ -87,8 +97,39 @@ function extractOnchainObservation(run: AgentRunRecord, result: AgentResult, key
   const observations: AlertObservation[] = [];
   const raw = getRawSignals(result);
   const sources = result.sources;
+  const unavailableLabels = getUnavailableLabels(result);
+  const incomplete = isResultIncomplete(result);
 
-  // Critical risk: any critical finding.
+  // Provider degradation continues to fire even on otherwise complete
+  // results (since the engine needs a dedicated signal that the upstream
+  // source is failing). Risk observations derived from an incomplete
+  // result must NOT promote to alerts; this stops missing data from
+  // producing phantom risk-change alerts in the engine.
+  if (unavailableLabels.length > 0) {
+    observations.push(
+      buildObservation({
+        walletAddress: run.walletAddress,
+        triggerType: "rpc_degradation",
+        observationKey: `${key}:degradation`,
+        value: unavailableLabels.length,
+        evidence: {
+          runId: run.id,
+          agent: result.agent,
+          label: "Provider unavailable for onchain check",
+          detail: unavailableLabels.join(", "),
+          sourceLabels: unavailableLabels,
+          meta: { unavailableCount: unavailableLabels.length, totalSources: sources.length },
+        },
+      }),
+    );
+
+    if (incomplete) {
+      // Refuse to emit risk observations for incomplete results.
+      return observations;
+    }
+  }
+
+  // Critical risk: any critical finding (only when not data-incomplete).
   if (getCriticalCount(result) > 0) {
     observations.push(
       buildObservation({
@@ -112,7 +153,7 @@ function extractOnchainObservation(run: AgentRunRecord, result: AgentResult, key
 
   // Liquidity drop: an observable, low liquidity value.
   const market = raw.market as { bestPair?: { liquidityUsd?: number }; pairCount?: number } | undefined;
-  const liquidityUsd = getNumberField(market?.bestPair ?? {}, "liquidityUsd") ?? (typeof market?.pairCount === "number" ? undefined : undefined);
+  const liquidityUsd = getNumberField(market?.bestPair ?? {}, "liquidityUsd");
 
   if (typeof liquidityUsd === "number") {
     observations.push(
@@ -128,28 +169,6 @@ function extractOnchainObservation(run: AgentRunRecord, result: AgentResult, key
           detail: `Best pair liquidity is $${Math.round(liquidityUsd).toLocaleString("en-US")}.`,
           sourceLabels: getSourceLabels(result),
           meta: { liquidityUsd, pairCount: market?.pairCount ?? 0 },
-        },
-      }),
-    );
-  }
-
-  // RPC degradation: any unavailable source prevents evaluating risk changes for that agent.
-  const unavailableSources = sources.filter((source) => source.status === "unavailable");
-
-  if (unavailableSources.length > 0) {
-    observations.push(
-      buildObservation({
-        walletAddress: run.walletAddress,
-        triggerType: "rpc_degradation",
-        observationKey: `${key}:degradation`,
-        value: unavailableSources.length,
-        evidence: {
-          runId: run.id,
-          agent: result.agent,
-          label: "Provider unavailable for onchain check",
-          detail: unavailableSources.map((source) => source.label).join(", "),
-          sourceLabels: unavailableSources.map((source) => source.label),
-          meta: { unavailableCount: unavailableSources.length, totalSources: sources.length },
         },
       }),
     );
@@ -210,6 +229,29 @@ function extractOnchainObservation(run: AgentRunRecord, result: AgentResult, key
 function extractSocialObservation(run: AgentRunRecord, result: AgentResult, key: string): AlertObservation[] {
   const observations: AlertObservation[] = [];
   const raw = getRawSignals(result);
+  const unavailableLabels = getUnavailableLabels(result);
+  const incomplete = isResultIncomplete(result);
+
+  if (unavailableLabels.length > 0) {
+    observations.push(
+      buildObservation({
+        walletAddress: run.walletAddress,
+        triggerType: "rpc_degradation",
+        observationKey: `${key}:degradation`,
+        value: unavailableLabels.length,
+        evidence: {
+          runId: run.id,
+          agent: result.agent,
+          label: "Social provider unavailable",
+          detail: `Unavailable sources: ${unavailableLabels.join(", ")}.`,
+          sourceLabels: unavailableLabels,
+          meta: { unavailableCount: unavailableLabels.length, totalSources: result.sources.length },
+        },
+      }),
+    );
+
+    if (incomplete) return observations;
+  }
 
   // Phishing detected: critical phishing finding with risky links.
   const phishingCritical = result.findings.some(
@@ -237,32 +279,7 @@ function extractSocialObservation(run: AgentRunRecord, result: AgentResult, key:
     );
   }
 
-  // Provider degradation (folded into rpc_degradation for high-level triggers).
-  const unavailableCount = result.sources.filter((source) => source.status === "unavailable").length;
-
-  if (unavailableCount > 0) {
-    observations.push(
-      buildObservation({
-        walletAddress: run.walletAddress,
-        triggerType: "rpc_degradation",
-        observationKey: `${key}:degradation`,
-        value: unavailableCount,
-        evidence: {
-          runId: run.id,
-          agent: result.agent,
-          label: "Social provider unavailable",
-          detail: `Unavailable sources: ${result.sources
-            .filter((source) => source.status === "unavailable")
-            .map((source) => source.label)
-            .join(", ")}.`,
-          sourceLabels: result.sources.filter((source) => source.status === "unavailable").map((source) => source.label),
-          meta: { unavailableCount, totalSources: result.sources.length },
-        },
-      }),
-    );
-  }
-
-  // Identity confidence collapse is treated as low_is_bad social trust only when risk is high.
+  // Identity confidence collapse is treated as critical_risk only when risk is high.
   if (result.riskScore >= 75) {
     observations.push(
       buildObservation({
@@ -290,6 +307,29 @@ function extractNewsObservation(run: AgentRunRecord, result: AgentResult, key: s
   const observations: AlertObservation[] = [];
   const raw = getRawSignals(result);
   const negativeCatalysts = raw.negativeCatalysts;
+  const unavailableLabels = getUnavailableLabels(result);
+  const incomplete = isResultIncomplete(result);
+
+  if (unavailableLabels.length > 0) {
+    observations.push(
+      buildObservation({
+        walletAddress: run.walletAddress,
+        triggerType: "rpc_degradation",
+        observationKey: `${key}:degradation`,
+        value: unavailableLabels.length,
+        evidence: {
+          runId: run.id,
+          agent: result.agent,
+          label: "News provider unavailable",
+          detail: unavailableLabels.join(", "),
+          sourceLabels: unavailableLabels,
+          meta: { unavailableCount: unavailableLabels.length, totalSources: result.sources.length },
+        },
+      }),
+    );
+
+    if (incomplete) return observations;
+  }
 
   if (Array.isArray(negativeCatalysts) && negativeCatalysts.length > 0) {
     const exploit = negativeCatalysts.filter((event: { type?: string; severity?: string }) => event.type === "exploit_news" || event.severity === "critical" || event.severity === "high");
@@ -314,30 +354,6 @@ function extractNewsObservation(run: AgentRunRecord, result: AgentResult, key: s
     }
   }
 
-  const unavailableCount = result.sources.filter((source) => source.status === "unavailable").length;
-
-  if (unavailableCount > 0) {
-    observations.push(
-      buildObservation({
-        walletAddress: run.walletAddress,
-        triggerType: "rpc_degradation",
-        observationKey: `${key}:degradation`,
-        value: unavailableCount,
-        evidence: {
-          runId: run.id,
-          agent: result.agent,
-          label: "News provider unavailable",
-          detail: result.sources
-            .filter((source) => source.status === "unavailable")
-            .map((source) => source.label)
-            .join(", "),
-          sourceLabels: result.sources.filter((source) => source.status === "unavailable").map((source) => source.label),
-          meta: { unavailableCount, totalSources: result.sources.length },
-        },
-      }),
-    );
-  }
-
   return observations;
 }
 
@@ -351,6 +367,29 @@ function extractPortfolioObservation(run: AgentRunRecord, result: AgentResult): 
         stableReservePercent?: number;
       }
     | undefined;
+  const unavailableLabels = getUnavailableLabels(result);
+  const incomplete = isResultIncomplete(result);
+
+  if (unavailableLabels.length > 0) {
+    observations.push(
+      buildObservation({
+        walletAddress: run.walletAddress,
+        triggerType: "rpc_degradation",
+        observationKey: `portfolio:degradation`,
+        value: unavailableLabels.length,
+        evidence: {
+          runId: run.id,
+          agent: result.agent,
+          label: "Portfolio provider unavailable",
+          detail: unavailableLabels.join(", "),
+          sourceLabels: unavailableLabels,
+          meta: { unavailableCount: unavailableLabels.length, totalSources: result.sources.length },
+        },
+      }),
+    );
+
+    if (incomplete) return observations;
+  }
 
   if (portfolioRisk) {
     const key = "portfolio";
@@ -393,36 +432,20 @@ function extractPortfolioObservation(run: AgentRunRecord, result: AgentResult): 
     }
   }
 
-  const unavailableCount = result.sources.filter((source) => source.status === "unavailable").length;
-
-  if (unavailableCount > 0) {
-    observations.push(
-      buildObservation({
-        walletAddress: run.walletAddress,
-        triggerType: "rpc_degradation",
-        observationKey: `portfolio:degradation`,
-        value: unavailableCount,
-        evidence: {
-          runId: run.id,
-          agent: result.agent,
-          label: "Portfolio provider unavailable",
-          detail: result.sources
-            .filter((source) => source.status === "unavailable")
-            .map((source) => source.label)
-            .join(", "),
-          sourceLabels: result.sources.filter((source) => source.status === "unavailable").map((source) => source.label),
-          meta: { unavailableCount, totalSources: result.sources.length },
-        },
-      }),
-    );
-  }
-
   return observations;
 }
 
 function extractStellarObservation(run: AgentRunRecord, result: AgentResult, key: string): AlertObservation[] {
   const observations: AlertObservation[] = [];
   const raw = getRawSignals(result);
+  const incomplete = isResultIncomplete(result);
+
+  if (incomplete) {
+    // Stellar-specific risk observations are also suppressed when the
+    // underlying result has unavailable providers. The rpc_degradation
+    // observation flows from the onchain extractor above.
+    return observations;
+  }
 
   const issuerControls = raw.issuerControls as
     | {

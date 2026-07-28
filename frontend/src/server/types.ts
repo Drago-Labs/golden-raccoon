@@ -636,6 +636,13 @@ export type AlertObservation = {
     meta?: Record<string, string | number | boolean | null | undefined>;
   };
   createdAt: string;
+  /**
+   * True when the observation was extracted from an AgentResult that had at
+   * least one unavailable source. Incomplete observations are intentionally
+   * excluded from risk-change alerts at extraction time so a degraded
+   * provider cannot generate phantom alerts.
+   */
+  incompleteData?: boolean;
 };
 
 export type Alert = {
@@ -649,6 +656,12 @@ export type Alert = {
   message: string;
   beforeValue: number;
   afterValue: number;
+  /**
+   * Immutable evidence captured at trigger time. NEVER overwritten once the
+   * alert is created — subsequent deterioration events extend the chain in
+   * `deteriorationObservationIds` and refresh only the latest-at-time field
+   * (`evidenceAfter`) with a snapshot from the new observation.
+   */
   evidenceBefore: AlertObservation["evidence"];
   evidenceAfter: AlertObservation["evidence"];
   evidenceData: {
@@ -656,6 +669,11 @@ export type Alert = {
     observationId: string;
     sourceSnapshotHashAfter: string;
     sourceSnapshotHashBefore?: string;
+    evidenceBeforeObservationId?: string;
+    evidenceAfterObservationId: string;
+    evidenceBeforeHash?: string;
+    evidenceAfterHash: string;
+    deteriorationObservationIds: string[];
   };
   triggeredAt: string;
   recoveredAt?: string;

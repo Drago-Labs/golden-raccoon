@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { checkRateLimitProfile } from "@/server/security/rateLimit";
+import { resolveWalletSession } from "@/server/security/walletSession";
 import { listAlertDeliveries } from "@/server/storage";
 
 const querySchema = z.object({
@@ -21,7 +22,13 @@ export function GET(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const wallet = parsed.data.walletAddress?.trim().toLowerCase();
 
-  return withCacheHeaders(NextResponse.json(listAlertDeliveries(parsed.data.alertId, wallet)), "alerts");
+  const session = resolveWalletSession(request, { suppliedWallet: parsed.data.walletAddress });
+  if (session.response) return session.response;
+  const wallet = session.wallet!;
+
+  return withCacheHeaders(
+    NextResponse.json(listAlertDeliveries(parsed.data.alertId, wallet)),
+    "alerts",
+  );
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { checkRateLimitProfile } from "@/server/security/rateLimit";
+import { resolveWalletSession } from "@/server/security/walletSession";
 import { deleteAlertRule, getAlertRule, listAlertRules, upsertAlertRule } from "@/server/storage";
 import { ensureDefaultRulesForWallet } from "@/server/observability/alertIngestion";
 
@@ -25,6 +26,8 @@ const severitySchema = z.enum(["low", "medium", "high", "critical"]);
 const directionSchema = z.enum(["high_is_bad", "low_is_bad"]).optional();
 
 const ruleSchema = z.object({
+  // The session wallet is authoritative; the body field is validated for
+  // shape only and must match the session wallet on its own.
   walletAddress: z.string().min(1),
   triggerType: triggerTypeSchema,
   observationKey: z.string().min(1).max(160).optional(),
@@ -36,20 +39,23 @@ const ruleSchema = z.object({
   enabled: z.boolean().default(true),
 });
 
-function normalizeWallet(request: NextRequest | Request, bodyWallet?: string): string | undefined {
-  const wallet = bodyWallet ?? new URL(request.url).searchParams.get("walletAddress") ?? undefined;
-
-  return wallet?.trim().toLowerCase() || undefined;
-}
-
 export function GET(request: NextRequest) {
   const rateLimited = checkRateLimitProfile(request, "alertRead");
   if (rateLimited) return rateLimited;
 
-  const wallet = normalizeWallet(request);
-  if (wallet) ensureDefaultRulesForWallet(wallet);
+  const url = new URL(request.url);
+  const session = resolveWalletSession(request, {
+    suppliedWallet: url.searchParams.get("walletAddress"),
+  });
+  if (session.response) return session.response;
+  const wallet = session.wallet!;
 
-  return withCacheHeaders(NextResponse.json(listAlertRules(wallet)), "alertRules");
+  ensureDefaultRulesForWallet(wallet);
+
+  return withCacheHeaders(
+    NextResponse.json(listAlertRules(wallet)),
+    "alertRules",
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -62,9 +68,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const wallet = parsed.data.walletAddress.trim().toLowerCase();
+  const session = resolveWalletSession(request, { suppliedWallet: parsed.data.walletAddress });
+  if (session.response) return session.response;
+  const wallet = session.wallet!;
+
   ensureDefaultRulesForWallet(wallet);
-  const existingForKey = wallet && parsed.data.observationKey
+  const existingForKey = parsed.data.observationKey
     ? listAlertRules(wallet).find(
         (rule) => rule.triggerType === parsed.data.triggerType && rule.observationKey === parsed.data.observationKey,
       )
@@ -93,7 +102,11 @@ export async function DELETE(request: NextRequest) {
 
   const url = new URL(request.url);
   const id = url.searchParams.get("id");
-  const wallet = normalizeWallet(request, url.searchParams.get("walletAddress") ?? undefined);
+  const session = resolveWalletSession(request, {
+    suppliedWallet: url.searchParams.get("walletAddress"),
+  });
+  if (session.response) return session.response;
+  const wallet = session.wallet!;
 
   if (!id) {
     return NextResponse.json({ error: "id query parameter is required" }, { status: 400 });
@@ -103,9 +116,12 @@ export async function DELETE(request: NextRequest) {
   if (!rule) {
     return NextResponse.json({ error: "rule not found" }, { status: 404 });
   }
-  if (wallet && rule.walletAddress !== wallet) {
+  if (rule.walletAddress !== wallet) {
     return NextResponse.json({ error: "rule does not belong to this wallet" }, { status: 403 });
   }
 
-  return withCacheHeaders(NextResponse.json({ deleted: deleteAlertRule(id, wallet) }), "alertRules");
+  return withCacheHeaders(
+    NextResponse.json({ deleted: deleteAlertRule(id, wallet) }),
+    "alertRules",
+  );
 }

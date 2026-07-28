@@ -3,6 +3,10 @@
 -- MVP can apply the schema in one clean migration.
 
 create extension if not exists pgcrypto;
+-- pgcrypto is preserved for backwards compatibility with deployments that
+-- still hold legacy uuid alert tables; the active alert schema now uses
+-- text primary keys so that string ids minted by the storage layer
+-- (e.g. "alert_…") mirror directly without an implicit cast.
 
 create table if not exists wallets (
   id uuid primary key default gen_random_uuid(),
@@ -169,13 +173,55 @@ create index if not exists transactions_wallet_created_idx on transactions(walle
 create index if not exists approvals_wallet_created_idx on approvals(wallet_address, created_at desc);
 create index if not exists x402_payment_receipts_resource_created_idx on x402_payment_receipts(protected_resource, created_at desc);
 
+-- Idempotent migration for the V3 alert engine. The original schema
+-- declared alert_*.id as `uuid primary key default gen_random_uuid()`,
+-- but the storage layer mints prefixed string ids (`alert_…`, `rule_…`)
+-- for portability with downstream in-memory + Postgres parity. Existing
+-- deployments created under the previous contract therefore need their
+-- primary keys and the rule_id / alert_id reference columns widened
+-- from `uuid` to `text` so the new mirror INSERTs succeed. The blocks
+-- below are no-ops on a fresh deployment that already declares the
+-- tables with text columns, because Postgres treats `text` and
+-- `varchar` as already widened.
+do $$
+begin
+  begin
+    alter table alert_rules alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table alert_observations alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table alerts alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table alerts alter column rule_id type text using rule_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table alert_deliveries alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table alert_deliveries alter column alert_id type text using alert_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table alert_observations add column if not exists incomplete_data boolean default false;
+  exception when others then null;
+  end;
+end $$;
+
 -- V3 alert engine contract.
 -- alert_rules: durable, scope-bound (wallet_address) alert definitions.
 -- alert_observations: append-only typed signal observations extracted from agent runs.
 -- alerts: persisted trigger/recovery lifecycle bound to a rule.
 -- alert_deliveries: fan-out audit row per channel per alert (in_app, email, telegram, discord).
 create table if not exists alert_rules (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key,
   wallet_address text not null,
   trigger_type text not null check (trigger_type in (
     'critical_risk',
@@ -204,20 +250,21 @@ create table if not exists alert_rules (
 );
 
 create table if not exists alert_observations (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key,
   wallet_address text not null,
   trigger_type text not null,
   observation_key text not null,
   value numeric not null,
   direction text not null check (direction in ('high_is_bad', 'low_is_bad')),
   evidence jsonb not null default '{}'::jsonb,
+  incomplete_data boolean default false,
   created_at timestamptz not null default now()
 );
 
 create table if not exists alerts (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key,
   wallet_address text not null,
-  rule_id uuid not null references alert_rules(id) on delete cascade,
+  rule_id text not null references alert_rules(id) on delete cascade,
   trigger_type text not null,
   observation_key text not null,
   status text not null check (status in ('triggered', 'recovered', 'acknowledged')),
@@ -235,8 +282,8 @@ create table if not exists alerts (
 );
 
 create table if not exists alert_deliveries (
-  id uuid primary key default gen_random_uuid(),
-  alert_id uuid not null references alerts(id) on delete cascade,
+  id text primary key,
+  alert_id text not null references alerts(id) on delete cascade,
   wallet_address text not null,
   channel text not null check (channel in ('in_app', 'email', 'telegram', 'discord')),
   status text not null check (status in ('pending', 'delivered', 'failed', 'skipped')),

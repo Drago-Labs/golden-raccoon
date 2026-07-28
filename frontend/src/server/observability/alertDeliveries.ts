@@ -12,12 +12,27 @@ export type DeliveryResult = {
  * Single entry point that the alert engine fans out to. Each channel has
  * its own adapter; all adapters must return a DeliveryResult so the engine
  * can persist the audit row.
+ *
+ * Test/chaos hook: `ALERT_FORCE_FAIL_CHANNELS=email,discord` flips the
+ * matching channels to a deterministic "failed" result so the failure path
+ * of the alert engine can be exercised in fixtures and staging.
  */
 export function deliverAlertToChannel(
   channel: AlertDeliveryChannel,
   payload: AlertDelivery["sanitizedPayload"],
   alert: Pick<Alert, "walletAddress" | "triggerType" | "severity">,
 ): DeliveryResult {
+  const forcedFailures = getForcedFailureChannels();
+
+  if (forcedFailures.has(channel)) {
+    return {
+      status: "failed",
+      channel,
+      errorDetail: "ALERT_FORCE_FAIL_CHANNELS override forced this channel to fail.",
+      attemptCount: 1,
+    };
+  }
+
   switch (channel) {
     case "in_app":
       return deliverInApp(payload, alert);
@@ -30,6 +45,21 @@ export function deliverAlertToChannel(
     default:
       return { status: "skipped", channel, errorDetail: "unknown channel" };
   }
+}
+
+function getForcedFailureChannels(): Set<AlertDeliveryChannel> {
+  const raw = process.env.ALERT_FORCE_FAIL_CHANNELS;
+  if (!raw) return new Set();
+  const out = new Set<AlertDeliveryChannel>();
+
+  for (const piece of raw.split(",")) {
+    const trimmed = piece.trim().toLowerCase();
+    if (trimmed === "in_app" || trimmed === "email" || trimmed === "telegram" || trimmed === "discord") {
+      out.add(trimmed);
+    }
+  }
+
+  return out;
 }
 
 function deliverInApp(_payload: AlertDelivery["sanitizedPayload"], _alert: Pick<Alert, "walletAddress" | "triggerType" | "severity">): DeliveryResult {
