@@ -1,6 +1,11 @@
 import type {
   AgentResult,
   AgentRunRecord,
+  Alert,
+  AlertDelivery,
+  AlertDeliveryChannel,
+  AlertObservation,
+  AlertRule,
   RecommendationRecord,
   StorageCounts,
   StorageHealth,
@@ -33,6 +38,10 @@ export const storageSchemaContract = {
     "x402_payment_receipts",
     "token_identities",
     "source_snapshots",
+    "alert_rules",
+    "alert_observations",
+    "alerts",
+    "alert_deliveries",
   ],
   adapterApi: [
     "listAgentRunRecords",
@@ -49,6 +58,20 @@ export const storageSchemaContract = {
     "createX402PaymentReceipt",
     "getUserRuleRecord",
     "upsertUserRuleRecord",
+    "listAlertRules",
+    "getAlertRule",
+    "upsertAlertRule",
+    "deleteAlertRule",
+    "listAlertObservations",
+    "createAlertObservation",
+    "listAlerts",
+    "getAlert",
+    "createAlert",
+    "updateAlert",
+    "listAlertDeliveries",
+    "createAlertDelivery",
+    "updateAlertDelivery",
+    "ensureAlertRulesForWallet",
   ],
   migration: "frontend/src/server/storage/schema.sql",
 };
@@ -60,6 +83,10 @@ const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonApprovals?: UserApprovalRecord[];
   __goldenRaccoonUserRules?: UserRule[];
   __goldenRaccoonX402PaymentReceipts?: X402PaymentReceipt[];
+  __goldenRaccoonAlertRules?: AlertRule[];
+  __goldenRaccoonAlertObservations?: AlertObservation[];
+  __goldenRaccoonAlerts?: Alert[];
+  __goldenRaccoonAlertDeliveries?: AlertDelivery[];
 };
 
 function getAgentRuns() {
@@ -98,12 +125,40 @@ function getX402PaymentReceipts() {
   return memoryStore.__goldenRaccoonX402PaymentReceipts;
 }
 
+function getAlertRulesStore() {
+  memoryStore.__goldenRaccoonAlertRules ??= [];
+
+  return memoryStore.__goldenRaccoonAlertRules;
+}
+
+function getAlertObservationsStore() {
+  memoryStore.__goldenRaccoonAlertObservations ??= [];
+
+  return memoryStore.__goldenRaccoonAlertObservations;
+}
+
+function getAlertsStore() {
+  memoryStore.__goldenRaccoonAlerts ??= [];
+
+  return memoryStore.__goldenRaccoonAlerts;
+}
+
+function getAlertDeliveriesStore() {
+  memoryStore.__goldenRaccoonAlertDeliveries ??= [];
+
+  return memoryStore.__goldenRaccoonAlertDeliveries;
+}
+
 function createId() {
   return `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function createRecordId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createAlertId() {
+  return `alert_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function stableStringify(value: unknown): string {
@@ -149,6 +204,209 @@ export function getStorageHealth(): StorageHealth {
     persistent: false,
     detail: "Using in-memory MVP storage. Records reset when the server process restarts.",
     schema: storageSchemaContract,
+  };
+}
+
+export function getStorageCounts(): StorageCounts {
+  return {
+    agentRuns: getAgentRuns().length,
+    recommendations: getRecommendations().length,
+    transactions: getTransactions().length,
+    approvals: getApprovals().length,
+    userRules: getUserRules().length,
+    x402PaymentReceipts: getX402PaymentReceipts().length,
+    alertRules: getAlertRulesStore().length,
+    alertObservations: getAlertObservationsStore().length,
+    alerts: getAlertsStore().length,
+    alertDeliveries: getAlertDeliveriesStore().length,
+  };
+}
+
+function normalizeWallet(walletAddress?: string | null): string | undefined {
+  return walletAddress?.trim().toLowerCase() || undefined;
+}
+
+function withNormalizedWallet<T extends { walletAddress: string }>(walletAddress?: string) {
+  const normalized = normalizeWallet(walletAddress);
+
+  return (record: T) => !normalized || record.walletAddress === normalized;
+}
+
+// ---------------- Alert Engine Storage ----------------
+
+export function ensureAlertRulesForWallet(walletAddress?: string) {
+  const normalized = normalizeWallet(walletAddress);
+
+  if (!normalized) return [];
+
+  return [...ensureAlertRulesForWalletRaw().filter((rule) => rule.walletAddress === normalized)];
+}
+
+function ensureAlertRulesForWalletRaw() {
+  // The store holds every wallet's rules. Filters are applied on read.
+  return getAlertRulesStore();
+}
+
+export function listAlertRules(walletAddress?: string) {
+  return [...getAlertRulesStore()]
+    .filter(withNormalizedWallet(walletAddress))
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+export function getAlertRule(id: string) {
+  return getAlertRulesStore().find((rule) => rule.id === id);
+}
+
+export function upsertAlertRule(input: AlertRule) {
+  const now = new Date().toISOString();
+  const normalized: AlertRule = {
+    ...input,
+    observationKey: input.observationKey?.trim() || undefined,
+    hysteresis: Number.isFinite(input.hysteresis) ? Math.max(0, input.hysteresis) : 0,
+    cooldownMinutes: Number.isFinite(input.cooldownMinutes) ? Math.max(0, Math.round(input.cooldownMinutes)) : 60,
+    updatedAt: now,
+    createdAt: input.createdAt ?? now,
+    walletAddress: input.walletAddress.trim().toLowerCase(),
+  };
+  const existingIndex = getAlertRulesStore().findIndex((rule) => rule.id === normalized.id && rule.walletAddress === normalized.walletAddress);
+
+  if (existingIndex >= 0) {
+    getAlertRulesStore()[existingIndex] = normalized;
+  } else {
+    getAlertRulesStore().unshift(normalized);
+  }
+
+  return normalized;
+}
+
+export function deleteAlertRule(id: string, walletAddress?: string) {
+  const store = getAlertRulesStore();
+  const normalized = normalizeWallet(walletAddress);
+  const targetIndex = store.findIndex((rule) => rule.id === id && (!normalized || rule.walletAddress === normalized));
+
+  if (targetIndex < 0) return false;
+
+  store.splice(targetIndex, 1);
+
+  return true;
+}
+
+export function listAlertObservations(walletAddress?: string, limit = 200) {
+  return [...getAlertObservationsStore()]
+    .filter(withNormalizedWallet(walletAddress))
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, limit);
+}
+
+export function createAlertObservation(input: Omit<AlertObservation, "id" | "createdAt">) {
+  const observation: AlertObservation = {
+    id: createRecordId("obs"),
+    createdAt: new Date().toISOString(),
+    ...input,
+    walletAddress: input.walletAddress.trim().toLowerCase(),
+  };
+
+  getAlertObservationsStore().unshift(observation);
+
+  return observation;
+}
+
+export function listAlerts(walletAddress?: string, status?: Alert["status"], limit = 200) {
+  const normalizedWallet = normalizeWallet(walletAddress);
+
+  return [...getAlertsStore()]
+    .filter((alert) => !normalizedWallet || alert.walletAddress === normalizedWallet)
+    .filter((alert) => !status || alert.status === status)
+    .sort((left, right) => new Date(right.triggeredAt).getTime() - new Date(left.triggeredAt).getTime())
+    .slice(0, limit);
+}
+
+export function getAlert(id: string, walletAddress?: string) {
+  const alert = getAlertsStore().find((record) => record.id === id);
+
+  if (!alert) return undefined;
+  if (walletAddress && alert.walletAddress !== normalizeWallet(walletAddress)) return undefined;
+
+  return alert;
+}
+
+export function createAlert(input: Omit<Alert, "id" | "triggeredAt">) {
+  const alert: Alert = {
+    id: createAlertId(),
+    triggeredAt: new Date().toISOString(),
+    ...input,
+    walletAddress: input.walletAddress.trim().toLowerCase(),
+  };
+
+  getAlertsStore().unshift(alert);
+
+  return alert;
+}
+
+export function updateAlert(id: string, walletAddress: string, patch: Partial<Alert>) {
+  const store = getAlertsStore();
+  const normalized = normalizeWallet(walletAddress);
+  const index = store.findIndex((record) => record.id === id && record.walletAddress === normalized);
+
+  if (index < 0) return undefined;
+
+  store[index] = { ...store[index], ...patch };
+
+  return store[index];
+}
+
+export function listAlertDeliveries(alertId?: string, walletAddress?: string) {
+  return [...getAlertDeliveriesStore()]
+    .filter((delivery) => !alertId || delivery.alertId === alertId)
+    .filter(withNormalizedWallet(walletAddress))
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+export function createAlertDelivery(input: Omit<AlertDelivery, "id" | "createdAt">) {
+  const delivery: AlertDelivery = {
+    id: createRecordId("delivery"),
+    createdAt: new Date().toISOString(),
+    ...input,
+    walletAddress: input.walletAddress.trim().toLowerCase(),
+  };
+
+  getAlertDeliveriesStore().unshift(delivery);
+
+  return delivery;
+}
+
+export function updateAlertDelivery(id: string, walletAddress: string, patch: Partial<AlertDelivery>) {
+  const store = getAlertDeliveriesStore();
+  const index = store.findIndex((record) => record.id === id && record.walletAddress === walletAddress.toLowerCase());
+
+  if (index < 0) return undefined;
+
+  store[index] = { ...store[index], ...patch };
+
+  return store[index];
+}
+
+export function summarizeDeliveries(deliveries: AlertDelivery[]) {
+  const deliverableByChannel: Record<AlertDeliveryChannel, string> = {
+    in_app: "delivered",
+    email: "no_env",
+    telegram: "no_env",
+    discord: "no_env",
+  };
+
+  return {
+    delivered: deliveries.filter((delivery) => delivery.status === "delivered").map((delivery) => delivery.channel),
+    failed: deliveries
+      .filter((delivery) => delivery.status === "failed")
+      .map((delivery) => ({ channel: delivery.channel, error: delivery.errorDetail ?? "delivery failed" })),
+    skipped: [
+      ...deliveries
+        .filter((delivery) => delivery.status === "skipped")
+        .map((delivery) => ({ channel: delivery.channel, reason: delivery.errorDetail ?? "skipped" })),
+      ...(["in_app", "email", "telegram", "discord"] as AlertDeliveryChannel[])
+        .filter((channel) => !deliveries.some((delivery) => delivery.channel === channel))
+        .map((channel) => ({ channel, reason: deliverableByChannel[channel] === "delivered" ? "in-app inbox is always available" : "delivery channel is not configured" })),
+    ],
   };
 }
 
@@ -336,7 +594,7 @@ export function getX402PaymentReceiptByHeaderHash(paymentHeaderHash: string) {
 }
 
 export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string }) {
-  const existing = getX402PaymentReceiptByHeaderHash(input.paymentHeaderHash);
+  const existing =  getX402PaymentReceiptByHeaderHash(input.paymentHeaderHash);
 
   if (existing) {
     return {
@@ -357,15 +615,4 @@ export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | 
   getX402PaymentReceipts().unshift(record);
 
   return record;
-}
-
-export function getStorageCounts(): StorageCounts {
-  return {
-    agentRuns: getAgentRuns().length,
-    recommendations: getRecommendations().length,
-    transactions: getTransactions().length,
-    approvals: getApprovals().length,
-    userRules: getUserRules().length,
-    x402PaymentReceipts: getX402PaymentReceipts().length,
-  };
 }
