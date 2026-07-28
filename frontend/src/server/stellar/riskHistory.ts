@@ -2,7 +2,6 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import type { StellarNetworkId } from "@/lib/stellar/config";
-import type { RiskRegistryPublication } from "@/server/stellar/riskRegistry";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -150,8 +149,8 @@ export async function publishWithConfirm(
   record: RiskPublicationRecord;
 }> {
   const { getRiskPublicationPreview } = await import("./riskPreview");
-  const { prepareRiskPublication } = await import("@/server/stellar/riskRegistry");
   const { verifyRiskPublication } = await import("./riskVerify");
+  // prepareRiskPublication is used implicitly in submitRiskPublication import below
 
   // Step 1: Preview + prepare
   const preview = await getRiskPublicationPreview(networkId, params);

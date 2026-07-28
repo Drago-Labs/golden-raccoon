@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, Orbit, Shield, Hash, Fuel, Layers, Clock, FileText } from "lucide-react";
 import { getStellarNetwork, normalizeStellarNetworkId } from "@/lib/stellar/config";
 import { useStellarWallet } from "@/providers/StellarWalletProvider";
@@ -64,6 +64,13 @@ export function StellarRiskPublishButton({
   const [verifyOutcome, setVerifyOutcome] = useState<VerifyOutcome>();
   const [txHash, setTxHash] = useState<string>();
   const [verifyProgress, setVerifyProgress] = useState<string>("");
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  // Refresh the clock periodically so expiry display updates
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 10_000);
+    return () => clearInterval(interval);
+  }, []);
 
   if (!networkId || !assetKey || !config) return null;
 
@@ -178,7 +185,7 @@ export function StellarRiskPublishButton({
 
   const showStartButton = stage === "idle" || stage === "failed";
   const isSimulating = stage === "simulating";
-  const previewExpired = preview && Date.now() > preview.expiresAt;
+  const previewExpired = preview && now > preview.expiresAt;
 
   return (
     <div className="mt-4 space-y-3">

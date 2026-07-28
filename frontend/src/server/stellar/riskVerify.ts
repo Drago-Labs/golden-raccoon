@@ -57,9 +57,9 @@ function parseContractEvents(
     }
   }
 
-  // Raw transaction events
-  for (const event of txnEvents) {
-    parsed.push({ type: "transaction_event", contractId: "system", topics: [], data: {} });
+  // Raw transaction events (not individually parsed — just note their presence)
+  if (txnEvents.length > 0) {
+    parsed.push({ type: "transaction_event", contractId: "system", topics: [], data: { count: txnEvents.length } });
   }
 
   return parsed;
