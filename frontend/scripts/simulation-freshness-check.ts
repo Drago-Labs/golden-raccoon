@@ -94,26 +94,30 @@ function runFreshnessTests() {
 }
 
 function runInvalidationTests() {
-  const baseSim = passedSimulation();
+  const fullParams = {
+    amount: "100",
+    route: ["USDC", "ETH"],
+    slippageBps: 100,
+    sequenceNumber: 42,
+    fee: "0.005 ETH",
+  };
 
-  assert(checkParamsMatch(baseSim, { amount: "100" }) === true, "Matching amount must pass.");
-  assert(checkParamsMatch(baseSim, { amount: "200" }) === false, "Changed amount must fail.");
+  assert(checkParamsMatch(passedSimulation(), fullParams) === true, "All params matching must pass.");
+  assert(checkParamsMatch(passedSimulation({ fromAmount: "200" }), { ...fullParams, amount: "200" }) === true, "Matching different amount must pass.");
 
-  assert(checkParamsMatch(baseSim, { route: ["USDC", "ETH"] }) === true, "Matching route must pass.");
-  assert(checkParamsMatch(baseSim, { route: ["USDC", "BTC"] }) === false, "Changed route token must fail.");
-  assert(checkParamsMatch(baseSim, { route: ["USDC", "ETH", "BTC"] }) === false, "Route length mismatch must fail.");
+  assert(checkParamsMatch(passedSimulation(), { ...fullParams, amount: "200" }) === false, "Changed amount must fail.");
 
-  assert(checkParamsMatch(baseSim, { slippageBps: 100 }) === true, "Matching slippage must pass.");
-  assert(checkParamsMatch(baseSim, { slippageBps: 200 }) === false, "Changed slippage must fail.");
+  assert(checkParamsMatch(passedSimulation(), { ...fullParams, route: ["USDC", "BTC"] }) === false, "Changed route token must fail.");
+  assert(checkParamsMatch(passedSimulation(), { ...fullParams, route: ["USDC", "ETH", "BTC"] }) === false, "Route length mismatch must fail.");
 
-  assert(checkParamsMatch(baseSim, { sequenceNumber: 42 }) === true, "Matching sequence must pass.");
-  assert(checkParamsMatch(baseSim, { sequenceNumber: 99 }) === false, "Changed sequence must fail.");
-  assert(checkParamsMatch(baseSim, { sequenceNumber: "42" }) === true, "String vs number sequence must still match.");
+  assert(checkParamsMatch(passedSimulation(), { ...fullParams, slippageBps: 200 }) === false, "Changed slippage must fail.");
 
-  assert(checkParamsMatch(baseSim, { fee: "0.005 ETH" }) === true, "Matching fee must pass.");
-  assert(checkParamsMatch(baseSim, { fee: "0.01 ETH" }) === false, "Changed fee must fail.");
+  assert(checkParamsMatch(passedSimulation(), { ...fullParams, sequenceNumber: 99 }) === false, "Changed sequence must fail.");
+  assert(checkParamsMatch(passedSimulation(), { ...fullParams, sequenceNumber: "42" }) === true, "String vs number sequence must still match.");
 
-  const noSim = passedSimulation({ status: "not_required", fromAmount: undefined, route: undefined });
+  assert(checkParamsMatch(passedSimulation(), { ...fullParams, fee: "0.01 ETH" }) === false, "Changed fee must fail.");
+
+  const noSim = passedSimulation({ status: "not_required", fromAmount: undefined, route: undefined, slippageBps: undefined, sequenceNumber: undefined, fee: undefined });
   assert(checkParamsMatch(noSim, { amount: "100" }) === true, "not_required simulation must always match params.");
   assert(checkCalldataMatch(noSim, "anything") === true, "not_required simulation must always match calldata.");
 
@@ -124,6 +128,10 @@ function runInvalidationTests() {
 
   const noHashSim = passedSimulation({ calldataHash: undefined });
   assert(checkCalldataMatch(noHashSim, "0xabc123") === false, "Missing simulation calldata hash must fail.");
+
+  assert(checkParamsMatch(passedSimulation({ fromAmount: "100" }), { ...fullParams, amount: undefined }) === false, "Sim has fromAmount but current absent -> fail-closed.");
+  assert(checkParamsMatch(passedSimulation({ route: ["USDC", "ETH"] }), { ...fullParams, route: undefined }) === false, "Sim has route but current absent -> fail-closed.");
+  assert(checkParamsMatch(passedSimulation({ fee: "0.005 ETH" }), { ...fullParams, fee: undefined }) === false, "Sim has fee but current absent -> fail-closed.");
 
   console.log("Invalidation tests passed.");
 }

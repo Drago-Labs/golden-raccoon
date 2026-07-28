@@ -6,7 +6,7 @@ import { checkRateLimit } from "@/server/security/rateLimit";
 import { createApprovalRecord, createTransactionRecord, getTransactionRecord } from "@/server/storage";
 import { getChainFamily, isTransactionHashForChain } from "@/lib/chainIdentity";
 import { createStellarRpcServer } from "@/server/stellar/client";
-import { checkSimulationFreshness, checkCalldataMatch, checkParamsMatch, isHighRiskExecution } from "@/server/simulation/freshness";
+import { checkSimulationFreshness, checkCalldataMatch, checkParamsMatch, isHighRiskExecution, hashCalldata } from "@/server/simulation/freshness";
 import type { SimulationResultDetail } from "@/server/types";
 
 /**
@@ -52,7 +52,7 @@ const bodySchema = z.object({
   asset: z.string().optional(),
   valueUsd: z.number().min(0).optional(),
   riskScore: z.number().min(0).max(100).optional(),
-  simulationStatus: z.enum(["not_required", "pending", "passed", "failed", "unavailable"]).optional(),
+  simulationStatus: z.enum(["not_required", "pending", "passed", "failed", "unavailable", "unsupported"]).optional(),
   policyAllowed: z.boolean().optional(),
   policyViolations: z.array(z.string()).optional(),
 // Stellar-specific confirmation fields
@@ -75,6 +75,15 @@ const bodySchema = z.object({
       slippageBps: z.number().optional(),
       sequenceNumber: z.union([z.number(), z.string()]).optional(),
       fee: z.string().optional(),
+      resourceUsage: z
+        .object({
+          gasUnits: z.string().optional(),
+          gasPrice: z.string().optional(),
+          networkFee: z.string().optional(),
+          operationsCount: z.number().optional(),
+          ledgerFee: z.string().optional(),
+        })
+        .optional(),
       balanceChanges: z
         .array(
           z.object({
@@ -113,8 +122,16 @@ const bodySchema = z.object({
       chainFamily: z.enum(["evm", "stellar"]).optional(),
     })
     .optional(),
+
   currentBlockNumber: z.number().optional(),
   currentLedgerSeq: z.number().optional(),
+
+  currentCalldata: z.string().optional(),
+  currentFromAmount: z.string().optional(),
+  currentRoute: z.array(z.string()).optional(),
+  currentSlippageBps: z.number().optional(),
+  currentSequenceNumber: z.union([z.number(), z.string()]).optional(),
+  currentFee: z.string().optional(),
 });
 
 export async function POST(request: Request) {
@@ -151,6 +168,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "simulation_failed", detail: "Simulation failed. Confirmation is blocked." }, { status: 403 });
   }
 
+  if (parsed.data.simulationStatus === "unsupported") {
+    return NextResponse.json({ error: "simulation_unsupported", detail: "Simulation is not supported for this transaction type or chain. Approval is blocked." }, { status: 403 });
+  }
+
   if (parsed.data.policyAllowed === false) {
     return NextResponse.json({ error: "policy_violation", detail: parsed.data.policyViolations ?? [] }, { status: 403 });
   }
@@ -171,7 +192,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "simulation_required", detail: "High-risk execution confirmation requires a fresh passed simulation." }, { status: 403 });
   }
 
-  if (highRiskTrade && parsed.data.simulation) {
+  if (highRiskTrade) {
+    if (!parsed.data.simulation) {
+      return NextResponse.json({ error: "simulation_details_required", detail: "Simulation result data is required for high-risk execution. Provide the full simulation object." }, { status: 403 });
+    }
+
     const simulationDetail: SimulationResultDetail = {
       provider: "planned_tenderly",
       status: parsed.data.simulationStatus ?? "pending",
@@ -193,16 +218,38 @@ export async function POST(request: Request) {
       chainFamily: parsed.data.simulation.chainFamily,
     };
 
-    const freshness = checkSimulationFreshness(simulationDetail, parsed.data.currentBlockNumber, parsed.data.currentLedgerSeq);
+    const currentBlockNumber = parsed.data.currentBlockNumber;
+    const currentLedgerSeq = parsed.data.currentLedgerSeq;
+
+    if (!currentBlockNumber && !currentLedgerSeq) {
+      return NextResponse.json({ error: "freshness_unverifiable", detail: "Current block or ledger number is required to verify simulation freshness server-side." }, { status: 403 });
+    }
+
+    const freshness = checkSimulationFreshness(simulationDetail, currentBlockNumber, currentLedgerSeq);
 
     if (!freshness.fresh) {
       return NextResponse.json({ error: "simulation_stale", detail: freshness.reason, expiredAt: freshness.expiredAt }, { status: 403 });
     }
 
-    const calldataMatch = checkCalldataMatch(simulationDetail, parsed.data.simulation.calldataHash);
+    const currentCalldata = parsed.data.currentCalldata;
+    const currentCalldataHash = currentCalldata ? hashCalldata(currentCalldata) : parsed.data.simulation.calldataHash;
+
+    const calldataMatch = checkCalldataMatch(simulationDetail, currentCalldataHash);
 
     if (!calldataMatch) {
       return NextResponse.json({ error: "simulation_mismatch", detail: "Simulation calldata does not match the current transaction payload. Re-run simulation with the latest parameters." }, { status: 403 });
+    }
+
+    const paramsMatch = checkParamsMatch(simulationDetail, {
+      amount: parsed.data.currentFromAmount,
+      route: parsed.data.currentRoute,
+      slippageBps: parsed.data.currentSlippageBps,
+      sequenceNumber: parsed.data.currentSequenceNumber,
+      fee: parsed.data.currentFee,
+    });
+
+    if (!paramsMatch) {
+      return NextResponse.json({ error: "simulation_params_mismatch", detail: "One or more transaction parameters (amount, route, slippage, sequence, or fee) have changed since simulation. Re-run simulation with current parameters." }, { status: 403 });
     }
   }
 

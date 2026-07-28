@@ -24,6 +24,10 @@ export function checkSimulationFreshness(
     return { fresh: false, reason: "Simulation result is unavailable. Re-run simulation before proceeding." };
   }
 
+  if (simulation.status === "unsupported") {
+    return { fresh: false, reason: "Simulation is not supported for this transaction type or chain. Approval is blocked until simulation support is available." };
+  }
+
   if (simulation.status === "pending") {
     return { fresh: false, reason: "Simulation result is still pending. Wait for completion or re-run." };
   }
@@ -47,7 +51,7 @@ export function checkSimulationFreshness(
     if (elapsedMs > config.maxElapsedMs) {
       const expiredAt = new Date(simulatedAtMs + config.maxElapsedMs).toISOString();
 
-      return { fresh: false, reason: `Simulation expired due to elapsed time. Results are valid for ${Math.round(config.maxElapsedMs / 60_000)} minutes.`, expiredAt };
+      return { fresh: false, reason: `Simulation expired due to elapsed time. Results are valid for ${Math.round(config.maxElapsedMs / 60_000)} minutes. Re-run simulation.`, expiredAt };
     }
   } else {
     return { fresh: false, reason: "Simulation timestamp is missing. Re-run simulation." };
@@ -99,27 +103,30 @@ export function checkParamsMatch(
 ): boolean {
   if (simulation.status === "not_required") return true;
 
-  if (currentParams.amount !== undefined && simulation.fromAmount !== undefined) {
-    if (currentParams.amount !== simulation.fromAmount) return false;
+  if (simulation.fromAmount !== undefined) {
+    if (currentParams.amount === undefined || currentParams.amount !== simulation.fromAmount) return false;
   }
 
-  if (currentParams.route !== undefined && simulation.route !== undefined) {
-    if (currentParams.route.length !== simulation.route.length) return false;
+  if (simulation.route !== undefined) {
+    if (currentParams.route === undefined || currentParams.route.length !== simulation.route.length) {
+      return false;
+    }
     for (let i = 0; i < currentParams.route.length; i++) {
       if (currentParams.route[i].toLowerCase() !== simulation.route[i].toLowerCase()) return false;
     }
   }
 
-  if (currentParams.slippageBps !== undefined && simulation.slippageBps !== undefined) {
-    if (currentParams.slippageBps !== simulation.slippageBps) return false;
+  if (simulation.slippageBps !== undefined) {
+    if (currentParams.slippageBps === undefined || currentParams.slippageBps !== simulation.slippageBps) return false;
   }
 
-  if (currentParams.sequenceNumber !== undefined && simulation.sequenceNumber !== undefined) {
+  if (simulation.sequenceNumber !== undefined) {
+    if (currentParams.sequenceNumber === undefined) return false;
     if (String(currentParams.sequenceNumber) !== String(simulation.sequenceNumber)) return false;
   }
 
-  if (currentParams.fee !== undefined && simulation.fee !== undefined) {
-    if (currentParams.fee !== simulation.fee) return false;
+  if (simulation.fee !== undefined) {
+    if (currentParams.fee === undefined || currentParams.fee !== simulation.fee) return false;
   }
 
   return true;
@@ -129,4 +136,12 @@ export function isHighRiskExecution(action?: string, riskScore?: number): boolea
   const tradeActions = new Set(["reduce_exposure", "swap_to_stable", "prepare_transaction"]);
 
   return tradeActions.has(action ?? "") && (riskScore ?? 0) >= 50;
+}
+
+export function hashCalldata(calldata: string): string {
+  let hash = 5381;
+  for (let i = 0; i < calldata.length; i++) {
+    hash = (hash * 33) ^ calldata.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(16);
 }

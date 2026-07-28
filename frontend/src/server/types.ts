@@ -836,7 +836,7 @@ export type SimulationFreshnessResult = {
 
 export type SimulationResultDetail = {
   provider: "planned_tenderly" | "not_required";
-  status: "not_required" | "pending" | "passed" | "failed" | "unavailable";
+  status: "not_required" | "pending" | "passed" | "failed" | "unavailable" | "unsupported";
   checks: string[];
   revertReason?: string;
   revertReasonHuman?: string;
@@ -851,6 +851,13 @@ export type SimulationResultDetail = {
   slippageBps?: number;
   sequenceNumber?: number | string;
   fee?: string;
+  resourceUsage?: {
+    gasUnits?: string;
+    gasPrice?: string;
+    networkFee?: string;
+    operationsCount?: number;
+    ledgerFee?: string;
+  };
   balanceChanges?: BalanceChange[];
   allowanceRisk?: AllowanceRiskDetail[];
   trustlineRisk?: StellarTrustlineRisk[];

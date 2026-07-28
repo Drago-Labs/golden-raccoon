@@ -12,18 +12,39 @@ function formatChange(change: string): string {
   return change;
 }
 
+function timeRemaining(expiry: string): { expired: boolean; label: string } {
+  const diff = new Date(expiry).getTime() - Date.now();
+  if (diff <= 0) return { expired: true, label: "Expired" };
+  const minutes = Math.floor(diff / 60_000);
+  const seconds = Math.floor((diff % 60_000) / 1000);
+  return { expired: false, label: minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s` };
+}
+
 export function SimulationResultPanel({ simulation }: { simulation: SimulationResultDetail }) {
   const chainFamily = simulation.chainFamily ?? getChainFamily();
-  const isBlocked = simulation.status === "failed" || simulation.status === "unavailable" || simulation.status === "pending";
+  const isBlocked =
+    simulation.status === "failed" ||
+    simulation.status === "unavailable" ||
+    simulation.status === "pending" ||
+    simulation.status === "unsupported";
 
   const statusColor =
     simulation.status === "passed"
       ? "border-green-400/25 bg-green-500/10 text-green-200"
       : simulation.status === "failed"
         ? "border-red-400/25 bg-red-500/10 text-red-200"
-        : simulation.status === "unavailable"
+        : simulation.status === "unavailable" || simulation.status === "unsupported"
           ? "border-yellow-400/25 bg-yellow-500/10 text-yellow-200"
           : "border-white/10 bg-white/6 text-white/52";
+
+  const statusDot =
+    simulation.status === "passed"
+      ? "bg-green-400"
+      : simulation.status === "failed"
+        ? "bg-red-400"
+        : "bg-yellow-400";
+
+  const quoteExpiry = simulation.quoteExpiry ? timeRemaining(simulation.quoteExpiry) : null;
 
   return (
     <div className="rounded-[28px] border border-[#d9a441]/25 bg-[#d9a441]/8 p-6">
@@ -31,14 +52,20 @@ export function SimulationResultPanel({ simulation }: { simulation: SimulationRe
 
       <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${statusColor}`}>
         <div className="flex items-center gap-2">
-          <span className={`h-2 w-2 rounded-full ${simulation.status === "passed" ? "bg-green-400" : simulation.status === "failed" ? "bg-red-400" : "bg-yellow-400"}`} />
+          <span className={`h-2 w-2 rounded-full ${statusDot}`} />
           <span className="font-semibold capitalize">{simulation.status.replaceAll("_", " ")}</span>
+          {quoteExpiry && !quoteExpiry.expired && (
+            <span className="ml-auto text-xs text-white/50">{quoteExpiry.label} remaining</span>
+          )}
         </div>
         {simulation.revertReasonHuman && simulation.status === "failed" && (
           <p className="mt-2 text-white/70">{simulation.revertReasonHuman}</p>
         )}
         {simulation.detail && (
           <p className="mt-1 text-white/50">{simulation.detail}</p>
+        )}
+        {quoteExpiry?.expired && (
+          <p className="mt-2 text-red-300">Quote has expired. Re-run simulation to get a current quote.</p>
         )}
       </div>
 
@@ -96,25 +123,57 @@ export function SimulationResultPanel({ simulation }: { simulation: SimulationRe
         </div>
       )}
 
-      {simulation.fee && (
-        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {simulation.fee && (
           <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
             <div className="text-xs text-white/38">Network fee</div>
             <div className="mt-1 text-sm font-semibold">{formatChange(simulation.fee)}</div>
           </div>
-          {simulation.simulatedAt && (
-            <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-              <div className="text-xs text-white/38">Simulated at</div>
-              <div className="mt-1 text-sm font-semibold">{new Date(simulation.simulatedAt).toLocaleString()}</div>
-            </div>
-          )}
-        </div>
-      )}
+        )}
 
-      {simulation.blockNumber !== undefined && (
+        {simulation.resourceUsage && (
+          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+            <div className="text-xs text-white/38">Resource usage</div>
+            <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-white/60">
+              {simulation.resourceUsage.gasUnits && (
+                <span>Gas: {parseInt(simulation.resourceUsage.gasUnits).toLocaleString()} units</span>
+              )}
+              {simulation.resourceUsage.gasPrice && (
+                <span>Price: {simulation.resourceUsage.gasPrice}</span>
+              )}
+              {simulation.resourceUsage.networkFee && (
+                <span className="col-span-2 text-white/45">Network fee: {simulation.resourceUsage.networkFee}</span>
+              )}
+              {simulation.resourceUsage.operationsCount !== undefined && (
+                <span>Ops: {simulation.resourceUsage.operationsCount}</span>
+              )}
+              {simulation.resourceUsage.ledgerFee && (
+                <span>Fee: {simulation.resourceUsage.ledgerFee}</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {simulation.simulatedAt && (
+          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+            <div className="text-xs text-white/38">Simulated at</div>
+            <div className="mt-1 text-sm font-semibold">{new Date(simulation.simulatedAt).toLocaleString()}</div>
+          </div>
+        )}
+
+        {quoteExpiry && !quoteExpiry.expired && (
+          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+            <div className="text-xs text-white/38">Quote expires</div>
+            <div className="mt-1 text-sm font-semibold">{simulation.quoteExpiry ? new Date(simulation.quoteExpiry).toLocaleString() : ""}</div>
+          </div>
+        )}
+      </div>
+
+      {(simulation.blockNumber !== undefined || simulation.ledgerSeq !== undefined) && (
         <div className="mt-2 rounded-2xl bg-black/20 px-4 py-2 text-xs text-white/38">
-          Block #{simulation.blockNumber}
-          {simulation.ledgerSeq !== undefined ? ` / Ledger #${simulation.ledgerSeq}` : ""}
+          {simulation.blockNumber !== undefined && <>Block #{simulation.blockNumber}</>}
+          {simulation.blockNumber !== undefined && simulation.ledgerSeq !== undefined && <span> / </span>}
+          {simulation.ledgerSeq !== undefined && <>Ledger #{simulation.ledgerSeq}</>}
         </div>
       )}
 
@@ -126,7 +185,21 @@ export function SimulationResultPanel({ simulation }: { simulation: SimulationRe
 
       {isBlocked && (
         <div className="mt-4 rounded-2xl border border-red-300/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-          Wallet approval is blocked until simulation shows a passing result. Re-run simulation with current parameters before approving.
+          {simulation.status === "failed"
+            ? "Simulation failed. Review the revert reason and correct parameters before re-running."
+            : simulation.status === "unavailable"
+              ? "Simulation result is unavailable. The simulation provider may be unreachable. Re-run when possible."
+              : simulation.status === "pending"
+                ? "Simulation is still pending. Wait for the result or re-run to trigger a fresh simulation."
+                : simulation.status === "unsupported"
+                  ? "Simulation is not supported for this transaction type or chain. This transaction cannot be approved through simulation-based gating."
+                  : "Wallet approval is blocked until simulation shows a passing result. Re-run simulation with current parameters before approving."}
+        </div>
+      )}
+
+      {simulation.status === "passed" && quoteExpiry?.expired && (
+        <div className="mt-3 rounded-2xl border border-yellow-400/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-200">
+          The simulation quote has expired. Re-run to get a current quote before proceeding.
         </div>
       )}
 
