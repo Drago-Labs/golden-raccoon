@@ -8,6 +8,7 @@ contract GoldRaccoonPolicy {
 
     struct PolicyDecision {
         bytes32 decisionHash;
+        address user;
         address authorizedAgent;
         uint256 maxTransactionValue;
         uint256 maxSlippageBps;
@@ -236,6 +237,7 @@ contract GoldRaccoonPolicy {
 
         policyDecisions[decisionHash] = PolicyDecision({
             decisionHash: decisionHash,
+            user: _user,
             authorizedAgent: agent,
             maxTransactionValue: _maxTxValue,
             maxSlippageBps: _maxSlippage,
@@ -248,9 +250,10 @@ contract GoldRaccoonPolicy {
         return decisionHash;
     }
 
-    function revokePolicy(bytes32 decisionHash) external onlyOwnerOrEmergency {
+    function revokePolicy(bytes32 decisionHash) external {
         PolicyDecision storage decision = policyDecisions[decisionHash];
         require(decision.decisionHash == decisionHash, "Policy: unknown decision");
+        require(msg.sender == owner || msg.sender == emergencyAdmin || msg.sender == decision.user || msg.sender == decision.authorizedAgent, "Policy: not authorised to revoke");
         decision.revoked = true;
         emit IntentRevoked(decisionHash);
     }
@@ -278,6 +281,7 @@ contract GoldRaccoonPolicy {
         require(decision.expiry >= _expiry, "Policy: intent outlives policy");
         require(_amount <= decision.maxTransactionValue, "Policy: exceeds tx limit");
         require(_amount <= maxTransactionValue, "Policy: exceeds global tx limit");
+        require(_slippageBps <= decision.maxSlippageBps, "Policy: slippage exceeds policy limit");
 
         _checkDailySpend(_amount);
 
@@ -354,5 +358,32 @@ contract GoldRaccoonPolicy {
 
     function getPolicyDecision(bytes32 decisionHash) external view returns (PolicyDecision memory) {
         return policyDecisions[decisionHash];
+    }
+
+    function getIntentValidity(bytes32 intentHash, address token, uint256 amount) external view returns (bool valid, string memory reason) {
+        Intent storage intent = intents[intentHash];
+        if (intent.intentHash != intentHash) {
+            return (false, "unknown intent");
+        }
+        if (intent.executed) {
+            return (false, "already executed");
+        }
+        if (intent.expiry < block.timestamp) {
+            return (false, "intent expired");
+        }
+        if (intent.targetToken != token) {
+            return (false, "token mismatch");
+        }
+        if (intent.amount < amount) {
+            return (false, "insufficient intent amount");
+        }
+        PolicyDecision storage decision = policyDecisions[intent.policyCommitment];
+        if (decision.decisionHash != intent.policyCommitment) {
+            return (false, "unknown policy");
+        }
+        if (decision.revoked) {
+            return (false, "policy revoked");
+        }
+        return (true, "");
     }
 }

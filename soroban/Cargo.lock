@@ -715,7 +715,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "golden-raccoon-policy"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "golden-raccoon-risk-registry"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
+name = "golden-raccoon-vault"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
