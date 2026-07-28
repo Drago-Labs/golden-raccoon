@@ -1,7 +1,9 @@
-import type { AgentRecommendedAction, AgentResult, PortfolioSnapshot, TransactionPreview, UserRule } from "@/server/types";
+import type { AgentRecommendedAction, AgentResult, PortfolioSnapshot, StellarSwapQuote, TransactionPreview, UserRule } from "@/server/types";
 import { buildAgentResult } from "@/server/agents/shared";
 import { buildExecutionPolicy, evaluateExecutionPolicy } from "@/server/agents/execution/policy";
 import { getChainFamily } from "@/lib/chainIdentity";
+import { buildTrustlinePreview, type TrustlineCheckInput } from "@/server/stellar/trustline";
+import { getStellarSwapQuote } from "@/server/stellar/swap";
 
 type ExecutionAgentInput = {
   action?: AgentRecommendedAction | string;
@@ -27,6 +29,7 @@ type ExecutionAgentInput = {
   stellarFromIssuer?: string;
   stellarToIssuer?: string;
   stellarSwapAmount?: number;
+  stellarQuoteStatus?: "fresh" | "stale" | "unavailable" | "simulated";
 };
 
 function clampPercent(percent?: number) {
@@ -152,7 +155,7 @@ function getQuotePlan(input: {
   };
 }
 
-export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPreview {
+export async function buildExecutionPreview(input: ExecutionAgentInput): Promise<TransactionPreview> {
   const executionPolicy = buildExecutionPolicy(input.rules);
   const action = normalizeAction(input.action);
   const plan = getActionPlan(action);
@@ -199,8 +202,54 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
     expectedOutputAmount: input.expectedOutputAmount,
   });
   const trustlineAction = action === "create_trustline";
+  let stellarTrustlinePreview = undefined;
+  let stellarSwapQuote: StellarSwapQuote | undefined = undefined;
+
+  // Wire in Stellar trustline preview for trustline actions
+  if (trustlineAction && isStellar && input.walletAddress && input.stellarAssetCode && input.stellarIssuer) {
+    try {
+      const tlInput: TrustlineCheckInput = {
+        chain: input.network ?? "",
+        assetCode: input.stellarAssetCode,
+        issuer: input.stellarIssuer,
+        walletAddress: input.walletAddress,
+      };
+      const tlResult = await buildTrustlinePreview(tlInput);
+      stellarTrustlinePreview = tlResult.preview;
+    } catch {
+      // Trustline preview unavailable, continue with generic preview
+    }
+  }
+
+  // Wire in Stellar swap quote for trade actions on Stellar
+  if (!trustlineAction && plan.requiresTrade && isStellar && input.walletAddress && input.fromToken && input.toToken && input.stellarSwapAmount) {
+    try {
+      const quoteResult = await getStellarSwapQuote({
+        chain: input.network ?? "stellar-testnet",
+        walletAddress: input.walletAddress,
+        fromAsset: input.fromToken,
+        toAsset: input.toToken,
+        fromIssuer: input.stellarFromIssuer,
+        toIssuer: input.stellarToIssuer,
+        amount: input.stellarSwapAmount,
+        slippageBps: input.slippageBps,
+      });
+      if (quoteResult.quote) {
+        stellarSwapQuote = quoteResult.quote;
+      }
+    } catch {
+      // Stellar quote unavailable, continue with generic quote plan
+    }
+  }
+
   const quoteMissing = !trustlineAction && plan.requiresTrade && quote?.status !== "planned" && quote?.status !== "fresh";
-  const blockedReason = policyStatus.violations[0] ?? (quoteMissing ? "Live quote provider result is required before preparing an executable transaction." : undefined);
+  const blockedReason = policyStatus.violations[0] ?? (
+    (input.stellarQuoteStatus === "unavailable" && !stellarSwapQuote && !trustlineAction)
+      ? "Live Stellar swap quote is required before preparing an executable transaction."
+      : quoteMissing
+        ? "Live quote provider result is required before preparing an executable transaction."
+        : undefined
+  );
   const executionReady = plan.requiresTrade && policyStatus.allowed && !quoteMissing;
   const idempotencyKey = input.decisionId ? `${input.walletAddress ?? "unknown"}:${input.decisionId}:${action}:${fromToken}:${toToken}:${percent}` : undefined;
   const preview: TransactionPreview = {
@@ -238,6 +287,8 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
     policyStatus,
     quote,
     simulation,
+    stellarTrustline: stellarTrustlinePreview,
+    stellarQuote: stellarSwapQuote,
     approvalRisk: {
       infiniteApprovalWarning: plan.requiresTrade && !trustlineAction,
       existingAllowanceCheck: plan.requiresTrade && !trustlineAction ? "required" : "not_required",
@@ -271,7 +322,7 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
   return preview;
 }
 
-export function buildExecutionPreviewFromPortfolio(portfolio: PortfolioSnapshot, input: ExecutionAgentInput): TransactionPreview {
+export async function buildExecutionPreviewFromPortfolio(portfolio: PortfolioSnapshot, input: ExecutionAgentInput): Promise<TransactionPreview> {
   const fromToken = input.fromToken ?? portfolio.holdings.find((holding) => holding.riskScore >= 70)?.symbol ?? portfolio.holdings[0]?.symbol ?? "TOKEN";
   const percent = clampPercent(input.percent ?? 30);
   const holding = portfolio.holdings.find((item) => item.symbol === fromToken);
@@ -288,9 +339,9 @@ export function buildExecutionPreviewFromPortfolio(portfolio: PortfolioSnapshot,
   });
 }
 
-export function runExecutionAgent(input: ExecutionAgentInput): AgentResult {
+export async function runExecutionAgent(input: ExecutionAgentInput): Promise<AgentResult> {
   const action = normalizeAction(input.action);
-  const preview = buildExecutionPreview(input);
+  const preview = await buildExecutionPreview(input);
   const blocked = Boolean(preview.blockedReason);
   const policyViolations = preview.policyStatus?.violations ?? [];
   const score = blocked ? 76 : preview.requiresApproval ? 38 : 18;

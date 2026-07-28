@@ -3,7 +3,7 @@ import "server-only";
 import { Asset, StrKey } from "@stellar/stellar-sdk";
 import type { StellarSwapQuote } from "@/server/types";
 import { getStellarNetwork } from "@/lib/stellar/config";
-import { createStellarDataServer } from "@/server/stellar/client";
+import { createStellarDataServer, createStellarRpcServer } from "@/server/stellar/client";
 import { parseStellarAssetInput, type StellarAssetIdentity } from "@/server/stellar/assetIdentity";
 
 export type StellarSwapInput = {

@@ -170,14 +170,12 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
 
   if (input.mode === "execution_prepare") {
     const execution = await runWithRunMetadata(runId, "execution", () =>
-      Promise.resolve(
-        runExecutionAgent({
-          action: decision.recommendedAction,
-          walletAddress: input.walletAddress,
-          fromToken: identity?.symbol,
-          riskScore: decision.riskScore,
-        }),
-      ),
+      runExecutionAgent({
+        action: decision.recommendedAction,
+        walletAddress: input.walletAddress,
+        fromToken: identity?.symbol,
+        riskScore: decision.riskScore,
+      }),
     );
 
     results.push(execution);
