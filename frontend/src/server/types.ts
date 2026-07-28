@@ -340,8 +340,9 @@ export type TransactionPreview = {
     allowed: boolean;
     violations: string[];
   };
+  /** Legacy display-oriented quote (kept for UI backward compatibility). */
   quote?: {
-    provider: "planned_dex_aggregator" | "soroswap" | "stellar_aggregator";
+    provider: "planned_dex_aggregator" | "soroswap" | "stellar_aggregator" | "dexscreener";
     route: string[];
     expectedOutputToken: string;
     expectedOutputAmount?: number;
@@ -352,6 +353,12 @@ export type TransactionPreview = {
     status: "planned" | "fresh" | "simulated" | "unavailable";
     detail: string;
   };
+  /**
+   * New unified typed quote result from a real provider adapter.
+   * Present when the execution agent fetched a live quote.
+   * Always `undefined` for non-trade actions.
+   */
+  realQuote?: import("@/server/providers/quote/types").QuoteResult;
   simulation?: {
     provider: "planned_tenderly" | "not_required" | "stellar_soroban" | "stellar_classic";
     status: "not_required" | "pending" | "passed" | "failed" | "unavailable";

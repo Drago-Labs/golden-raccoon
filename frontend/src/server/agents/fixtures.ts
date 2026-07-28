@@ -183,6 +183,173 @@ export const stellarSwapFixtures: Record<string, StellarSwapFixture> = {
   },
 };
 
+// ─── Quote fixtures ────────────────────────────────────────────────────
+
+/**
+ * Expected outcomes for quote provider tests.
+ * These cover: success, no route, timeout (approximated), rate limit,
+ * mismatch, stale quote, and malformed response.
+ */
+export type QuoteFixture = {
+  chain: string;
+  walletAddress: string;
+  fromAsset: string;
+  toAsset: string;
+  fromIssuer?: string;
+  toIssuer?: string;
+  amount: string;
+  slippageBps: number;
+  expectedOk: boolean;
+  expectedErrorCode?: string;
+  scenario: "success" | "no_route" | "timeout" | "rate_limited" | "mismatch" | "stale" | "malformed";
+};
+
+export const quoteFixtures: Record<string, QuoteFixture> = {
+  // ---- Success scenarios ----
+
+  stellarXlmToUsdc: {
+    chain: "stellar-testnet",
+    walletAddress: "GAH4OKQGUST2QO4AZYBEZNRAGNKYCDMII6RONIRNT77CQ5OAYZAQ3QDQ",
+    fromAsset: "native",
+    toAsset: "USDC",
+    toIssuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    amount: "100",
+    slippageBps: 100,
+    expectedOk: true,
+    scenario: "success",
+  },
+  evmEthToUsdc: {
+    chain: "ethereum",
+    walletAddress: "0x1234567890abcdef1234567890abcdef12345678",
+    fromAsset: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    toAsset: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    amount: "1",
+    slippageBps: 50,
+    expectedOk: true,
+    scenario: "success",
+  },
+
+  // ---- No-route scenarios ----
+
+  stellarXlmToXlm: {
+    chain: "stellar-testnet",
+    walletAddress: "GAH4OKQGUST2QO4AZYBEZNRAGNKYCDMII6RONIRNT77CQ5OAYZAQ3QDQ",
+    fromAsset: "native",
+    toAsset: "XLM",
+    amount: "100",
+    slippageBps: 100,
+    expectedOk: false,
+    expectedErrorCode: "no_route",
+    scenario: "no_route",
+  },
+  stellarUnknownAsset: {
+    chain: "stellar-testnet",
+    walletAddress: "GAH4OKQGUST2QO4AZYBEZNRAGNKYCDMII6RONIRNT77CQ5OAYZAQ3QDQ",
+    fromAsset: "UNKNOWN",
+    toAsset: "XLM",
+    amount: "10",
+    slippageBps: 100,
+    expectedOk: false,
+    expectedErrorCode: "invalid_request",
+    scenario: "no_route",
+  },
+  evmUnknownChain: {
+    chain: "nonexistent-chain",
+    walletAddress: "0x1234567890abcdef1234567890abcdef12345678",
+    fromAsset: "ETH",
+    toAsset: "USDC",
+    amount: "1",
+    slippageBps: 100,
+    expectedOk: false,
+    expectedErrorCode: "unsupported_chain",
+    scenario: "no_route",
+  },
+
+  // ---- Mismatch scenarios ----
+
+  stellarInvalidWallet: {
+    chain: "stellar-testnet",
+    walletAddress: "0xinvalid",
+    fromAsset: "native",
+    toAsset: "USDC",
+    toIssuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    amount: "100",
+    slippageBps: 100,
+    expectedOk: false,
+    expectedErrorCode: "invalid_request",
+    scenario: "mismatch",
+  },
+
+  // ---- Stale scenario (simulated via verification) ----
+
+  staleQuoteCheck: {
+    chain: "stellar-testnet",
+    walletAddress: "GAH4OKQGUST2QO4AZYBEZNRAGNKYCDMII6RONIRNT77CQ5OAYZAQ3QDQ",
+    fromAsset: "native",
+    toAsset: "USDC",
+    toIssuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    amount: "100",
+    slippageBps: 100,
+    expectedOk: true,
+    scenario: "stale",
+  },
+
+  // ---- Malformed scenarios ----
+
+  evmInvalidAmount: {
+    chain: "ethereum",
+    walletAddress: "0x1234567890abcdef1234567890abcdef12345678",
+    fromAsset: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    toAsset: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    amount: "-1",
+    slippageBps: 100,
+    expectedOk: false,
+    expectedErrorCode: "invalid_request",
+    scenario: "malformed",
+  },
+  stellarZeroAmount: {
+    chain: "stellar-testnet",
+    walletAddress: "GAH4OKQGUST2QO4AZYBEZNRAGNKYCDMII6RONIRNT77CQ5OAYZAQ3QDQ",
+    fromAsset: "native",
+    toAsset: "USDC",
+    toIssuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    amount: "0",
+    slippageBps: 100,
+    expectedOk: false,
+    expectedErrorCode: "invalid_request",
+    scenario: "malformed",
+  },
+
+  // ---- Timeout scenario (documented; provider must be mocked to exercise) ----
+
+  slowQuote: {
+    chain: "stellar-testnet",
+    walletAddress: "GAH4OKQGUST2QO4AZYBEZNRAGNKYCDMII6RONIRNT77CQ5OAYZAQ3QDQ",
+    fromAsset: "native",
+    toAsset: "USDC",
+    toIssuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    amount: "100",
+    slippageBps: 100,
+    expectedOk: false,
+    expectedErrorCode: "timeout",
+    scenario: "timeout",
+  },
+
+  // ---- Rate limit scenario (documented; relies on 429 response from provider) ----
+
+  rateLimitedQuote: {
+    chain: "ethereum",
+    walletAddress: "0x1234567890abcdef1234567890abcdef12345678",
+    fromAsset: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    toAsset: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    amount: "1",
+    slippageBps: 100,
+    expectedOk: false,
+    expectedErrorCode: "rate_limited",
+    scenario: "rate_limited",
+  },
+};
+
 export const tokenIdentityFixtures: Record<string, AgentInputIdentity> = {
   safeBlueChipToken: {
     chain: "ethereum",
