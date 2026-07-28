@@ -63,7 +63,7 @@ The frontend persists the following identifiers (see `frontend/src/server/storag
 
 | Identifier | Frontend encoding | EVM canonical encoding | Soroban canonical encoding |
 | --- | --- | --- | --- |
-| `decision_id` | `string` (UUIDv4) | `bytes32` `keccak256(abi.encodePacked(uint256(block.chainid), wallet, decisionCounter))` (counter is storage-local) | `BytesN<32>` `sha256(network_short_name ++ wallet ++ counter)` with separator `\u0000` |
+| `decision_id` | `string` (UUIDv4) | `bytes32` `keccak256(abi.encode(uint256(block.chainid), wallet, decisionCounter))` (counter is storage-local; canonical reference: §8) | `BytesN<32>` `sha256(network_short_name ++ "\u0000" ++ wallet ++ "\u0000" ++ counter)` (canonical reference: §8) |
 | `policy_hash` | `string` (64-hex) | `bytes32` `keccak256(abi.encode(maxRiskScore, maxTradePercent, maxMemeExposurePercent, maxSlippageBps, allowedChainsRosterHash, blockedTokensHash))` | bytes32 is unrelated to registry; if registry ever needs a policy hash it uses `sha256` of the same canonical form |
 | `decision_hash` | `string` (64-hex) | `bytes32` `keccak256(abi.encode(decision_id, policy_hash, agent, createdAt, summaryLeaf))` | n/a |
 | `intent_hash` | `string` (64-hex) | `bytes32` `keccak256(abi.encode(decision_hash, chainId, fromToken, toToken, percent, valueUsd, expiry, nonce))` | n/a |
@@ -88,10 +88,10 @@ The contracts emit normalized events whose parameter names line up with the fron
 | `AgentApproved` | EVM | owner adds an agent | `wallet`, `agent` | `approvedAt`, `policyHash` |
 | `AgentRevoked` | EVM | owner revokes an agent | `wallet`, `previousAgent` | `revokedAt`, `reason` |
 | `AgentRotated` | EVM | owner rotates an agent | `wallet`, `previousAgent`, `newAgent` | `rotatedAt`, `policyHash` |
-| `PolicyUpdated` | EVM | owner updates rules | `wallet` | `policyHash`, `updatedAt` |
-| `DecisionLogged` | EVM | agent logs a decision | `wallet`, `agent` | `decisionHash`, `policyHash`, `decisionId`, `riskScore`, `createdAt` |
+| `PolicyUpdated` | EVM | owner updates rules | `wallet`, `policyHash` | `updatedAt` |
+| `DecisionLogged` | EVM | agent logs a decision | `wallet`, `agent`, `decisionHash` | `policyHash`, `decisionId`, `riskScore`, `createdAt` |
 | `ExecutionIntentLogged` | EVM | owner logs a signed intent | `wallet`, `intentHash` | `decisionHash`, `expiry`, `nonce` |
-| `ExecutionIntentReplayed` | EVM | replay attempt rejected | `intentHash` | `wallet`, `block.timestamp` |
+| `ExecutionIntentReplayed` | EVM | replay attempt rejected | `intentHash`, `wallet` | `at` |
 | `ExecutionIntentExpired` | EVM | stale intent surfaced | `wallet`, `intentHash` | `expiry`, `block.timestamp` |
 | `EmergencyPauseSet` | EVM | pause toggled | `wallet` | `paused`, `pausedAt`, `reason` |
 | `PublisherAuthorizationChanged` | Soroban | admin toggles publisher | `publisher` | `authorized`, `tier`, `changedAt` |
@@ -459,11 +459,11 @@ All canonical identifier encodings (decision_id, policy_hash, decision_hash, int
 
 | Network | Chain | Tier | Status |
 | --- | --- | --- | --- |
-| GOAT Network (id 48816) | EVM | dev (primary) | await maintainer sign-off |
-| Stellar Testnet | Soroban | dev (primary) | await maintainer sign-off |
-| Base Sepolia | EVM | dev (secondary, parallel coverage only) | await maintainer sign-off |
-| Stellar Pubnet | Soroban | prod | deferred until §9.3 step 6 (third-party audit) |
-| Base mainnet | EVM | prod | deferred until §9.3 step 6 (third-party audit) |
+| GOAT Network (id 48816) | EVM | dev (primary) | Proposed primary target; lock-in requires a single §9.5 confirming comment. |
+| Stellar Testnet | Soroban | dev (primary) | Proposed primary target; lock-in requires a single §9.5 confirming comment. |
+| Base Sepolia | EVM | dev (secondary, parallel coverage only) | Documented secondary; rollout begins only after §9.5 confirms it as a maintainer-supported testnet (§9.6). |
+| Stellar Pubnet | Soroban | prod | Deferred until §9.3 step 6 (third-party audit). |
+| Base mainnet | EVM | prod | Deferred until §9.3 step 6 (third-party audit). |
 
 The contributor proposes GOAT Network (id 48816) as the primary EVM testnet and Stellar Testnet as the primary Soroban testnet because the existing frontend already exercises the entire V2 transaction lifecycle (`prepare`/`submit`/`confirm`/polling/reject) on these networks. Base Sepolia is kept as a documented secondary testnet; rollout against it begins only after a maintainer approval comment on this PR. Pubnet-equivalent rollouts remain deferred until the third-party audit closes (see §9.3).
 
