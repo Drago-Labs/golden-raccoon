@@ -543,6 +543,8 @@ The contributor proposes concrete answers inline so the maintainer review can ei
 
 The spec is **implementation-ready** once the maintainer approves the open questions in §9.5; the contributor's proposed answers are inline in §9.5 so an approving comment can lock the choices in a single review.
 
+> **Editor note (encoding authority):** §8 is the authoritative canonical encoding reference for every ID/hash type that appears in both §3 (frontend identifiers) and §8 (canonical encoding reference). §3 mirrors §8 by reference. If a row in §3 disagrees with the corresponding row in §8, §8 wins and §3 must be aligned. Future contributors should propose new canonical encodings in §8 first and link §3 to them — not the other way around.
+
 ### 9.6 Secondary parallel coverage (Base Sepolia)
 
 - Base Sepolia is documented as the parallel EVM testnet for coverage parity. It is **not** the primary EVM target — GOAT Network (id 48816) is.
