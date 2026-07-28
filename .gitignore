@@ -16,6 +16,8 @@ dist/
 coverage/
 artifacts/
 backend/contracts/cache/
+backend/contracts/artifacts/
+backend/contracts/typechain-types/
 !frontend/src/server/cache/
 !frontend/src/server/cache/**
 typechain-types/
@@ -23,6 +25,7 @@ typechain-types/
 # Rust / Soroban build outputs
 soroban/target/
 **/target/
+**/*.wasm
 
 # env and secrets
 .env

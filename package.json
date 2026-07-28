@@ -11,7 +11,8 @@
     "test:stellar-rpc": "node scripts/check-stellar-rpc.mjs",
     "smoke": "node scripts/smoke-api.mjs",
     "monitor:production": "node scripts/monitor-production.mjs",
-    "quality:gate": "npm run deploy:check && npm run test:stellar-config && npm run test:agents && npm run lint && npm run build",
+    "typecheck": "npm --prefix frontend run typecheck",
+    "quality:gate": "npm run deploy:check && npm run test:stellar-config && npm run test:agents && npm run typecheck && npm run lint && npm run build",
     "quality:gate:full": "npm run quality:gate && npm run smoke",
     "verify": "npm run quality:gate"
   },

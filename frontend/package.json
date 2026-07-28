@@ -8,9 +8,10 @@
     "start": "next start",
     "deploy:check": "node ../scripts/check-deploy-readiness.mjs",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "test:agents": "tsx --tsconfig tsconfig.json scripts/agent-fixture-check.ts",
     "test:stellar-config": "tsx --tsconfig tsconfig.json scripts/stellar-config-check.ts",
-    "verify": "npm run test:agents && npm run lint && npm run build"
+    "verify": "npm run test:agents && npm run typecheck && npm run lint && npm run build"
   },
   "dependencies": {
     "@coinbase/x402": "^2.1.0",

@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  STELLAR_CLI_VERSION: "26.1.0"
+
+jobs:
+  app-quality:
+    name: App quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Run quality gate
+        run: npm run quality:gate
+
+  evm-contracts:
+    name: EVM GoldRaccoonVault
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/contracts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/contracts/package-lock.json
+
+      - name: Install contract dependencies
+        run: npm ci
+
+      - name: Compile GoldRaccoonVault
+        run: npm run compile
+
+      - name: Test GoldRaccoonVault
+        run: npm test
+
+  soroban:
+    name: Soroban workspace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: wasm32v1-none
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: soroban -> target
+          cache-targets: false
+          cache-on-failure: true
+
+      - name: Cache Stellar CLI
+        id: cache-stellar-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/stellar
+          key: stellar-cli-${{ runner.os }}-${{ env.STELLAR_CLI_VERSION }}
+
+      - name: Install Stellar CLI
+        if: steps.cache-stellar-cli.outputs.cache-hit != 'true'
+        run: cargo install --locked stellar-cli --version ${{ env.STELLAR_CLI_VERSION }}
+
+      - name: Format check
+        run: cargo fmt --manifest-path soroban/Cargo.toml --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path soroban/Cargo.toml --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --manifest-path soroban/Cargo.toml
+
+      - name: Reproducible WASM build
+        run: stellar contract build --manifest-path soroban/Cargo.toml
+
+  api-smoke:
+    name: API smoke
+    runs-on: ubuntu-latest
+    env:
+      APP_MODE: test
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
+      GOAT_RPC_URL: https://rpc.goat.network
+      NEXT_PUBLIC_GOAT_RPC_URL: https://rpc.goat.network
+      X402_PAY_TO: "0x000000000000000000000000000000000000dEaD"
+      X402_PRICE_USD: "$0.01"
+      X402_NETWORK: "eip155:84532"
+      X402_FACILITATOR_URL: https://x402.org/facilitator
+      X402_ASSET: USDC
+      SMOKE_BASE_URL: http://127.0.0.1:3000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Build production app
+        run: npm run build
+
+      - name: Start server and run smoke checks
+        run: |
+          set -euo pipefail
+          npm run start &
+          server_pid=$!
+          cleanup() {
+            kill "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for _ in $(seq 1 60); do
+            if curl -sf "$SMOKE_BASE_URL/api/health" >/dev/null; then
+              npm run smoke
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Server did not become healthy in time" >&2
+          exit 1
