@@ -122,9 +122,10 @@ async function loadRecentScanRunsView(wallet: string): Promise<ViewScanRun[]> {
 export default async function DiscoveryPage({
   searchParams,
 }: {
-  searchParams: { wallet?: string; chain?: string; status?: string };
+  searchParams: Promise<{ wallet?: string; chain?: string; status?: string }>;
 }) {
-  const wallet = (searchParams.wallet ?? DEFAULT_WALLET).trim().toLowerCase();
+  const params = await searchParams;
+  const wallet = (params.wallet ?? DEFAULT_WALLET).trim().toLowerCase();
   const { candidates, origin } = await safeListCandidates();
   const watchlist = await loadWatchlistView(wallet);
   const alerts = await loadRecentAlertsView(wallet);

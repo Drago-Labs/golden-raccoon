@@ -98,8 +98,8 @@ function priorRuns(entryId: string | undefined) {
   return listWatchlistScanRuns(entryId).slice(0, 8);
 }
 
-export default async function DiscoveryScanPage({ searchParams }: { searchParams: ScanPageSearchParams }) {
-  const params = searchParams;
+export default async function DiscoveryScanPage({ searchParams }: { searchParams: Promise<ScanPageSearchParams> }) {
+  const params = await searchParams;
   const wallet = (params.wallet ?? DEFAULT_WALLET).trim().toLowerCase();
   const { scan, alerts, entry, newRun, previousRunId, error } = await runScanForParams(params);
 

@@ -8,7 +8,7 @@ const bodySchema = z.object({
   walletAddress: z.string().min(1).max(80).optional(),
 });
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const rateLimited = checkRateLimit(request, { namespace: "watchlist:rescan", limit: 15, windowMs: 60_000 });
 
   if (rateLimited) {
@@ -23,7 +23,8 @@ export async function POST(request: Request, { params }: { params: { id: string 
   }
 
   try {
-    const result = await rescanWatchlistEntry(params.id, { walletAddress: parsed.data.walletAddress });
+    const { id } = await params;
+    const result = await rescanWatchlistEntry(id, { walletAddress: parsed.data.walletAddress });
 
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 404 });
@@ -46,12 +47,14 @@ export async function POST(request: Request, { params }: { params: { id: string 
   }
 }
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const rateLimited = checkRateLimit(request, { namespace: "watchlist:history", limit: 30, windowMs: 60_000 });
 
   if (rateLimited) {
     return rateLimited;
   }
 
-  return NextResponse.json({ runs: listWatchlistHistory(params.id) });
+  const { id } = await params;
+
+  return NextResponse.json({ runs: listWatchlistHistory(id) });
 }
