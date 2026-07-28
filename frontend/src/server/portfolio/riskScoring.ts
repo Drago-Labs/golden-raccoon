@@ -66,7 +66,7 @@ export function getPortfolioRiskSignals(holdings: TokenHolding[]): PortfolioRisk
   const coreAssetExposurePercent = sumAllocation(holdings.filter((holding) => isCoreAssetHolding(holding)));
   const unverifiedExposurePercent = sumAllocation(holdings.filter((holding) => !holding.isVerified));
   const highRiskClassExposurePercent = sumAllocation(holdings.filter((holding) => isHighRiskClassHolding(holding)));
-  const unknownPriceExposurePercent = sumAllocation(holdings.filter((holding) => holding.priceUsd <= 0 || holding.valueUsd <= 0));
+  const unknownPriceExposurePercent = sumAllocation(holdings.filter((holding) => holding.priceUsd === null || holding.priceUsd <= 0 || holding.valueUsd <= 0));
   const lowLiquidityExposurePercent = sumAllocation(holdings.filter((holding) => holding.signals.liquidityRisk >= 70));
   const highVolatilityExposurePercent = sumAllocation(holdings.filter((holding) => Math.abs(holding.dayChangePercent ?? 0) >= 10));
   const dominantThemePercent = getDominantThemePercent(holdings);

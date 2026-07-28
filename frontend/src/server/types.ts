@@ -157,13 +157,18 @@ export type TokenHolding = {
   tokenAddress: string;
   symbol: "GOAT" | "USDC" | "MEME" | string;
   name: string;
+  assetKind?: "native" | "classic" | "sac" | "sep41";
+  issuer?: string;
+  contractId?: string;
   chainId?: string;
   chainName?: string;
   chainLogoUrl?: string;
   logoUrl?: string;
   isVerified?: boolean;
   balance: number;
-  priceUsd: number;
+  priceUsd: number | null;
+  priceStatus?: "priced" | "unavailable";
+  priceSource?: string;
   valueUsd: number;
   dayChangeUsd?: number;
   dayChangePercent?: number;
@@ -171,6 +176,22 @@ export type TokenHolding = {
   riskScore: number;
   riskLevel: RiskLevel;
   signals: TokenSignal;
+  stellarRisk?: {
+    authorized: boolean;
+    authorizationRequired: boolean;
+    revocable: boolean;
+    clawbackEnabled: boolean;
+    liquidity: "known" | "unknown";
+  };
+};
+
+export type StellarPortfolioActivity = {
+  id: string;
+  type: "payment" | "contract_call" | "trustline_change" | "swap";
+  createdAt: string;
+  transactionHash: string;
+  asset?: string;
+  amount?: string;
 };
 
 export type PortfolioSnapshot = {
@@ -186,6 +207,11 @@ export type PortfolioSnapshot = {
   valuationStatus?: "complete" | "partial" | "unavailable";
   unpricedAssetCount?: number;
   accountSubentryCount?: number;
+  minimumReserveXlm?: number;
+  nativeSellingLiabilities?: number;
+  spendableNativeBalance?: number;
+  reserveReady?: boolean;
+  recentActivity?: StellarPortfolioActivity[];
   providerMeta?: {
     provider: string;
     network: string;
