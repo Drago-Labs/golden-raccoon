@@ -182,6 +182,7 @@ export type TokenHolding = {
     revocable: boolean;
     clawbackEnabled: boolean;
     liquidity: "known" | "unknown";
+    dataStatus: "complete" | "partial";
   };
 };
 
@@ -212,6 +213,7 @@ export type PortfolioSnapshot = {
   spendableNativeBalance?: number;
   reserveReady?: boolean;
   recentActivity?: StellarPortfolioActivity[];
+  dataWarnings?: string[];
   providerMeta?: {
     provider: string;
     network: string;

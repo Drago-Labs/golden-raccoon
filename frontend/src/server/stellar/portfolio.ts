@@ -90,7 +90,12 @@ type ConfiguredContractToken = {
   verified?: boolean;
   priceUsd?: number;
   priceSource?: string;
+  authorizationRequired?: boolean;
+  revocable?: boolean;
+  clawbackEnabled?: boolean;
 };
+
+type IssuerFlags = NonNullable<HorizonAccount["flags"]>;
 
 function parseConfiguredContractTokens(): ConfiguredContractToken[] {
   const raw = process.env.STELLAR_PORTFOLIO_TOKENS_JSON;
@@ -193,19 +198,24 @@ async function loadConfiguredContractHolding(
   walletAddress: string,
   network: StellarNetworkConfig,
   rpcServer: ReturnType<typeof createStellarRpcServer>["server"],
+  issuerFlags: IssuerFlags | null,
 ): Promise<StellarPortfolioHoldingInput | null> {
   const source = await rpcServer.getAccount(walletAddress);
   const contract = new Contract(token.contractId);
-  const transaction = new TransactionBuilder(source, {
-    fee: BASE_FEE,
-    networkPassphrase: network.networkPassphrase,
-  })
-    .addOperation(
-      contract.call("balance", new Address(walletAddress).toScVal()),
-    )
-    .setTimeout(30)
-    .build();
-  const simulation = await rpcServer.simulateTransaction(transaction);
+  const simulate = async (method: string) => {
+    const transaction = new TransactionBuilder(source, {
+      fee: BASE_FEE,
+      networkPassphrase: network.networkPassphrase,
+    })
+      .addOperation(
+        contract.call(method, new Address(walletAddress).toScVal()),
+      )
+      .setTimeout(30)
+      .build();
+
+    return rpcServer.simulateTransaction(transaction);
+  };
+  const simulation = await simulate("balance");
 
   if (!("result" in simulation) || !simulation.result?.retval) return null;
   const balance = formatContractBalance(
@@ -213,6 +223,28 @@ async function loadConfiguredContractHolding(
     token.decimals,
   );
   if (balance === null) return null;
+  let authorized = true;
+  let authorizationReadComplete = token.kind !== "sac";
+
+  if (token.kind === "sac") {
+    try {
+      const authorization = await simulate("authorized");
+      if ("result" in authorization && authorization.result?.retval) {
+        const value = scValToNative(authorization.result.retval);
+        if (typeof value === "boolean") {
+          authorized = value;
+          authorizationReadComplete = true;
+        }
+      }
+    } catch {
+      authorizationReadComplete = false;
+    }
+  }
+  const sacIssuerDataComplete =
+    token.kind !== "sac" ||
+    (Boolean(token.issuer) &&
+      issuerFlags !== null &&
+      authorizationReadComplete);
 
   return {
     assetKind: token.kind,
@@ -222,10 +254,13 @@ async function loadConfiguredContractHolding(
     balance,
     issuer: token.issuer?.toUpperCase(),
     contractId: token.contractId.toUpperCase(),
-    authorized: true,
-    authorizationRequired: false,
-    revocable: false,
-    clawbackEnabled: false,
+    authorized,
+    authorizationRequired:
+      issuerFlags?.auth_required ?? token.authorizationRequired ?? false,
+    revocable: issuerFlags?.auth_revocable ?? token.revocable ?? false,
+    clawbackEnabled:
+      issuerFlags?.auth_clawback_enabled ?? token.clawbackEnabled ?? false,
+    riskDataComplete: sacIssuerDataComplete,
     verified: token.verified === true,
     priceUsd:
       typeof token.priceUsd === "number" && token.priceUsd > 0
@@ -245,7 +280,7 @@ async function loadIssuerFlags(
         const account = await loadAccount(issuer);
         return [issuer, account.flags ?? {}] as const;
       } catch {
-        return [issuer, {}] as const;
+        return [issuer, null] as const;
       }
     }),
   );
@@ -290,12 +325,24 @@ async function loadPortfolio(
   const account = accountResult.value;
   const xlmMarket =
     xlmPriceResult.status === "fulfilled" ? xlmPriceResult.value : null;
+  const configuredTokens = parseConfiguredContractTokens().filter(
+    (token) => token.network === network.id,
+  );
   const issuerFlags = await loadIssuerFlags(
-    account.balances
-      .map((balance) => balance.asset_issuer?.toUpperCase())
-      .filter((issuer): issuer is string => Boolean(issuer)),
+    [
+      ...account.balances.map((balance) =>
+        balance.asset_issuer?.toUpperCase(),
+      ),
+      ...configuredTokens.map((token) => token.issuer?.toUpperCase()),
+    ].filter((issuer): issuer is string => Boolean(issuer)),
     (address) => dataServer.loadAccount(address) as Promise<HorizonAccount>,
   );
+  const dataWarnings: string[] = [];
+  for (const [issuer, flags] of issuerFlags) {
+    if (flags === null) {
+      dataWarnings.push(`Issuer risk flags unavailable for ${issuer}.`);
+    }
+  }
   const classicHoldings = account.balances.map(
     (balance): StellarPortfolioHoldingInput => {
       const native = balance.asset_type === "native";
@@ -333,6 +380,7 @@ async function loadPortfolio(
         clawbackEnabled:
           balance.is_clawback_enabled === true ||
           flags?.auth_clawback_enabled === true,
+        riskDataComplete: native || flags !== null,
         verified: native || officialUsdc,
         priceUsd: native ? (xlmMarket?.usd ?? null) : officialUsdc ? 1 : null,
         priceSource: native
@@ -346,27 +394,36 @@ async function loadPortfolio(
     },
   );
   const contractResults = await Promise.allSettled(
-    parseConfiguredContractTokens()
-      .filter((token) => token.network === network.id)
-      .map((token) =>
-        loadConfiguredContractHolding(
-          token,
-          canonicalWallet,
-          network,
-          rpcServer,
-        ),
+    configuredTokens.map((token) =>
+      loadConfiguredContractHolding(
+        token,
+        canonicalWallet,
+        network,
+        rpcServer,
+        token.issuer
+          ? (issuerFlags.get(token.issuer.toUpperCase()) ?? null)
+          : null,
       ),
+    ),
   );
-  const contractHoldings = contractResults.flatMap((result) =>
-    result.status === "fulfilled" && result.value ? [result.value] : [],
-  );
+  const contractHoldings = contractResults.flatMap((result, index) => {
+    if (result.status === "fulfilled" && result.value) return [result.value];
+    dataWarnings.push(
+      `Contract balance unavailable for ${configuredTokens[index]?.contractId ?? "configured token"}.`,
+    );
+    return [];
+  });
   const ledgerRecord =
     ledgerResult.status === "fulfilled"
       ? (ledgerResult.value.records[0] as HorizonLedgerRecord | undefined)
       : undefined;
-  const baseReserveStroops = Number(
-    ledgerRecord?.base_reserve_in_stroops ?? 5_000_000,
-  );
+  const baseReserveStroops = Number(ledgerRecord?.base_reserve_in_stroops);
+  if (
+    !Number.isFinite(baseReserveStroops) ||
+    baseReserveStroops <= 0
+  ) {
+    return null;
+  }
   const recentActivity =
     activityResult.status === "fulfilled"
       ? activityResult.value.records
@@ -378,6 +435,9 @@ async function loadPortfolio(
               activity !== null,
           )
       : [];
+  if (activityResult.status !== "fulfilled") {
+    dataWarnings.push("Recent Stellar activity is temporarily unavailable.");
+  }
 
   return buildStellarPortfolioSnapshot({
     walletAddress: canonicalWallet,
@@ -393,6 +453,7 @@ async function loadPortfolio(
     recentActivity,
     xlmDayChangePercent: xlmMarket?.usd_24h_change,
     providerLatencyMs: Math.round(performance.now() - startedAt),
+    dataWarnings,
   });
 }
 

@@ -71,7 +71,12 @@ export function getPortfolioRiskSignals(holdings: TokenHolding[]): PortfolioRisk
   const highVolatilityExposurePercent = sumAllocation(holdings.filter((holding) => Math.abs(holding.dayChangePercent ?? 0) >= 10));
   const dominantThemePercent = getDominantThemePercent(holdings);
   const dominantChainPercent = getDominantChainPercent(holdings);
-  const hasNativeGasToken = holdings.some((holding) => holding.tokenAddress.startsWith("native:") && holding.balance > 0);
+  const hasNativeGasToken = holdings.some(
+    (holding) =>
+      (holding.tokenAddress === "native" ||
+        holding.tokenAddress.startsWith("native:")) &&
+      holding.balance > 0,
+  );
   const highRiskExposurePercent = sumAllocation(holdings.filter((holding) => holding.riskScore >= 50));
   const criticalExposurePercent = sumAllocation(holdings.filter((holding) => holding.riskScore >= 75));
 

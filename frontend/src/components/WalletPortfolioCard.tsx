@@ -177,6 +177,12 @@ export function WalletPortfolioCard({
               {(portfolio.unpricedAssetCount ?? 0) === 1 ? "" : "s"} without a trusted price
             </div>
           ) : null}
+          {(portfolio.dataWarnings?.length ?? 0) > 0 ? (
+            <div className="mt-1 text-xs text-amber-200">
+              {portfolio.dataWarnings?.length} provider warning
+              {portfolio.dataWarnings?.length === 1 ? "" : "s"}
+            </div>
+          ) : null}
           {typeof portfolio.spendableNativeBalance === "number" ? (
             <div className="mt-1 text-xs text-white/42">
               Spendable {portfolio.nativeSymbol}: {formatTokenBalance(portfolio.spendableNativeBalance)}
@@ -248,7 +254,11 @@ export function WalletPortfolioCard({
                   {holding.chainName ? (
                     <div className="mt-1 text-xs text-white/32">
                       {holding.chainName}
-                      {holding.issuer ? ` · issuer ${shortAddress(holding.issuer)}` : " · native asset"}
+                      {holding.issuer
+                        ? ` · issuer ${shortAddress(holding.issuer)}`
+                        : holding.contractId
+                          ? ` · issuer unavailable · contract ${shortAddress(holding.contractId)}`
+                          : " · native issuer"}
                     </div>
                   ) : null}
                 </div>
@@ -263,8 +273,12 @@ export function WalletPortfolioCard({
                 )}
                 {holding.stellarRisk?.authorized === false ? (
                   <div className="mt-1 text-xs text-red-300">Unauthorized trustline</div>
-                ) : holding.stellarRisk?.clawbackEnabled ? (
+                ) : null}
+                {holding.stellarRisk?.clawbackEnabled ? (
                   <div className="mt-1 text-xs text-amber-200">Clawback enabled</div>
+                ) : null}
+                {holding.stellarRisk?.dataStatus === "partial" ? (
+                  <div className="mt-1 text-xs text-amber-200">Issuer risk data partial</div>
                 ) : null}
               </div>
             </div>

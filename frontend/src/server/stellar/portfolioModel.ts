@@ -30,6 +30,7 @@ export type StellarPortfolioHoldingInput = {
   authorizationRequired?: boolean;
   revocable?: boolean;
   clawbackEnabled?: boolean;
+  riskDataComplete?: boolean;
   verified: boolean;
   priceUsd: number | null;
   priceSource?: string;
@@ -45,6 +46,7 @@ export type StellarPortfolioModelInput = {
   recentActivity?: StellarPortfolioActivity[];
   xlmDayChangePercent?: number;
   providerLatencyMs: number;
+  dataWarnings?: string[];
 };
 
 function finiteNumber(value: string | number | undefined) {
@@ -93,6 +95,7 @@ function signalsForHolding(input: {
   verified: boolean;
   priced: boolean;
   reserveReady: boolean;
+  riskDataComplete: boolean;
 }): TokenSignal {
   const issuerControlRisk =
     (input.authorizationRequired ? 12 : 0) +
@@ -103,15 +106,70 @@ function signalsForHolding(input: {
     scamRisk: input.verified ? 8 : 42,
     websiteTrustRisk: input.verified ? 10 : 38,
     contractRisk: clampRisk(
-      (input.authorized ? 12 : 72) + issuerControlRisk,
+      (input.authorized ? 12 : 72) +
+        issuerControlRisk +
+        (input.riskDataComplete ? 0 : 28),
     ),
     whaleSellRisk: 30,
-    liquidityRisk: input.priced ? (input.reserveReady ? 18 : 38) : 72,
+    liquidityRisk: input.priced
+      ? input.reserveReady
+        ? input.riskDataComplete
+          ? 18
+          : 34
+        : 38
+      : 72,
     xSentimentRisk: 25,
     holderConcentrationRisk: clampRisk(input.allocationPercent),
     priceVolatilityRisk: input.priced ? 18 : 58,
     portfolioExposureRisk: clampRisk(input.allocationPercent),
   };
+}
+
+export function dedupeStellarHoldings(
+  holdings: StellarPortfolioHoldingInput[],
+) {
+  const byIdentity = new Map<string, StellarPortfolioHoldingInput>();
+
+  for (const holding of holdings) {
+    const identity = holding.contractId
+      ? `contract:${holding.contractId.toUpperCase()}`
+      : holding.assetKey.toUpperCase();
+    const existing = byIdentity.get(identity);
+
+    if (!existing) {
+      byIdentity.set(identity, holding);
+      continue;
+    }
+
+    const classic =
+      existing.assetKind === "classic"
+        ? existing
+        : holding.assetKind === "classic"
+          ? holding
+          : null;
+    const sac =
+      existing.assetKind === "sac"
+        ? existing
+        : holding.assetKind === "sac"
+          ? holding
+          : null;
+
+    if (classic && sac) {
+      byIdentity.set(identity, {
+        ...classic,
+        assetKind: "sac",
+        name: sac.name || classic.name,
+        verified: classic.verified || sac.verified,
+        priceUsd: sac.priceUsd ?? classic.priceUsd,
+        priceSource: sac.priceSource ?? classic.priceSource,
+        riskDataComplete:
+          classic.riskDataComplete !== false &&
+          sac.riskDataComplete !== false,
+      });
+    }
+  }
+
+  return [...byIdentity.values()];
 }
 
 export function buildStellarPortfolioSnapshot(
@@ -136,7 +194,7 @@ export function buildStellarPortfolioSnapshot(
   const reserveReady =
     nativeBalance >= minimumReserveXlm + nativeSellingLiabilities;
 
-  const preliminary = input.holdings.map((holding) => {
+  const preliminary = dedupeStellarHoldings(input.holdings).map((holding) => {
     const balance = Math.max(0, finiteNumber(holding.balance));
     const priced =
       holding.priceUsd !== null &&
@@ -163,6 +221,7 @@ export function buildStellarPortfolioSnapshot(
       const authorizationRequired = holding.authorizationRequired === true;
       const revocable = holding.revocable === true;
       const clawbackEnabled = holding.clawbackEnabled === true;
+      const riskDataComplete = holding.riskDataComplete !== false;
       const signals = signalsForHolding({
         allocationPercent,
         authorized,
@@ -172,6 +231,7 @@ export function buildStellarPortfolioSnapshot(
         verified: holding.verified,
         priced,
         reserveReady,
+        riskDataComplete,
       });
       const riskScore = scoreTokenRisk(signals);
 
@@ -200,6 +260,7 @@ export function buildStellarPortfolioSnapshot(
           revocable,
           clawbackEnabled,
           liquidity: priced ? "known" : "unknown",
+          dataStatus: riskDataComplete ? "complete" : "partial",
         },
       };
     })
@@ -219,12 +280,18 @@ export function buildStellarPortfolioSnapshot(
       holding.stellarRisk?.revocable ||
       holding.stellarRisk?.clawbackEnabled,
   );
+  const hasPartialRiskData = holdings.some(
+    (holding) => holding.stellarRisk?.dataStatus === "partial",
+  );
+  const hasProviderWarnings = (input.dataWarnings?.length ?? 0) > 0;
   const baseRisk = scorePortfolioRisk(holdings);
   const riskScore = Math.max(
     baseRisk,
     unpricedAssetCount > 0 ? 52 : 0,
     hasUnauthorizedTrustline ? 72 : 0,
     hasControlledTrustline ? 58 : 0,
+    hasPartialRiskData ? 60 : 0,
+    hasProviderWarnings ? 55 : 0,
     reserveReady ? 0 : 68,
   );
 
@@ -237,7 +304,8 @@ export function buildStellarPortfolioSnapshot(
     riskScore,
     createdAt: new Date().toISOString(),
     holdings,
-    valuationStatus: unpricedAssetCount > 0 ? "partial" : "complete",
+    valuationStatus:
+      unpricedAssetCount > 0 || hasProviderWarnings ? "partial" : "complete",
     unpricedAssetCount,
     accountSubentryCount: input.account.subentryCount,
     minimumReserveXlm,
@@ -245,6 +313,7 @@ export function buildStellarPortfolioSnapshot(
     spendableNativeBalance,
     reserveReady,
     recentActivity: input.recentActivity ?? [],
+    dataWarnings: input.dataWarnings ?? [],
     providerMeta: {
       provider: "stellar_rpc_and_data_api",
       network: input.networkId,

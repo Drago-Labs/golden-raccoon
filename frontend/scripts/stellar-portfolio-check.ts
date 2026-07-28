@@ -6,6 +6,7 @@ import {
   stellarPortfolioCacheKey,
   type StellarPortfolioHoldingInput,
 } from "../src/server/stellar/portfolioModel";
+import { getPortfolioRiskSignals } from "../src/server/portfolio/riskScoring";
 
 const wallet =
   "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
@@ -33,6 +34,7 @@ function native(
 function snapshot(
   holdings: StellarPortfolioHoldingInput[],
   subentryCount = Math.max(0, holdings.length - 1),
+  dataWarnings: string[] = [],
 ) {
   return buildStellarPortfolioSnapshot({
     walletAddress: wallet,
@@ -42,6 +44,7 @@ function snapshot(
     account: { subentryCount },
     holdings,
     providerLatencyMs: 1,
+    dataWarnings,
   });
 }
 
@@ -66,6 +69,11 @@ assert.notEqual(
   xlmOnly.spendableNativeBalance,
   xlmOnly.nativeBalance,
   "Spendable XLM must account for reserve.",
+);
+assert.equal(
+  getPortfolioRiskSignals(xlmOnly.holdings).hasNativeGasToken,
+  true,
+  "Native XLM must satisfy the gas-asset readiness signal.",
 );
 
 const multiTrustline = snapshot([
@@ -163,6 +171,7 @@ const contracts = snapshot([
     balance: "3",
     contractId: "CSAC",
     authorized: true,
+    riskDataComplete: false,
     verified: true,
     priceUsd: 1,
     priceSource: "fixture",
@@ -187,6 +196,73 @@ assert.deepEqual(
   ["sac", "sep41"],
 );
 assert.equal(contracts.valuationStatus, "partial");
+assert.equal(
+  contracts.holdings.find((holding) => holding.assetKind === "sac")
+    ?.stellarRisk?.dataStatus,
+  "partial",
+);
+
+const duplicateSac = snapshot([
+  native("5"),
+  {
+    assetKind: "classic",
+    assetKey: `classic:USDC:${issuer}`,
+    symbol: "USDC",
+    name: "USD Coin trustline",
+    balance: "10",
+    issuer,
+    contractId: "CDUPLICATESAC",
+    authorized: false,
+    clawbackEnabled: true,
+    riskDataComplete: true,
+    verified: true,
+    priceUsd: 1,
+    priceSource: "official_stellar_usdc",
+  },
+  {
+    assetKind: "sac",
+    assetKey: "contract:CDUPLICATESAC",
+    symbol: "USDC",
+    name: "USD Coin SAC",
+    balance: "10",
+    issuer,
+    contractId: "CDUPLICATESAC",
+    authorized: true,
+    riskDataComplete: true,
+    verified: true,
+    priceUsd: 1,
+    priceSource: "official_stellar_usdc",
+  },
+]);
+const dedupedUsdc = duplicateSac.holdings.filter(
+  (holding) => holding.symbol === "USDC",
+);
+assert.equal(dedupedUsdc.length, 1, "Classic/SAC identity must be deduped.");
+assert.equal(dedupedUsdc[0]?.balance, 10);
+assert.equal(dedupedUsdc[0]?.assetKind, "sac");
+assert.equal(
+  dedupedUsdc[0]?.stellarRisk?.authorized,
+  false,
+  "Trustline authorization must win over optimistic contract metadata.",
+);
+assert.equal(
+  dedupedUsdc[0]?.stellarRisk?.clawbackEnabled,
+  true,
+  "Trustline clawback risk must survive SAC enrichment.",
+);
+assert.equal(
+  duplicateSac.totalValueUsd,
+  10.5,
+  "Classic/SAC duplicate must not inflate valuation.",
+);
+
+const providerPartial = snapshot(
+  [native("5")],
+  0,
+  ["Contract balance unavailable for configured token."],
+);
+assert.equal(providerPartial.valuationStatus, "partial");
+assert.equal(providerPartial.dataWarnings?.length, 1);
 
 const empty = snapshot([], 0);
 assert.equal(empty.holdings.length, 0);
