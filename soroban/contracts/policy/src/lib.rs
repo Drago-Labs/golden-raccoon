@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype,
-    panic_with_error, vec, Address, Bytes, BytesN, Env, String, Symbol, Vec,
+    panic_with_error, xdr::ToXdr, Address, Bytes, BytesN, Env, String, Vec,
 };
 
 const INSTANCE_TTL_THRESHOLD: u32 = 30 * 24 * 60 * 60 / 5;
@@ -65,8 +65,6 @@ pub struct SpendLimit {
     pub spent: i128,
     pub reset_ledger: u32,
 }
-
-// ── Events ──────────────────────────────────────
 
 #[contractevent]
 pub struct PolicyApplied {
@@ -152,12 +150,8 @@ pub enum PolicyError {
     AlreadyAllowed = 20,
 }
 
-// ── Contract ─────────────────────────────────────
-
 #[contract]
 pub struct PolicyContract;
-
-// ── Helpers ──────────────────────────────────────
 
 fn bump_instance(env: &Env) {
     env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
@@ -180,18 +174,7 @@ fn require_owner(env: &Env) {
     }
 }
 
-fn require_owner_or_emergency(env: &Env) {
-    let owner: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
-    let emergency: Address = env.storage().instance().get(&DataKey::EmergencyAdmin).unwrap();
-    if env.current_contract_address() != owner {
-        let caller = env.current_contract_address();
-        if caller == owner || caller == emergency {
-            caller.require_auth();
-        } else {
-            panic_with_error!(env, PolicyError::Unauthorized);
-        }
-    }
-}
+
 
 fn require_agent(env: &Env) {
     let agent: Address = env.storage().instance().get(&DataKey::Agent).unwrap();
@@ -200,35 +183,36 @@ fn require_agent(env: &Env) {
 
 fn hash_policy_decision(env: &Env, user: &Address, agent: &Address, max_tx_value: i128, max_slippage: u32, nonce: u64, expiry: u64) -> BytesN<32> {
     let mut buf = Bytes::new(env);
-    buf.append(&mut Bytes::from_slice(env, DOMAIN_SEPARATOR.as_bytes()));
-    buf.append(&mut Bytes::from_slice(env, b"POLICY_DECISION"));
-    buf.append(&mut env.ledger().sequence().to_be_bytes().to_vec());
-    buf.append(&mut user.to_xdr(env));
-    buf.append(&mut agent.to_xdr(env));
-    buf.append(&mut max_tx_value.to_be_bytes().to_vec());
-    buf.append(&mut max_slippage.to_be_bytes().to_vec());
-    buf.append(&mut nonce.to_be_bytes().to_vec());
-    buf.append(&mut expiry.to_be_bytes().to_vec());
+    buf.append(&Bytes::from_slice(env, DOMAIN_SEPARATOR.as_bytes()));
+    buf.append(&Bytes::from_slice(env, b"POLICY_DECISION"));
+    buf.append(&Bytes::from_slice(env, &env.ledger().sequence().to_be_bytes()));
+    let user_bytes: Bytes = env.crypto().keccak256(&user.to_xdr(env)).into();
+    buf.append(&user_bytes);
+    let agent_bytes: Bytes = env.crypto().keccak256(&agent.to_xdr(env)).into();
+    buf.append(&agent_bytes);
+    buf.append(&Bytes::from_slice(env, &max_tx_value.to_be_bytes()));
+    buf.append(&Bytes::from_slice(env, &max_slippage.to_be_bytes()));
+    buf.append(&Bytes::from_slice(env, &nonce.to_be_bytes()));
+    buf.append(&Bytes::from_slice(env, &expiry.to_be_bytes()));
     env.crypto().keccak256(&buf).into()
 }
 
 fn hash_intent(env: &Env, policy_commitment: &BytesN<32>, target_token: &Address, amount: i128, nonce: u64, expiry: u64) -> BytesN<32> {
     let mut buf = Bytes::new(env);
-    buf.append(&mut Bytes::from_slice(env, DOMAIN_SEPARATOR.as_bytes()));
-    buf.append(&mut Bytes::from_slice(env, b"POLICY_INTENT"));
-    buf.append(&mut env.ledger().sequence().to_be_bytes().to_vec());
-    buf.append(&mut policy_commitment.to_xdr(env));
-    buf.append(&mut target_token.to_xdr(env));
-    buf.append(&mut amount.to_be_bytes().to_vec());
-    buf.append(&mut nonce.to_be_bytes().to_vec());
-    buf.append(&mut expiry.to_be_bytes().to_vec());
+    buf.append(&Bytes::from_slice(env, DOMAIN_SEPARATOR.as_bytes()));
+    buf.append(&Bytes::from_slice(env, b"POLICY_INTENT"));
+    buf.append(&Bytes::from_slice(env, &env.ledger().sequence().to_be_bytes()));
+    buf.append(&policy_commitment.clone().into());
+    let token_bytes: Bytes = env.crypto().keccak256(&target_token.to_xdr(env)).into();
+    buf.append(&token_bytes);
+    buf.append(&Bytes::from_slice(env, &amount.to_be_bytes()));
+    buf.append(&Bytes::from_slice(env, &nonce.to_be_bytes()));
+    buf.append(&Bytes::from_slice(env, &expiry.to_be_bytes()));
     env.crypto().keccak256(&buf).into()
 }
 
 #[contractimpl]
 impl PolicyContract {
-    // ── Initialization ─────────────────────────────
-
     pub fn initialize(env: Env, owner: Address, emergency_admin: Address, agent: Address) {
         if env.storage().instance().has(&DataKey::Owner) {
             panic_with_error!(&env, PolicyError::AlreadyInitialized);
@@ -239,12 +223,10 @@ impl PolicyContract {
         env.storage().instance().set(&DataKey::Agent, &agent);
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().set(&DataKey::MaxTransactionValue, &0i128);
-        env.storage().instance().set::<u32>(&DataKey::MaxSlippageBps, &100);
-        env.storage().instance().set::<i128>(&DataKey::MaxDailySpend, &0i128);
+        env.storage().instance().set(&DataKey::MaxSlippageBps, &100u32);
+        env.storage().instance().set(&DataKey::MaxDailySpend, &0i128);
         bump_instance(&env);
     }
-
-    // ── Admin / Configuration ──────────────────────
 
     pub fn set_emergency_admin(env: Env, admin: Address) {
         require_owner(&env);
@@ -308,24 +290,29 @@ impl PolicyContract {
         list.is_empty()
     }
 
-    // ── Pause / Emergency ──────────────────────────
-
-    pub fn pause(env: Env) {
-        require_owner(&env);
-        env.storage().instance().set(&DataKey::Paused, &true);
-        Paused { by: env.current_contract_address() }.publish(&env);
-        bump_instance(&env);
-    }
-
-    pub fn unpause(env: Env) {
+    pub fn pause(env: Env, caller: Address) {
         let owner: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
-        owner.require_auth();
-        env.storage().instance().set(&DataKey::Paused, &false);
-        Unpaused { by: owner }.publish(&env);
+        let emergency: Address = env.storage().instance().get(&DataKey::EmergencyAdmin).unwrap();
+        if caller != owner && caller != emergency {
+            panic_with_error!(&env, PolicyError::Unauthorized);
+        }
+        caller.require_auth();
+        env.storage().instance().set(&DataKey::Paused, &true);
+        Paused { by: caller }.publish(&env);
         bump_instance(&env);
     }
 
-    // ── Policy Application ─────────────────────────
+    pub fn unpause(env: Env, caller: Address) {
+        let owner: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
+        let emergency: Address = env.storage().instance().get(&DataKey::EmergencyAdmin).unwrap();
+        if caller != owner && caller != emergency {
+            panic_with_error!(&env, PolicyError::Unauthorized);
+        }
+        caller.require_auth();
+        env.storage().instance().set(&DataKey::Paused, &false);
+        Unpaused { by: caller }.publish(&env);
+        bump_instance(&env);
+    }
 
     pub fn apply_policy(
         env: Env,
@@ -373,20 +360,27 @@ impl PolicyContract {
     }
 
     pub fn revoke_policy(env: Env, decision_hash: BytesN<32>) {
-        require_owner(&env);
         let key = DataKey::PolicyDecision(decision_hash.clone());
         let mut decision: PolicyDecision = match env.storage().persistent().get(&key) {
             Some(d) => d,
             None => panic_with_error!(&env, PolicyError::UnknownDecision),
         };
+        let owner: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
+        let emergency: Address = env.storage().instance().get(&DataKey::EmergencyAdmin).unwrap();
+        let agent: Address = env.storage().instance().get(&DataKey::Agent).unwrap();
+        let is_authorised = env.current_contract_address() == owner
+            || env.current_contract_address() == emergency
+            || env.current_contract_address() == decision.user
+            || env.current_contract_address() == agent;
+        if !is_authorised {
+            decision.user.require_auth();
+        }
         decision.revoked = true;
         env.storage().persistent().set(&key, &decision);
         extend_entry(&env, &key);
         IntentRevoked { intent_hash: decision_hash }.publish(&env);
         bump_instance(&env);
     }
-
-    // ── Intent Lifecycle ───────────────────────────
 
     pub fn create_intent(
         env: Env,
@@ -430,6 +424,12 @@ impl PolicyContract {
         }
         if decision.expiry < expiry {
             panic_with_error!(&env, PolicyError::Expired);
+        }
+        if decision.max_transaction_value > 0 && amount > decision.max_transaction_value {
+            panic_with_error!(&env, PolicyError::ExceedsTxLimit);
+        }
+        if decision.max_slippage_bps > 0 && slippage_bps > decision.max_slippage_bps {
+            panic_with_error!(&env, PolicyError::SlippageTooHigh);
         }
 
         let nonce = decision.nonce;
@@ -504,8 +504,6 @@ impl PolicyContract {
         bump_instance(&env);
     }
 
-    // ── Internal ───────────────────────────────────
-
     pub fn check_daily_spend(env: Env, amount: i128) {
         let max_daily: i128 = env.storage().instance().get(&DataKey::MaxDailySpend).unwrap_or(0);
         if max_daily <= 0 {
@@ -518,14 +516,13 @@ impl PolicyContract {
         let mut reset_ledger: u32 = env.storage().instance().get(&reset_key).unwrap_or(0);
 
         let daily_window: u32 = 1440;
-        let mut spent: i128 = 0;
 
         if reset_ledger == 0 || current_ledger.saturating_sub(reset_ledger) >= daily_window {
             reset_ledger = current_ledger;
             env.storage().instance().set(&reset_key, &reset_ledger);
-            env.storage().instance().set::<i128>(&spend_key, &amount);
+            env.storage().instance().set(&spend_key, &amount);
         } else {
-            spent = env.storage().instance().get::<DataKey, i128>(&spend_key).unwrap_or(0);
+            let spent: i128 = env.storage().instance().get::<DataKey, i128>(&spend_key).unwrap_or(0);
             let new_spent = spent.saturating_add(amount);
             if new_spent > max_daily {
                 panic_with_error!(&env, PolicyError::ExceedsDailyLimit);
@@ -534,10 +531,8 @@ impl PolicyContract {
         }
     }
 
-    // ── Views ──────────────────────────────────────
-
-    pub fn get_version() -> String {
-        String::from_slice(&Env::default(), VERSION)
+    pub fn get_version(env: Env) -> String {
+        String::from_str(&env, VERSION)
     }
 
     pub fn get_policy_decision(env: Env, decision_hash: BytesN<32>) -> Option<PolicyDecision> {
@@ -572,6 +567,35 @@ impl PolicyContract {
 
     pub fn is_paused(env: Env) -> bool {
         env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+    }
+
+    pub fn get_intent_validity(env: Env, intent_hash: BytesN<32>, token: Address, amount: i128) -> (bool, String) {
+        let intent_key = DataKey::Intent(intent_hash.clone());
+        let intent: Intent = match env.storage().persistent().get(&intent_key) {
+            Some(i) => i,
+            None => return (false, String::from_str(&env, "unknown intent")),
+        };
+        if intent.executed {
+            return (false, String::from_str(&env, "already executed"));
+        }
+        if intent.expiry < env.ledger().timestamp() {
+            return (false, String::from_str(&env, "intent expired"));
+        }
+        if intent.target_token != token {
+            return (false, String::from_str(&env, "token mismatch"));
+        }
+        if intent.amount < amount {
+            return (false, String::from_str(&env, "insufficient intent amount"));
+        }
+        let decision_key = DataKey::PolicyDecision(intent.policy_commitment.clone());
+        let decision: PolicyDecision = match env.storage().persistent().get(&decision_key) {
+            Some(d) => d,
+            None => return (false, String::from_str(&env, "unknown policy")),
+        };
+        if decision.revoked {
+            return (false, String::from_str(&env, "policy revoked"));
+        }
+        (true, String::from_str(&env, ""))
     }
 }
 
