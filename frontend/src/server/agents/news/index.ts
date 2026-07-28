@@ -8,6 +8,7 @@ type NewsAgentInput = {
   projectName?: string;
   websiteUrl?: string;
   chain?: string;
+  discovery?: import("@/server/types").DiscoveryAgentContext;
 };
 
 type NewsSourceTier = 1 | 2 | 3 | 4;

@@ -551,11 +551,19 @@ export function updateWatchlistEntryLatestScan(
 
   entry.lastScannedAt = update.scannedAt;
   entry.latestScanRunId = update.scanRunId;
-  entry.latestClassification = update.classification;
-  entry.latestScore = update.score;
+  entry.latestStatus = update.status === "failed" ? "stale" : update.status;
 
   if (update.status === "failed") {
-    entry.latestClassification = entry.latestClassification ?? "watch";
+    // Preserve last successful observation as the latest visible result.
+    const hasPriorSuccess = entry.successfulScanRunIds && entry.successfulScanRunIds.length > 0;
+
+    if (!hasPriorSuccess) {
+      entry.latestStatus = "stale";
+    }
+  } else {
+    entry.latestClassification = update.classification;
+    entry.latestScore = update.score;
+    entry.successfulScanRunIds = [update.scanRunId, ...(entry.successfulScanRunIds ?? [])].slice(0, 50);
   }
 
   return entry;

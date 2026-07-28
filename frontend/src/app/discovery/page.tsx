@@ -1,55 +1,22 @@
 import Link from "next/link";
 import { AlertCard } from "@/components/AlertCard";
 import { listDiscoveryCandidates } from "@/server/discovery/pipeline";
-import type { DiscoveryClassification, DiscoveryScanResult, RiskLevel, WatchlistScanRun } from "@/server/types";
+import { fetchLiveDiscoveryCandidates, isOfflineSnapshot } from "@/server/discovery/sources";
+import { listWatchlist } from "@/server/discovery/watchlist";
+import { listDiscoveryAlerts, listWatchlistScanRuns } from "@/server/storage";
+import type { DiscoveryAlert, DiscoveryClassification, DiscoveryCandidate, RiskLevel, WatchlistEntry, WatchlistScanRun } from "@/server/types";
 
-type FixtureCandidateLike = {
-  id: string;
-  chain: string;
-  contractAddress?: string;
-  symbol?: string;
-  tokenName?: string;
-  pairUrl?: string;
-  source: string;
-  assetType?: string;
-  issuer?: string;
-  assetKey?: string;
-  metrics?: { liquidityUsd?: number; pairAgeDays?: number; fdvLiquidityRatio?: number };
+const DEFAULT_WALLET = "0xDemoWallet";
+
+export const dynamic = "force-dynamic";
+
+type ViewAlert = Pick<DiscoveryAlert, "id" | "kind" | "title" | "detail" | "severity" | "sourceLabel" | "acknowledged" | "createdAt">;
+
+type ViewScanRun = Pick<WatchlistScanRun, "id" | "entryId" | "classification" | "score" | "confidence" | "status" | "scannedAt" | "classificationReasons">;
+
+type ViewWatchlistEntry = Pick<WatchlistEntry, "id" | "chain" | "source" | "symbol" | "tokenName" | "contractAddress" | "assetKey" | "issuer" | "createdAt" | "lastScannedAt" | "latestClassification" | "latestScore" | "latestStatus"> & {
+  scanRunCount: number;
 };
-
-const fixtureCandidates: FixtureCandidateLike[] = [
-  {
-    id: "fixture-evm-clean",
-    chain: "base",
-    contractAddress: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-    symbol: "WETH",
-    tokenName: "Wrapped Ether",
-    pairUrl: "https://dexscreener.com/base/weth",
-    source: "dexscreener",
-    metrics: { liquidityUsd: 38_000_000, pairAgeDays: 1500, fdvLiquidityRatio: 1.2 },
-  },
-  {
-    id: "fixture-evm-thin",
-    chain: "base",
-    contractAddress: "0x4444444444444444444444444444444444444444",
-    symbol: "THIN",
-    tokenName: "Thin Liquidity Token",
-    pairUrl: "https://dexscreener.com/base/thin",
-    source: "dexscreener",
-    metrics: { liquidityUsd: 12_000, pairAgeDays: 1, fdvLiquidityRatio: 48.5 },
-  },
-  {
-    id: "fixture-stellar-usdc",
-    chain: "stellar-public",
-    symbol: "USDC",
-    tokenName: "USD Coin",
-    assetType: "classic",
-    issuer: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGW3QHOBBVYGFX6DOMTHYS",
-    assetKey: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGW3QHOBBVYGFX6DOMTHYS",
-    source: "stellar_market",
-    metrics: { liquidityUsd: 250_000_000, fdvLiquidityRatio: 0.9 },
-  },
-];
 
 const classificationTone: Record<DiscoveryClassification, string> = {
   watch: "border-sky-500/60 bg-sky-500/5 text-sky-300",
@@ -65,17 +32,105 @@ const severityTone: Record<RiskLevel, string> = {
   critical: "text-rose-400",
 };
 
-async function safeListCandidates() {
+async function safeListCandidates(): Promise<{ candidates: DiscoveryCandidate[]; origin: "live" | "offline" }> {
   try {
-    return await listDiscoveryCandidates();
+    const fetched = await listDiscoveryCandidates();
+    const offline = fetched.some((candidate) => isOfflineSnapshot(candidate));
+
+    return { candidates: fetched, origin: offline ? "offline" : "live" };
+  } catch {
+    return { candidates: [], origin: "offline" };
+  }
+}
+
+function fallbackMessage(origin: "live" | "offline") {
+  return origin === "live"
+    ? "Live DexScreener and Stellar Expert candidate feed."
+    : "Live sources are unreachable. Surfacing the offline candidate snapshot.";
+}
+
+function statusTone(status?: WatchlistScanRun["status"]) {
+  if (status === "stale") return "text-amber-300";
+  if (status === "failed") return "text-rose-300";
+  if (status === "partial") return "text-orange-300";
+
+  return "text-emerald-300";
+}
+
+async function loadWatchlistView(wallet: string): Promise<ViewWatchlistEntry[]> {
+  try {
+    const entries = listWatchlist(wallet);
+
+    return entries.slice(0, 8).map((entry) => ({
+      id: entry.id,
+      chain: entry.chain,
+      source: entry.source,
+      symbol: entry.symbol,
+      tokenName: entry.tokenName,
+      contractAddress: entry.contractAddress,
+      assetKey: entry.assetKey,
+      issuer: entry.issuer,
+      createdAt: entry.createdAt,
+      lastScannedAt: entry.lastScannedAt,
+      latestClassification: entry.latestClassification,
+      latestScore: entry.latestScore,
+      latestStatus: entry.latestStatus,
+      scanRunCount: listWatchlistScanRuns(entry.id).length,
+    }));
   } catch {
     return [];
   }
 }
 
-export default async function DiscoveryPage() {
-  const live = await safeListCandidates();
-  const candidates = live.length > 0 ? (live as unknown as FixtureCandidateLike[]) : fixtureCandidates;
+async function loadRecentAlertsView(wallet: string): Promise<ViewAlert[]> {
+  try {
+    return listDiscoveryAlerts(wallet).slice(0, 8).map((alert) => ({
+      id: alert.id,
+      kind: alert.kind,
+      title: alert.title,
+      detail: alert.detail,
+      severity: alert.severity,
+      sourceLabel: alert.sourceLabel,
+      acknowledged: alert.acknowledged,
+      createdAt: alert.createdAt,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function loadRecentScanRunsView(wallet: string): Promise<ViewScanRun[]> {
+  try {
+    return listWatchlistScanRuns()
+      .filter((run) => run.walletAddress.toLowerCase() === wallet.toLowerCase())
+      .slice(0, 8)
+      .map((run) => ({
+        id: run.id,
+        entryId: run.entryId,
+        classification: run.classification,
+        score: run.score,
+        confidence: run.confidence,
+        status: run.status,
+        scannedAt: run.scannedAt,
+        classificationReasons: run.classificationReasons,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+export default async function DiscoveryPage({
+  searchParams,
+}: {
+  searchParams: { wallet?: string; chain?: string; status?: string };
+}) {
+  const wallet = (searchParams.wallet ?? DEFAULT_WALLET).trim().toLowerCase();
+  const { candidates, origin } = await safeListCandidates();
+  const watchlist = await loadWatchlistView(wallet);
+  const alerts = await loadRecentAlertsView(wallet);
+  const recentRuns = await loadRecentScanRunsView(wallet);
+  const originLabel = origin === "live" ? "Live" : "Offline snapshot";
+  const primaryCandidates = candidates.slice(0, 12);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-6 py-12">
@@ -83,99 +138,217 @@ export default async function DiscoveryPage() {
         <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Golden Raccoon · V3</p>
         <h1 className="text-3xl font-semibold text-white">Discovery candidates, scans, watchlists, and alerts</h1>
         <p className="max-w-3xl text-sm text-slate-300">
-          Discovery proposes candidates through the full risk pipeline. The server never prepares or signs a transaction. Critical risks
-          remain visible regardless of market momentum.
+          {fallbackMessage(origin)} Identity is resolved before any scan. The server never prepares or signs a transaction. Critical risks stay visible regardless of market momentum.
         </p>
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <span className={`rounded border px-2 py-1 ${origin === "live" ? "border-emerald-500/40 text-emerald-300" : "border-amber-500/40 text-amber-300"}`}>
+            Source feed: {originLabel}
+          </span>
+          <span className="text-slate-400">Wallet: {wallet}</span>
+          <Link href={`/discovery?wallet=${encodeURIComponent(wallet)}`} className="text-emerald-300 underline-offset-2 hover:underline">
+            Refresh
+          </Link>
+        </div>
       </header>
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-medium text-white">Discovery candidates</h2>
-          <span className="text-xs text-slate-400">Identity is resolved before any scan. Unresolved candidates cannot become opportunity.</span>
+          <span className="text-xs text-slate-400">Top {primaryCandidates.length} of {candidates.length} fetched · identity is resolved before scanning.</span>
         </div>
-        <ul className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {candidates.map((candidate) => (
-            <li key={candidate.id} className="rounded-lg border border-slate-700 bg-slate-900/70 p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold text-white">{candidate.symbol ?? candidate.tokenName ?? candidate.id}</span>
-                <span className="rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-400">{candidate.chain}</span>
-              </div>
-              <p className="mt-2 text-xs text-slate-400">{candidate.tokenName ?? "Unnamed candidate"}</p>
-              {candidate.contractAddress ? (
-                <p className="mt-1 truncate text-[11px] text-slate-500">{candidate.contractAddress}</p>
-              ) : null}
-              <dl className="mt-3 grid grid-cols-2 gap-1 text-[11px] text-slate-400">
-                <div>Pair age: {candidate.metrics?.pairAgeDays ?? "?"} d</div>
-                <div>Liquidity: ${candidate.metrics?.liquidityUsd?.toLocaleString("en-US") ?? "?"}</div>
-                <div>Source: {candidate.source}</div>
-                <div>FDV/Liq: {candidate.metrics?.fdvLiquidityRatio?.toFixed(1) ?? "?"}x</div>
-              </dl>
-              <div className="mt-3 flex justify-end">
-                <Link
-                  href={`/agents?query=${encodeURIComponent(candidate.contractAddress ?? candidate.assetKey ?? "")}`}
-                  className="text-xs text-emerald-300 underline-offset-2 hover:underline"
-                >
-                  Run full scan →
-                </Link>
-              </div>
-            </li>
-          ))}
-        </ul>
+        {primaryCandidates.length === 0 ? (
+          <p className="rounded border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-400">
+            No candidates returned from the discovery source.
+          </p>
+        ) : (
+          <ul className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {primaryCandidates.map((candidate) => (
+              <li key={candidate.id} className="rounded-lg border border-slate-700 bg-slate-900/70 p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-white">{candidate.symbol ?? candidate.tokenName ?? candidate.id}</span>
+                  <span className="rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-400">{candidate.chain}</span>
+                </div>
+                <p className="mt-2 text-xs text-slate-400">{candidate.tokenName ?? "Unnamed candidate"}</p>
+                {candidate.contractAddress ? (
+                  <p className="mt-1 truncate text-[11px] text-slate-500">{candidate.contractAddress}</p>
+                ) : candidate.assetKey ? (
+                  <p className="mt-1 truncate text-[11px] text-slate-500">{candidate.assetKey}</p>
+                ) : null}
+                <dl className="mt-3 grid grid-cols-2 gap-1 text-[11px] text-slate-400">
+                  <div>Pair age: {candidate.metrics?.pairAgeDays ?? "?"} d</div>
+                  <div>Liquidity: ${candidate.metrics?.liquidityUsd?.toLocaleString("en-US") ?? "?"}</div>
+                  <div>Source: {candidate.source}</div>
+                  <div>FDV/Liq: {candidate.metrics?.fdvLiquidityRatio?.toFixed(1) ?? "?"}x</div>
+                </dl>
+                <div className="mt-3 flex items-center justify-between">
+                  <span className="text-[11px] text-slate-500">{new Date(candidate.discoveredAt).toISOString().slice(0, 10)}</span>
+                  <Link
+                    href={{
+                      pathname: "/discovery/scan",
+                      query: {
+                        chain: candidate.chain,
+                        address: candidate.contractAddress ?? "",
+                        assetKey: candidate.assetKey ?? "",
+                        symbol: candidate.symbol ?? "",
+                        name: candidate.tokenName ?? "",
+                        source: candidate.source,
+                        issuer: candidate.issuer ?? "",
+                        wallet,
+                      },
+                    }}
+                    className="text-xs text-emerald-300 underline-offset-2 hover:underline"
+                  >
+                    Run scan →
+                  </Link>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-          <h2 className="text-lg font-medium text-white">How classifications work</h2>
-          <ul className="mt-3 space-y-2 text-sm text-slate-300">
-            <li className="flex items-start gap-3">
-              <span className={`inline-block min-w-[110px] rounded border px-2 py-0.5 text-xs ${classificationTone.watch}`}>watch</span>
-              <span>Default classification when identity or coverage is incomplete.</span>
-            </li>
-            <li className="flex items-start gap-3">
-              <span className={`inline-block min-w-[110px] rounded border px-2 py-0.5 text-xs ${classificationTone.risky}`}>risky</span>
-              <span>Elevated score or non-critical blockers; manual review required.</span>
-            </li>
-            <li className="flex items-start gap-3">
-              <span className={`inline-block min-w-[110px] rounded border px-2 py-0.5 text-xs ${classificationTone.scam}`}>scam</span>
-              <span>Critical onchain, social, phishing or identity blocker observed.</span>
-            </li>
-            <li className="flex items-start gap-3">
-              <span className={`inline-block min-w-[110px] rounded border px-2 py-0.5 text-xs ${classificationTone.early_opportunity}`}>early_opportunity</span>
-              <span>Resolved identity, adequate coverage, score below 50, no blockers. Discovery still does not prepare a transaction.</span>
-            </li>
-          </ul>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-medium text-white">Watchlist for {wallet}</h2>
+            <Link href={`/discovery?wallet=${encodeURIComponent(wallet)}`} className="text-xs text-emerald-300 underline-offset-2 hover:underline">
+              Refresh
+            </Link>
+          </div>
+          {watchlist.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-400">
+              No watchlist entries yet. Add a candidate from the list above using the API at <code className="text-xs text-slate-300">/api/watchlist</code>.
+            </p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {watchlist.map((entry) => {
+                const entryClass = entry.latestClassification
+                  ? classificationTone[entry.latestClassification]
+                  : "border-slate-700 bg-slate-950/60 text-slate-400";
+                return (
+                  <li key={entry.id} className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-semibold text-white">
+                        {entry.symbol ?? entry.tokenName ?? entry.assetKey ?? entry.contractAddress ?? entry.id}
+                      </span>
+                      <span className={`rounded border px-2 py-0.5 text-[11px] ${entryClass}`}>
+                        {entry.latestClassification ?? "no scan"}
+                      </span>
+                    </div>
+                    <dl className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-slate-400">
+                      <div>Chain: {entry.chain}</div>
+                      <div>Score: {entry.latestScore ?? "—"}</div>
+                      <div>Status: <span className={statusTone(entry.latestStatus)}>{entry.latestStatus ?? "—"}</span></div>
+                      <div>Scans: {entry.scanRunCount}</div>
+                    </dl>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Added {new Date(entry.createdAt).toISOString().slice(0, 10)}</span>
+                      <Link
+                        href={{
+                          pathname: "/discovery/scan",
+                          query: {
+                            entryId: entry.id,
+                            chain: entry.chain,
+                            address: entry.contractAddress ?? "",
+                            assetKey: entry.assetKey ?? "",
+                            symbol: entry.symbol ?? "",
+                            name: entry.tokenName ?? "",
+                            source: entry.source ?? "manual",
+                            issuer: entry.issuer ?? "",
+                            wallet,
+                            rescan: "1",
+                          },
+                        }}
+                        className="text-emerald-300 underline-offset-2 hover:underline"
+                      >
+                        Rescan →
+                      </Link>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
 
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-          <h2 className="text-lg font-medium text-white">Recent alerts (structural)</h2>
-          <div className="mt-3 space-y-2">
-            <AlertCard
-              title="Auto-execute remains disabled"
-              detail="The server never prepares or signs a transaction. Every action requires wallet approval."
-              severity="low"
-              sourceLabel="policy"
-            />
-            <AlertCard
-              title="Critical risks stay visible"
-              detail="Even with rising momentum, Discovery keeps critical-risk flags in the candidate factor list."
-              severity="medium"
-              sourceLabel="rule"
-            />
-          </div>
+          <h2 className="text-lg font-medium text-white">Recent alerts ({alerts.length})</h2>
+          {alerts.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-400">
+              No alerts logged for this wallet yet. Alerts are recorded when rescans detect a critical risk, a classification change, or significant source signals.
+            </p>
+          ) : (
+            <div className="mt-3 space-y-3">
+              {alerts.map((alert) => (
+                <AlertCard
+                  key={alert.id}
+                  title={alert.title}
+                  detail={alert.detail}
+                  severity={alert.severity}
+                  sourceLabel={alert.sourceLabel ?? alert.kind}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-        <h2 className="text-lg font-medium text-white">Watchlist rescan guarantees</h2>
+        <h2 className="text-lg font-medium text-white">Recent rescan history</h2>
+        {recentRuns.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-400">
+            No scan history recorded. Trigger a rescan from a watchlist entry above to start the audit trail.
+          </p>
+        ) : (
+          <ul className="mt-3 space-y-2 text-sm text-slate-300">
+            {recentRuns.map((run) => (
+              <li key={run.id} className="rounded border border-slate-800 bg-slate-950/50 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-white">{run.classification}</span>
+                  <span className="rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-400">
+                    Score {run.score}/100 · status <span className={statusTone(run.status)}>{run.status}</span>
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {new Date(run.scannedAt).toISOString()} · entry <code>{run.entryId}</code> · confidence {Math.round(run.confidence * 100)}%
+                </p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[11px] text-slate-400">
+                  {run.classificationReasons.slice(0, 3).map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+        <h2 className="text-lg font-medium text-white">How classifications work</h2>
         <ul className="mt-3 space-y-2 text-sm text-slate-300">
-          <li>• Rescans always create a new immutable scan run linked to the previous run.</li>
-          <li>• Chain-aware canonical identity (EVM contract or Stellar CODE:ISSUER / C-address) keeps the same code/different-issuer assets distinct.</li>
-          <li>• Failed rescans leave the previous scan visible with a stale status and never overwrite history.</li>
-          <li>• Alerts (critical risk, liquidity drop, phishing, news incident, classification change) are recorded only on significant events.</li>
+          <li className="flex items-start gap-3">
+            <span className={`inline-block min-w-[110px] rounded border px-2 py-0.5 text-xs ${classificationTone.watch}`}>watch</span>
+            <span>Default classification when identity or coverage is incomplete.</span>
+          </li>
+          <li className="flex items-start gap-3">
+            <span className={`inline-block min-w-[110px] rounded border px-2 py-0.5 text-xs ${classificationTone.risky}`}>risky</span>
+            <span>Elevated score or non-critical blockers; manual review required.</span>
+          </li>
+          <li className="flex items-start gap-3">
+            <span className={`inline-block min-w-[110px] rounded border px-2 py-0.5 text-xs ${classificationTone.scam}`}>scam</span>
+            <span>Critical onchain, social, phishing or identity blocker observed.</span>
+          </li>
+          <li className="flex items-start gap-3">
+            <span className={`inline-block min-w-[110px] rounded border px-2 py-0.5 text-xs ${classificationTone.early_opportunity}`}>early_opportunity</span>
+            <span>Resolved identity, adequate coverage, score below 50, no blockers. Discovery still does not prepare a transaction.</span>
+          </li>
         </ul>
+        <div className="mt-4">
+          <p className="text-[11px] text-slate-500">
+            Source coverage legend: <span className={`${severityTone.low}`}>connected</span> · <span className={`${severityTone.medium}`}>partial</span> · <span className={`${severityTone.critical}`}>unavailable</span>.
+          </p>
+        </div>
       </section>
     </main>
   );
 }
-
-export const dynamic = "force-dynamic";

@@ -112,21 +112,24 @@ export async function scanEntry(entry: WatchlistEntry, options: { walletAddress?
     scan = await scanDiscoveryCandidate(candidate, {
       walletAddress: options.walletAddress ?? entry.walletAddress,
       providers: options.providers,
+      scanMode: "watchlist_rescan",
+      sourceLabel: `Watchlist rescan · ${entry.symbol ?? entry.identityKey}`,
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown error";
     const partialRun = addWatchlistScanRun({
       entryId: entry.id,
       walletAddress: entry.walletAddress,
       identityKey: entry.identityKey,
       classification: "watch",
-      classificationReasons: [`Scan failed: ${error instanceof Error ? error.message : "unknown error"}`],
+      classificationReasons: [`Scan failed: ${message}`],
       confidence: 0.18,
       score: 50,
       sourceLineage: [],
       missingData: [
         {
           field: "watchlist scan",
-          reason: error instanceof Error ? error.message : "Scan pipeline failed.",
+          reason: message,
           impact: "high",
           requiredFor: "rescan",
           canRetry: true,
@@ -136,6 +139,50 @@ export async function scanEntry(entry: WatchlistEntry, options: { walletAddress?
       status: "failed",
     });
 
+    const failedAlerts = deriveAlertsFromScan({
+      entry,
+      previousRun: listWatchlistScanRuns(entry.id)[1],
+      scan: {
+        candidate,
+        identity: resolveTokenIdentity(candidate as Parameters<typeof resolveTokenIdentity>[0]),
+        results: [],
+        decision: {
+          agent: "decision",
+          status: "blocked",
+          riskScore: 100,
+          score: 100,
+          riskLevel: "critical",
+          verdict: `Watchlist rescan failed: ${message}`,
+          summary: `Rescan failed for ${entry.symbol ?? entry.identityKey}.`,
+          findings: [],
+          sources: [],
+          dataQuality: {
+            mode: "stale",
+            connectedSources: 0,
+            unavailableSources: 0,
+            mockSources: 0,
+            sourceCount: 0,
+            reliability: 0.05,
+            detail: "Scan pipeline failed; prior visible observation is preserved as latest visible result.",
+          },
+          confidence: 0.18,
+          recommendedAction: "manual_review",
+          blockingReasons: [`Scan failed: ${message}`],
+          missingData: [],
+          rawSignals: { failureDetail: message },
+          createdAt: new Date().toISOString(),
+        },
+        classification: "scam",
+        classificationReasons: [`Scan failed: ${message}`],
+        confidence: 0.18,
+        sourceLineage: [],
+        missingData: [],
+        scannedAt: partialRun.scannedAt,
+      } as DiscoveryScanResult,
+      runId: partialRun.id,
+      forceTriggerKinds: ["critical_risk"],
+    });
+
     return {
       ok: true as const,
       entry,
@@ -143,6 +190,7 @@ export async function scanEntry(entry: WatchlistEntry, options: { walletAddress?
       newRun: partialRun,
       previousRun: listWatchlistScanRuns(entry.id)[1],
       stale: true,
+      alerts: failedAlerts,
     };
   }
 
@@ -178,12 +226,20 @@ export async function scanEntry(entry: WatchlistEntry, options: { walletAddress?
     status: scan.decision.status === "blocked" ? "partial" : "completed",
   });
 
+  const alerts = deriveAlertsFromScan({
+    entry,
+    previousRun: listWatchlistScanRuns(entry.id)[1],
+    scan,
+    runId: newRun.id,
+  });
+
   return {
     ok: true as const,
     entry,
     scan,
     newRun,
     previousRun: listWatchlistScanRuns(entry.id)[1],
+    alerts,
   };
 }
 
@@ -221,11 +277,16 @@ export function deriveAlertsFromScan(input: {
   scan: DiscoveryScanResult;
   previousRun?: WatchlistScanRun;
   entry: WatchlistEntry;
+  runId?: string;
+  forceTriggerKinds?: DiscoveryAlertKind[];
 }): DiscoveryAlert[] {
   const triggers: AlertTrigger[] = [];
   const { scan, previousRun, entry } = input;
 
-  if (scan.classification === "scam" || scan.decision.score >= 75) {
+  const pushCriticalFlag = scan.classification === "scam" || scan.decision.score >= 75;
+  const forced = new Set(input.forceTriggerKinds ?? []);
+
+  if (pushCriticalFlag || forced.has("critical_risk")) {
     triggers.push({
       kind: "critical_risk",
       title: "Critical risk on watchlist entry",
@@ -283,7 +344,7 @@ export function deriveAlertsFromScan(input: {
     createDiscoveryAlert({
       walletAddress: entry.walletAddress,
       entryId: entry.id,
-      runId: listWatchlistHistory(entry.id)[0]?.id,
+      runId: input.runId ?? listWatchlistHistory(entry.id)[0]?.id,
       kind: trigger.kind,
       title: trigger.title,
       detail: trigger.detail,

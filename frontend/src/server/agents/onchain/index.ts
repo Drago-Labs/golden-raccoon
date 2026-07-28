@@ -13,6 +13,7 @@ type OnchainAgentInput = {
   issuer?: string;
   assetKey?: string;
   assetType?: "native" | "classic" | "contract" | "issuer_account";
+  discovery?: import("@/server/types").DiscoveryAgentContext;
 };
 
 type GoPlusTokenSecurity = Record<string, unknown>;

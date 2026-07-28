@@ -135,6 +135,28 @@ export type AgentInputIdentity = {
 
 export type DiscoveryAgentInputIdentity = AgentInputIdentity;
 
+export type DiscoveryAgentContext = {
+  candidateId: string;
+  chain: string;
+  source: DiscoverySourceKind;
+  discoveryMode: "candidate" | "watchlist_rescan";
+  identityKey: string;
+  identityConfidence: number;
+  identityConfidenceLabel: ResolvedTokenIdentity["confidenceLabel"];
+  metrics: DiscoveryCandidate["metrics"];
+  scanOriginLabel: string;
+  tokenSymbol?: string;
+  tokenName?: string;
+};
+
+export type DiscoveryScanInputIdentity = AgentInputIdentity & {
+  discovery?: DiscoveryAgentContext;
+};
+
+export type DiscoveryWithAlerts = {
+  alerts: DiscoveryAlert[];
+};
+
 export type ResolvedTokenIdentity = AgentInputIdentity & {
   identityKey: string;
   confidence: number;
@@ -477,6 +499,8 @@ export type WatchlistEntry = {
   latestScanRunId?: string;
   latestClassification?: DiscoveryClassification;
   latestScore?: number;
+  latestStatus?: WatchlistScanRun["status"];
+  successfulScanRunIds?: string[];
 };
 
 export type WatchlistScanRun = {

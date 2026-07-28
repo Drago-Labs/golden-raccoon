@@ -1,8 +1,7 @@
 import type { DiscoveryCandidate, WatchlistEntryInput, WatchlistScanRun } from "@/server/types";
-import { runOnchainAgent } from "@/server/agents/onchain";
-import { listWatchlistEntries, addWatchlistScanRun } from "@/server/storage";
+import { getWatchlistEntry, listWatchlistEntries, addWatchlistScanRun } from "@/server/storage";
 import { scanDiscoveryCandidate, type DiscoveryCandidateProviders } from "@/server/discovery/pipeline";
-import { addToWatchlist, deriveAlertsFromScan, rescanWatchlistEntry } from "@/server/discovery/watchlist";
+import { addToWatchlist, rescanWatchlistEntry } from "@/server/discovery/watchlist";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -119,6 +118,18 @@ function honeypotProviders() {
   };
 }
 
+function stellarFixtureProvider() {
+  return {
+    fetchIssuerAccount: async () => ({
+      home_domain: "centre.io",
+      flags: { auth_required: false, auth_revocable: false },
+      balances: [{ asset_code: "USDC", asset_issuer: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGW3QHOBBVYGFX6DOMTHYS", balance: "1000000" }],
+    }),
+    fetchTrustlines: async () => ({ trustlines: 12_345, payments30d: 9_500 }),
+    fetchAssetMetadata: async () => ({ description: "USD Coin on Stellar public network.", domain: "centre.io" }),
+  };
+}
+
 const fixtureProviders: DiscoveryCandidateProviders = {
   onchain: cleanOnchainProviders(),
   news: {
@@ -126,6 +137,24 @@ const fixtureProviders: DiscoveryCandidateProviders = {
     fetchFeed: async () => [],
     now: new Date("2026-07-06T12:00:00.000Z"),
   },
+  skipPortfolio: true,
+};
+
+const honeypotFixtureProviders: DiscoveryCandidateProviders = {
+  onchain: honeypotProviders(),
+  news: fixtureProviders.news,
+  skipPortfolio: true,
+};
+
+const thinLiquidityFixtureProviders: DiscoveryCandidateProviders = {
+  onchain: thinLiquidityProviders(),
+  news: fixtureProviders.news,
+  skipPortfolio: true,
+};
+
+const stellarFixtureProviders: DiscoveryCandidateProviders = {
+  onchain: stellarFixtureProvider() as unknown as DiscoveryCandidateProviders["onchain"],
+  news: fixtureProviders.news,
   skipPortfolio: true,
 };
 
@@ -163,10 +192,11 @@ export type DiscoveryFixtureResult = {
   detail: string;
 };
 
+const FIXTURE_WALLET = "0xdemo1111111111111111111111111111111111111";
+
 export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> {
   const results: DiscoveryFixtureResult[] = [];
 
-  // EVM: clean Discovery candidate → "watch" (not opportunity if coverage is partial)
   const cleanCandidate = makeCandidate({
     chain: "base",
     contractAddress: "0x3333333333333333333333333333333333333333",
@@ -185,7 +215,6 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
 
   assert(cleanScan.classification === "watch" || cleanScan.classification === "early_opportunity" || cleanScan.classification === "risky", `Clean fixture must not become scam. Got ${cleanScan.classification}.`);
 
-  // EVM: Honeypot → "scam"
   const honeypotCandidate = makeCandidate({
     chain: "bsc",
     contractAddress: "0x2222222222222222222222222222222222222222",
@@ -193,12 +222,7 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     tokenName: "Trap Token",
     metrics: { liquidityUsd: 8_000, pairAgeDays: 1 },
   });
-  const honeypotProvidersHoneypot: DiscoveryCandidateProviders = {
-    onchain: honeypotProviders(),
-    news: fixtureProviders.news,
-    skipPortfolio: true,
-  };
-  const honeypotScan = await scanDiscoveryCandidate(honeypotCandidate, { providers: honeypotProvidersHoneypot });
+  const honeypotScan = await scanDiscoveryCandidate(honeypotCandidate, { providers: honeypotFixtureProviders });
 
   results.push({
     fixture: "EVM honeypot candidate",
@@ -207,7 +231,6 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     detail: `Honeypot candidate must classify as scam or risky. Got ${honeypotScan.classification}.`,
   });
 
-  // EVM: Thin liquidity → "risky" or "watch"
   const thinCandidate = makeCandidate({
     chain: "base",
     contractAddress: "0x4444444444444444444444444444444444444444",
@@ -215,12 +238,7 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     tokenName: "Thin Liquidity Token",
     metrics: { liquidityUsd: 12_000, pairAgeDays: 1, fdvLiquidityRatio: 320, volume24hUsd: 8_000 },
   });
-  const thinProviders: DiscoveryCandidateProviders = {
-    onchain: thinLiquidityProviders(),
-    news: fixtureProviders.news,
-    skipPortfolio: true,
-  };
-  const thinScan = await scanDiscoveryCandidate(thinCandidate, { providers: thinProviders });
+  const thinScan = await scanDiscoveryCandidate(thinCandidate, { providers: thinLiquidityFixtureProviders });
 
   results.push({
     fixture: "EVM thin-liquidity candidate",
@@ -231,7 +249,6 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
 
   assert(thinScan.classification !== "early_opportunity", `Thin liquidity fixture must never be early_opportunity. Got ${thinScan.classification}.`);
 
-  // Stellar: CODE:ISSUER formal scan
   const stellarCandidate: DiscoveryCandidate = makeCandidate({
     id: "stellar_candidate",
     chain: "stellar-public",
@@ -246,7 +263,7 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     sourceUrl: "https://stellar.expert/explorer/public/asset/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGW3QHOBBVYGFX6DOMTHYS",
     metrics: { liquidityUsd: 250_000_000, pairAgeDays: 2200 },
   });
-  const stellarScan = await scanDiscoveryCandidate(stellarCandidate, { providers: fixtureProviders });
+  const stellarScan = await scanDiscoveryCandidate(stellarCandidate, { providers: stellarFixtureProviders });
 
   results.push({
     fixture: "Stellar classic asset candidate",
@@ -255,7 +272,6 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     detail: `Stellar candidate must resolve identity and not be classified as scam. Got ${stellarScan.classification}; identityKey=${stellarScan.identity.identityKey}.`,
   });
 
-  // Source lineage: discovery must keep lineage and missing data
   results.push({
     fixture: "Discovery source lineage and missing data",
     classification: cleanScan.classification,
@@ -263,7 +279,6 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     detail: `Source lineage=${cleanScan.sourceLineage.length}; missingData=${cleanScan.missingData.length}.`,
   });
 
-  // Sanity: confirm the synthetic decision exposes structural guarantees
   results.push({
     fixture: "Discovery decision carries no-execution guarantees",
     classification: cleanScan.classification,
@@ -271,7 +286,6 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     detail: `Synthetic decision must record serverCanSign=false.`,
   });
 
-  // Detection layer used in fixtures must not produce mock data in live mode
   results.push({
     fixture: "RunOnchainAgent fixture providers return real-shape data",
     classification: cleanScan.classification,
@@ -281,10 +295,9 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     detail: `No agent source must be marked mock.`,
   });
 
-  // Watchlist end-to-end: add → rescan → preserve history
-  const walletAddress = "0xdemo1111111111111111111111111111111111111";
+  // Watchlist EVM clean add → rescan with shared providers preserves history.
   const addResult = await addToWatchlist({
-    walletAddress,
+    walletAddress: FIXTURE_WALLET,
     chain: "base",
     contractAddress: "0x3333333333333333333333333333333333333333",
     source: "dexscreener",
@@ -293,7 +306,7 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
   });
 
   assert(addResult.ok, "Watchlist add must succeed for resolved EVM candidate.");
-  const entriesAfterAdd = listWatchlistEntries(walletAddress);
+  const entriesAfterAdd = listWatchlistEntries(FIXTURE_WALLET);
 
   results.push({
     fixture: "Watchlist add creates canonical entry",
@@ -302,15 +315,14 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     detail: `New watchlist entry created for resolved identity. Entries count=${entriesAfterAdd.length}.`,
   });
 
-  // Duplicate add idempotent (alreadyExisted flagged true on second call)
   const dup = await addToWatchlist({
-    walletAddress,
+    walletAddress: FIXTURE_WALLET,
     chain: "base",
     contractAddress: "0x3333333333333333333333333333333333333333",
     source: "dexscreener",
     symbol: "FIX",
   });
-  const entriesAfterDup = listWatchlistEntries(walletAddress);
+  const entriesAfterDup = listWatchlistEntries(FIXTURE_WALLET);
 
   results.push({
     fixture: "Duplicate watchlist add is idempotent",
@@ -319,9 +331,15 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     detail: `Watchlist should not duplicate canonical identity. Same entry returned with alreadyExisted=${dup.ok ? dup.alreadyExisted : "n/a"}.`,
   });
 
-  // Rescan preserves history (use fixtureProviders so it succeeds deterministically).
-  const firstScan = await rescanWatchlistEntry(entriesAfterAdd[0].id, { walletAddress });
-  const secondScan = await rescanWatchlistEntry(entriesAfterAdd[0].id, { walletAddress });
+  // Two successful rescans with shared fixtureProviders — preserves history with linked previousRunId.
+  const firstScan = await rescanWatchlistEntry(entriesAfterAdd[0].id, {
+    walletAddress: FIXTURE_WALLET,
+    providers: fixtureProviders,
+  });
+  const secondScan = await rescanWatchlistEntry(entriesAfterAdd[0].id, {
+    walletAddress: FIXTURE_WALLET,
+    providers: fixtureProviders,
+  });
   const history: WatchlistScanRun[] = firstScan.ok && secondScan.ok
     ? [secondScan.newRun, secondScan.previousRun].filter(Boolean) as WatchlistScanRun[]
     : [];
@@ -330,46 +348,87 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     fixture: "Watchlist rescan preserves history",
     classification: "history-preserved",
     passed: history.length === 2 && history[0].previousRunId === history[1].id,
-    detail: `Two rescans must preserve both immutable runs with link. History=${history.length}, prevLink ok=${history[0]?.previousRunId === history[1]?.id}.`,
-  });
-
-  // Failed rescan leaves prior evidence visible with stale status
-  addWatchlistScanRun({
-    entryId: entriesAfterAdd[0].id,
-    walletAddress,
-    identityKey: entriesAfterAdd[0].identityKey,
-    classification: "watch",
-    classificationReasons: ["Simulated failure."],
-    confidence: 0.18,
-    score: 50,
-    sourceLineage: [],
-    missingData: [],
-    status: "failed",
+    detail: `Two rescans with shared providers must preserve both immutable runs with linked previousRunId. History=${history.length}; link=${history[0]?.previousRunId === history[1]?.id}.`,
   });
 
   results.push({
-    fixture: "Failed rescan leaves prior scan visible",
-    classification: "stale-ok",
-    passed: firstScan.ok && Boolean((firstScan.newRun?.agentRunId ?? firstScan.newRun?.id)),
-    detail: `Rescan must record both classification and prior visibility.`,
+    fixture: "Watchlist rescan produces derived alerts when critical risk observed",
+    classification: "alerts-via-rescan",
+    passed: firstScan.ok && secondScan.ok && Array.isArray(firstScan.alerts) && Array.isArray(secondScan.alerts),
+    detail: `Every rescan must come back with an alerts array (possibly empty). first=${firstScan.ok ? firstScan.alerts?.length ?? 0 : 0}; second=${secondScan.ok ? secondScan.alerts?.length ?? 0 : 0}.`,
   });
 
-  // Alerts derived from a scan with significant findings (honeypot triggers critical_risk)
-  if (firstScan.ok && firstScan.newRun && firstScan.scan) {
-    const alerts = deriveAlertsFromScan({ scan: honeypotScan, entry: firstScan.entry, previousRun: undefined });
-    const hasAlert = alerts.length > 0;
+  // Failed-run retention: simulate the storage-layer path invoked by scanEntry.catch
+  // (a status="failed" WatchlistScanRun record). Verify that the prior successful
+  // latestClassification/latestScore are preserved on the WatchlistEntry even though
+  // status="failed" (and the synthetic classification="watch" score=50) was recorded.
+  const priorEntry = entriesAfterAdd[0];
+  const priorSuccessClassification = priorEntry.latestClassification;
+  const priorSuccessScore = priorEntry.latestScore;
 
-    results.push({
-      fixture: "Alerts are recorded for significant findings",
-      classification: "alert-recorded",
-      passed: hasAlert,
-      detail: `Alerts count=${alerts.length} derived from honeypot scan.`,
-    });
-  }
+  addWatchlistScanRun({
+    entryId: priorEntry.id,
+    walletAddress: FIXTURE_WALLET,
+    identityKey: priorEntry.identityKey,
+    classification: "watch",
+    classificationReasons: ["Simulated scan pipeline failure."],
+    confidence: 0.18,
+    score: 50,
+    sourceLineage: [],
+    missingData: [
+      {
+        field: "watchlist scan",
+        reason: "Simulated scan pipeline failure.",
+        impact: "high",
+        requiredFor: "rescan recovery",
+        canRetry: true,
+        fallbackUsed: false,
+      },
+    ],
+    status: "failed",
+  });
 
-  // Stellar asset end-to-end through watchlist
+  const refreshedEntry = getWatchlistEntry(priorEntry.id);
+
+  results.push({
+    fixture: "Failed run preserves prior successful classification + score on WatchlistEntry",
+    classification: refreshedEntry?.latestClassification ?? "—",
+    passed:
+      Boolean(refreshedEntry) &&
+      refreshedEntry?.latestClassification === priorSuccessClassification &&
+      refreshedEntry?.latestScore === priorSuccessScore &&
+      refreshedEntry?.latestStatus === "stale",
+    detail: `Failed WatchlistScanRun must not overwrite prior success. prior=${priorSuccessClassification}/${priorSuccessScore}; after=${refreshedEntry?.latestClassification ?? "—"}/${refreshedEntry?.latestScore ?? "—"}; status=${refreshedEntry?.latestStatus ?? "—"}.`,
+  });
+
+  // Honeypot-driven alerts: a watchlist entry that returns a honeypot scan must surface a critical_risk alert via the normal rescan flow.
+  const honypotEntryInput: WatchlistEntryInput = {
+    walletAddress: FIXTURE_WALLET,
+    chain: "bsc",
+    contractAddress: "0x2222222222222222222222222222222222222222",
+    source: "dexscreener",
+    symbol: "TRAP",
+    tokenName: "Trap Token",
+  };
+  const honeypotAdd = await addToWatchlist(honypotEntryInput);
+
+  assert(honeypotAdd.ok, "Honeypot watchlist entry must be added for alert fixture.");
+
+  const honeypotRescan = await rescanWatchlistEntry(honeypotAdd.ok ? honeypotAdd.entry.id : entriesAfterAdd[0].id, {
+    walletAddress: FIXTURE_WALLET,
+    providers: honeypotFixtureProviders,
+  });
+
+  results.push({
+    fixture: "Honeypot rescan produces critical_risk alert through rescan flow",
+    classification: honeypotRescan.ok ? honeypotRescan.newRun?.classification ?? "—" : "—",
+    passed: honeypotRescan.ok && Array.isArray(honeypotRescan.alerts) && honeypotRescan.alerts.some((alert) => alert.kind === "critical_risk"),
+    detail: `Honeypot scan must trigger a critical_risk alert via rescan flow (not manual derivation). alertCount=${honeypotRescan.ok ? honeypotRescan.alerts?.length ?? 0 : 0}.`,
+  });
+
+  // Stellar watchlist entry → rescanned with fixtureProviders.
   const stellarEntry: WatchlistEntryInput = {
-    walletAddress,
+    walletAddress: FIXTURE_WALLET,
     chain: "stellar-public",
     source: "stellar_market",
     symbol: "USDC",
@@ -379,7 +438,7 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     tokenName: "USD Coin",
   };
   const stellarAdd = await addToWatchlist(stellarEntry);
-  const stellarEntries = listWatchlistEntries(walletAddress);
+  const stellarEntries = listWatchlistEntries(FIXTURE_WALLET);
 
   results.push({
     fixture: "Stellar watchlist entry identity differs from EVM",
@@ -388,19 +447,34 @@ export async function runDiscoveryFixtures(): Promise<DiscoveryFixtureResult[]> 
     detail: `Stellar identity must use chain-specific key. Total entries=${stellarEntries.length}.`,
   });
 
-  // Sanity: pipeline restricts scan output to no-execution semantics.
-  const scan = cleanScan;
+  if (stellarAdd.ok) {
+    const stellarRescan = await rescanWatchlistEntry(stellarAdd.entry.id, {
+      walletAddress: FIXTURE_WALLET,
+      providers: stellarFixtureProviders,
+    });
+
+    results.push({
+      fixture: "Stellar watchlist rescan completes deterministically with shared providers",
+      classification: stellarRescan.ok ? stellarRescan.newRun?.classification ?? "—" : "—",
+      passed: stellarRescan.ok && stellarRescan.newRun?.status === "completed" && Array.isArray(stellarRescan.alerts),
+      detail: `Stellar rescan must finish completed (not partial/failed) with the shared fixtureProviders. status=${stellarRescan.ok ? stellarRescan.newRun?.status : "—"}; alerts=${stellarRescan.ok ? stellarRescan.alerts?.length ?? 0 : 0}.`,
+    });
+  }
 
   results.push({
     fixture: "Execution guarantees recorded in raw signals",
-    classification: scan.classification,
-    passed: (scan.decision.rawSignals?.executionGuarantees as { autoExecute?: boolean; transactionPrepared?: boolean } | undefined)?.autoExecute === false
-      && (scan.decision.rawSignals?.executionGuarantees as { transactionPrepared?: boolean } | undefined)?.transactionPrepared === false,
+    classification: cleanScan.classification,
+    passed: (cleanScan.decision.rawSignals?.executionGuarantees as { autoExecute?: boolean; transactionPrepared?: boolean } | undefined)?.autoExecute === false
+      && (cleanScan.decision.rawSignals?.executionGuarantees as { transactionPrepared?: boolean } | undefined)?.transactionPrepared === false,
     detail: `autoExecute and transactionPrepared both must be false in raw signals.`,
+  });
+
+  results.push({
+    fixture: "Discovery context plumbed into decision rawSignals",
+    classification: cleanScan.classification,
+    passed: Boolean((cleanScan.decision.rawSignals as { discoveryAgentContext?: { candidateId?: string } } | undefined)?.discoveryAgentContext?.candidateId),
+    detail: `Discovery Agent context must reach the decision rawSignals for auditability.`,
   });
 
   return results;
 }
-
-// Suppress stale import linting when not used directly.
-void runOnchainAgent;

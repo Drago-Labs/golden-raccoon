@@ -3,6 +3,7 @@ import type {
   AgentResult,
   AgentSource,
   AgentMissingData,
+  DiscoveryAgentContext,
   DiscoveryAgentInputIdentity,
   DiscoveryCandidate,
   DiscoveryClassification,
@@ -10,13 +11,14 @@ import type {
   ResolvedTokenIdentity,
 } from "@/server/types";
 import { classifyDiscovery } from "@/server/agents/decision";
-import { runAgentSafely } from "@/server/agents/shared";
+import { runAgentSafely, buildAgentResult } from "@/server/agents/shared";
 import { runNewsAgent, type NewsAgentProviders } from "@/server/agents/news";
 import { runOnchainAgent, type OnchainAgentProviders } from "@/server/agents/onchain";
 import { runPortfolioAgent } from "@/server/agents/portfolio";
 import { runSocialAgent } from "@/server/agents/social";
 import { resolveTokenIdentity } from "@/server/identity/tokenIdentity";
 import { assertApprovalOnly } from "@/server/security/policy";
+import { fetchLiveDiscoveryCandidates } from "@/server/discovery/sources";
 
 export type DiscoveryCandidateProviders = {
   listCandidates?: (chain?: string) => Promise<DiscoveryCandidate[]>;
@@ -24,6 +26,50 @@ export type DiscoveryCandidateProviders = {
   news?: NewsAgentProviders;
   skipPortfolio?: boolean;
 };
+
+function buildUnavailablePortfolioResult(discovery: DiscoveryAgentContext): AgentResult {
+  return buildAgentResult({
+    agent: "portfolio",
+    score: 50,
+    verdict: "Wallet not connected for candidate scan",
+    summary: `Portfolio context is unavailable because no wallet is connected for ${discovery.tokenSymbol ?? discovery.candidateId}.`,
+    findings: [
+      {
+        label: "Wallet not connected",
+        severity: "medium",
+        detail: `Candidate ${discovery.tokenSymbol ?? discovery.candidateId} was scanned without a connected wallet; portfolio overlay is intentionally not generated because no holdings can be queried.`,
+        sourceLabel: "Discovery pipeline",
+        interpretation: "Discovery continues so the decision can still be made from onchain, news and social evidence.",
+      },
+    ],
+    sources: [
+      {
+        label: "Wallet portfolio API",
+        status: "unavailable",
+        detail: "Discovery scan invoked without walletAddress; portfolio provider was not contacted.",
+        checkedAt: new Date().toISOString(),
+        reliability: 0.1,
+      },
+    ],
+    confidence: 0.18,
+    recommendedAction: "manual_review",
+    blockingReasons: [],
+    missingData: [
+      {
+        field: "portfolio holdings",
+        reason: "Wallet is not connected for the Discovery context.",
+        impact: "medium",
+        requiredFor: "portfolio-overlay decisions",
+        canRetry: true,
+        fallbackUsed: false,
+      },
+    ],
+    rawSignals: {
+      discovery,
+      portfolioScope: "candidate_without_wallet",
+    },
+  });
+}
 
 function buildIdentityInput(candidate: DiscoveryCandidate): DiscoveryAgentInputIdentity {
   return {
@@ -65,26 +111,73 @@ function clampScore(value: number) {
   return Math.min(100, Math.max(0, Math.round(value)));
 }
 
+function buildDiscoveryAgentContext(
+  candidate: DiscoveryCandidate,
+  identity: ResolvedTokenIdentity,
+  options: { mode: DiscoveryAgentContext["discoveryMode"]; sourceLabel?: string },
+): DiscoveryAgentContext {
+  return {
+    candidateId: candidate.id,
+    chain: candidate.chain,
+    source: candidate.source,
+    discoveryMode: options.mode,
+    identityKey: identity.identityKey,
+    identityConfidence: identity.confidence,
+    identityConfidenceLabel: identity.confidenceLabel,
+    metrics: { ...candidate.metrics },
+    scanOriginLabel: options.sourceLabel ?? (options.mode === "watchlist_rescan" ? "Watchlist rescan" : "Discovery scan"),
+  };
+}
+
 async function gatherSpecialistResults(
   candidate: DiscoveryCandidate,
   identity: ResolvedTokenIdentity,
-  options: { walletAddress?: string; providers?: DiscoveryCandidateProviders },
+  options: {
+    walletAddress?: string;
+    providers?: DiscoveryCandidateProviders;
+    discovery: DiscoveryAgentContext;
+  },
 ) {
   const providers = options.providers ?? {};
+  const discovery = options.discovery;
+
+  const onchainTask = async () => runOnchainAgent(
+    {
+      chain: candidate.chain,
+      contractAddress: candidate.contractAddress,
+      symbol: candidate.symbol,
+      issuer: candidate.issuer,
+      assetKey: candidate.assetKey,
+      assetType: candidate.assetType,
+      discovery,
+    } as Parameters<typeof runOnchainAgent>[0],
+    providers.onchain ?? {},
+  );
+  const newsTask = async () => runNewsAgent(
+    {
+      tokenName: candidate.tokenName,
+      symbol: candidate.symbol,
+      contractAddress: candidate.contractAddress,
+      projectName: candidate.tokenName,
+      chain: candidate.chain,
+      discovery,
+    },
+    providers.news ?? {},
+  );
+  const socialTask = async () => runSocialAgent({
+    symbol: candidate.symbol,
+    tokenName: candidate.tokenName,
+    contractAddress: candidate.contractAddress,
+    websiteUrl: identity.websiteUrl,
+    twitterUrl: identity.twitterUrl,
+    telegramUrl: identity.telegramUrl,
+    discovery,
+  });
+
   const [onchainResult, newsResult, socialResult, portfolioResult] = await Promise.all([
-    runAgentSafely("onchain", () =>
-      runOnchainAgent(
-        {
-          chain: candidate.chain,
-          contractAddress: candidate.contractAddress,
-          symbol: candidate.symbol,
-          issuer: candidate.issuer,
-          assetKey: candidate.assetKey,
-          assetType: candidate.assetType,
-        } as Parameters<typeof runOnchainAgent>[0],
-        providers.onchain ?? {},
-      ),
-    ),
+    runAgentSafely("onchain", onchainTask),
+    runAgentSafely("news", newsTask),
+    runAgentSafely("social", socialTask),
     runAgentSafely("news", () =>
       runNewsAgent(
         {
@@ -93,35 +186,35 @@ async function gatherSpecialistResults(
           contractAddress: candidate.contractAddress,
           projectName: candidate.tokenName,
           chain: candidate.chain,
+          discovery,
         },
         providers.news ?? {},
       ),
     ),
-    runAgentSafely("social", () =>
-      runSocialAgent({
-        symbol: candidate.symbol,
-        tokenName: candidate.tokenName,
-        contractAddress: candidate.contractAddress,
-        websiteUrl: identity.websiteUrl,
-        twitterUrl: identity.twitterUrl,
-        telegramUrl: identity.telegramUrl,
-      }),
-    ),
-    !providers.skipPortfolio && options.walletAddress
-      ? runAgentSafely("portfolio", () =>
-          runPortfolioAgent(options.walletAddress!, {
+    providers.skipPortfolio
+      ? Promise.resolve(undefined)
+      : runAgentSafely("portfolio", async () => {
+          if (!options.walletAddress) {
+            return buildUnavailablePortfolioResult(discovery);
+          }
+
+          return runPortfolioAgent(options.walletAddress, {
             contractAddress: candidate.contractAddress,
             symbol: candidate.symbol,
-          }),
-        )
-      : Promise.resolve(undefined),
+            discovery,
+          });
+        }),
   ]);
 
   return { onchainResult, newsResult, socialResult, portfolioResult };
 }
 
 export async function listDiscoveryCandidates(chain?: string, providers: DiscoveryCandidateProviders = {}): Promise<DiscoveryCandidate[]> {
-  const providerFn = providers.listCandidates ?? (async () => []);
+  const providerFn = providers.listCandidates ?? (async (chainFilter?: string) => {
+    const live = await fetchLiveDiscoveryCandidates(chainFilter);
+
+    return live.candidates;
+  });
   const fetched = await providerFn(chain);
 
   return normalizeCandidates(fetched);
@@ -144,15 +237,30 @@ export type ScanDiscoveryResultSummary = {
   autoExecute: false;
 };
 
+export type ScanDiscoveryOptions = {
+  walletAddress?: string;
+  providers?: DiscoveryCandidateProviders;
+  scanMode?: DiscoveryAgentContext["discoveryMode"];
+  sourceLabel?: string;
+};
+
 export async function scanDiscoveryCandidate(
   candidate: DiscoveryCandidate,
-  options: { walletAddress?: string; providers?: DiscoveryCandidateProviders } = {},
+  options: ScanDiscoveryOptions = {},
 ): Promise<DiscoveryScanResult> {
   assertApprovalOnly({ autoExecute: false });
 
   const identityInput = buildIdentityInput(candidate);
   const identity = getDiscoveryIdentity(identityInput);
-  const { onchainResult, newsResult, socialResult, portfolioResult } = await gatherSpecialistResults(candidate, identity, options);
+  const discovery = buildDiscoveryAgentContext(candidate, identity, {
+    mode: options.scanMode ?? "candidate",
+    sourceLabel: options.sourceLabel,
+  });
+  const { onchainResult, newsResult, socialResult, portfolioResult } = await gatherSpecialistResults(candidate, identity, {
+    walletAddress: options.walletAddress,
+    providers: options.providers,
+    discovery,
+  });
   const specialistResults: AgentResult[] = [onchainResult, newsResult, socialResult, ...(portfolioResult ? [portfolioResult] : [])];
 
   const blockersList = specialistResults.flatMap((result) =>
@@ -279,6 +387,7 @@ export async function scanDiscoveryCandidate(
         : [],
     missingData: collectMissingData(specialistResults),
     rawSignals: {
+      discoveryAgentContext: discovery,
       discoveryClassification: refinementDecision,
       finalClassification,
       identity,
@@ -307,3 +416,4 @@ export async function scanDiscoveryCandidate(
     scannedAt: decisionAgent.createdAt,
   };
 }
+
