@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Asset, BASE_RESERVE, StrKey } from "@stellar/stellar-sdk";
+import { BASE_RESERVE, StrKey } from "@stellar/stellar-sdk";
 import type { StellarTrustlinePreview } from "@/server/types";
 import { getStellarNetwork } from "@/lib/stellar/config";
 import { createStellarDataServer } from "@/server/stellar/client";
