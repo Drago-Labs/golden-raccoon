@@ -6,12 +6,13 @@ import { x402Client, x402HTTPClient } from "@x402/core/client";
 import type { PaymentRequired } from "@x402/core/types";
 import { toClientEvmSigner } from "@x402/evm";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
-import { useAccount, usePublicClient, useSwitchChain, useWalletClient } from "wagmi";
+import { usePublicClient, useWalletClient } from "wagmi";
 import type { RiskReportVerdict, ScoreFactor, TokenScanResult, TransactionPreview } from "@/server/types";
 import { NoDataState } from "@/components/NoDataState";
 import { RiskBreakdownCard } from "@/components/RiskBreakdownCard";
 import { WalletConnectButton } from "@/components/WalletConnectButton";
 import { StellarRiskPublishButton } from "@/components/StellarRiskPublishButton";
+import { useWalletSession } from "@/hooks/useWalletSession";
 
 const paymentStatusLabels: Record<PaymentStage, { title: string; detail: string }> = {
   idle: {
@@ -172,10 +173,10 @@ function getPaymentChainId(paymentRequirement: PaymentRequired | null) {
 }
 
 export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: string }) {
-  const { address, chainId, isConnected } = useAccount();
+  const walletSession = useWalletSession();
+  const { address, chainId, isConnected } = walletSession.evm;
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
-  const { switchChainAsync } = useSwitchChain();
   const [query, setQuery] = useState(initialQuery || "MEME");
   const [chain, setChain] = useState("base");
   const [walletAddress, setWalletAddress] = useState("");
@@ -250,6 +251,13 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
       return;
     }
 
+    if (walletSession.selectedFamily !== "evm") {
+      setScan(null);
+      setPremiumStatus("wallet_required");
+      setPremiumDetail("Select your EVM session before signing this x402 payment. Stellar and EVM sessions are kept separate.");
+      return;
+    }
+
     if (!isConnected || !walletClient || !address) {
       setScan(null);
       setPremiumStatus("wallet_required");
@@ -298,8 +306,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
         const requiredChainId = getPaymentChainId(required);
 
         if (requiredChainId && chainId !== requiredChainId) {
-          setPremiumDetail(`Switching wallet network to eip155:${requiredChainId} for x402 payment.`);
-          await switchChainAsync({ chainId: requiredChainId });
+          throw new Error(`Wallet network mismatch. Switch to eip155:${requiredChainId} in your wallet, then retry.`);
         }
 
         setPremiumStatus("signing");

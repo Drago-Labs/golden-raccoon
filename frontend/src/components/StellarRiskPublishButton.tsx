@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { CheckCircle2, ExternalLink, Loader2, Orbit } from "lucide-react";
 import { getStellarNetwork, normalizeStellarNetworkId } from "@/lib/stellar/config";
-import { useStellarWallet } from "@/providers/StellarWalletProvider";
+import { useWalletSession } from "@/hooks/useWalletSession";
 
 type PublishStage = "idle" | "preparing" | "signing" | "submitting" | "pending" | "success" | "error";
 
@@ -22,7 +22,8 @@ export function StellarRiskPublishButton({
   verdict: string;
   report: unknown;
 }) {
-  const stellar = useStellarWallet();
+  const session = useWalletSession();
+  const stellar = session.stellar;
   const networkId = normalizeStellarNetworkId(network);
   const config = getStellarNetwork(networkId ?? undefined);
   const [stage, setStage] = useState<PublishStage>("idle");
@@ -32,18 +33,15 @@ export function StellarRiskPublishButton({
   if (!networkId || !assetKey || !config) return null;
 
   async function publish() {
+    session.selectFamily("stellar");
     if (!stellar.address) {
       await stellar.connect().catch(() => undefined);
-      return;
-    }
-    if (stellar.network !== networkId) {
-      setError(`Wallet is on ${stellar.network}; switch it to ${networkId}.`);
-      setStage("error");
       return;
     }
 
     try {
       setError(undefined);
+      await stellar.prepareSigning(networkId ?? undefined);
       setStage("preparing");
       const preparedResponse = await fetch("/api/stellar/registry/prepare", {
         method: "POST",
@@ -54,7 +52,7 @@ export function StellarRiskPublishButton({
       if (!preparedResponse.ok || !prepared.xdr) throw new Error(prepared.error ?? "Registry transaction could not be prepared.");
 
       setStage("signing");
-      const signedXdr = await stellar.signTransaction(prepared.xdr);
+      const signedXdr = await stellar.signTransaction(prepared.xdr, networkId ?? undefined);
       setStage("submitting");
       const submitResponse = await fetch("/api/stellar/registry/submit", {
         method: "POST",
