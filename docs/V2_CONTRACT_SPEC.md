@@ -4,9 +4,9 @@
 | --- | --- |
 | Issue | Drago-Labs/golden-raccoon#16 |
 | Authors | Golden Raccoon contributors |
-| Status | Implementation-ready, awaiting maintainer approval |
+| Status | Implementation-ready; contributor answers in §9.5 pending maintainer sign-off |
 | Roadmap coverage | V2-061, V2-062, V2-063, prerequisite decisions for V2-066 / V2-067 |
-| Target networks | **Maintainer sign-off requested on §9.1 / §9.5.** Primary targets proposed by the contributor: EVM — GOAT Network (id 48816); Soroban — Stellar Testnet (pubnet-equivalent rollout deferred to a follow-up audit). Base Sepolia is documented as a secondary parallel testnet in §9.6. |
+| Target networks | **Proposed primary targets:** EVM — GOAT Network (id 48816); Soroban — Stellar Testnet (pubnet-equivalent rollout deferred to a follow-up audit). Base Sepolia is documented as a secondary parallel testnet in §9.6. Maintainer can lock the choice in §9.1 / §9.5 with an approving comment. |
 | Out of scope | Implementing or deploying the contracts; adding fund custody, swaps, or autonomous execution; choosing a production admin key inside this PR. |
 
 This document is the implementation-ready contract specification that closes V2 contract requirements (V2-061..V2-063 and the prerequisite decisions for V2-066 / V2-067). It does not introduce implementation code. The matching test matrix is `docs/V2_CONTRACT_TEST_MATRIX.md`.
@@ -546,6 +546,10 @@ The spec is **implementation-ready** once the maintainer approves the open quest
 ### 9.6 Secondary parallel coverage (Base Sepolia)
 
 - Base Sepolia is documented as the parallel EVM testnet for coverage parity. It is **not** the primary EVM target — GOAT Network (id 48816) is.
+- Parity shape if Base Sepolia is signed off (added in a follow-up PR, not this one):
+  - `T-EVM-BS-*` tests in `docs/V2_CONTRACT_TEST_MATRIX.md` mirroring every T-EVM row on GOAT Network.
+  - Owner-controlled deploy script that pins a deterministic admin and emits `VersionReported` on first call, identical to the GOAT Network path.
+  - CI matrix entry that runs the parity suite alongside the GOAT Network suite.
 - The Matrix at `docs/V2_CONTRACT_TEST_MATRIX.md` does **not** add Base-Sepolia-only tests in this PR. Test parity for Base Sepolia is a follow-up that requires the maintainer to (a) confirm Base Sepolia as a maintainer-supported secondary, and (b) allocate owner-controlled infrastructure for it.
 - If the maintainer does not sign Base Sepolia off in this PR, §9.6 collapses to a single line: "Base Sepolia is not in scope for V2; revisit during the audit phase if needed."
 

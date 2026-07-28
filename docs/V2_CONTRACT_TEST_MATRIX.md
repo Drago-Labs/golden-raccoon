@@ -4,7 +4,7 @@
 | --- | --- |
 | Issue | Drago-Labs/golden-raccoon#16 |
 | Companion spec | `docs/V2_CONTRACT_SPEC.md` |
-| Status | Draft for maintainer review |
+| Status | Implementation-ready; contributor-proposed answers in `docs/V2_CONTRACT_SPEC.md` §9.5 pending maintainer sign-off |
 | Scope | Implementation-ready test cases for both `GoldRaccoonVault` (EVM) and `RiskRegistry` (Soroban) |
 
 The matrix is exhaustive enough to implement without product guesses. Each row carries a stable identifier (`T-EVM-xxx`, `T-SOR-xxx`) so it can be cross-referenced from the implementation PRs and the audit checklist.
@@ -252,8 +252,12 @@ These invariants are mirrored on the frontend side via the V2 transaction lifecy
 
 ## Open items for maintainer review
 
-1. **EVM testnet production target — proposed:** GOAT Network (id 48816) is the primary production target; Base Sepolia remains a documented secondary testnet for parallel coverage only (Spec §9.1). Both are listed as `await maintainer sign-off` in `docs/V2_CONTRACT_SPEC.md` §9.1.
-2. **Publisher tier list — proposed:** `gold_raccoon`, `partner`, `community`. A fourth `audited` tier is not proposed in this PR; it is tracked as a possible future V2-068+ extension.
-3. **Upgrade delay window — proposed:** 24-hour minimum, 30-day maximum, consistent with Spec §5.7 / §6.7. A 72-hour minimum is not proposed; the maintainer can request 72 hours as a follow-up edit if desired.
-4. **Quorum for pause / owner transfer / upgrade execution — proposed:** single-key with guardian support, no quorum in this spec. Quorum logic is out of scope and a future spec may add it once §10 (threats and assumptions) is revisited.
-5. **`VersionReported` schema — proposed:** the event signature in Spec §4 is the canonical schema; the implementation MUST emit semver (3 × `uint16`/`u32`) and `buildHash` (`bytes32`/`BytesN<32>`) in that order so indexers can rely on a single projection. A separate typed schema document is not proposed for V2.
+The open items in this matrix are aligned with `docs/V2_CONTRACT_SPEC.md` §9.5. The contributor's proposed answers are the canonical source in §9.5; this section keeps a short reference so reviewers can cross-check the matrix against the spec without running into drift.
+
+Reference links:
+
+- **EVM testnet production target** — see `docs/V2_CONTRACT_SPEC.md` §9.1 (proposed primary: GOAT Network id 48816; secondary: Base Sepolia, see §9.6).
+- **Publisher tier list** — see `docs/V2_CONTRACT_SPEC.md` §9.5 item 5 (proposed: `gold_raccoon`, `partner`, `community`).
+- **Upgrade delay window** — see `docs/V2_CONTRACT_SPEC.md` §9.5 item 4 (proposed: 24h minimum, 30d maximum).
+- **Quorum for pause / owner transfer / upgrade execution** — see `docs/V2_CONTRACT_SPEC.md` §9.5 item 7 (out of scope for this spec).
+- **`VersionReported` schema** — see `docs/V2_CONTRACT_SPEC.md` §4 (event signature is the canonical schema; implementation MUST emit semver + `buildHash` in the documented order).
