@@ -1,10 +1,19 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { StrKey } from "@stellar/stellar-sdk";
 import type { PortfolioSnapshot, TokenHolding, TokenSignal } from "@/server/types";
 import { getRiskLevel, scorePortfolioRisk, scoreTokenRisk } from "@/server/portfolio/riskScoring";
 import { canonicalClassicAssetKey } from "@/server/stellar/assetIdentity";
-import { createStellarDataServer, createStellarRpcServer } from "@/server/stellar/client";
+import { requireStellarNetwork } from "@/server/stellar/client";
+import {
+  buildAccountLedgerKey,
+  StellarRpcDataLayer,
+} from "@/server/stellar/dataLayer";
+import {
+  HorizonAccountDataAdapter,
+  type StellarAccountDataAdapter,
+} from "@/server/stellar/horizonAdapter";
 
 const officialUsdcIssuers = {
   "stellar-testnet": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
@@ -56,22 +65,33 @@ async function getXlmPrice() {
   return payload.stellar?.usd ? payload.stellar : null;
 }
 
-export async function getStellarPortfolio(walletAddress: string, networkId: string): Promise<PortfolioSnapshot | null> {
+export async function getStellarPortfolio(
+  walletAddress: string,
+  networkId: string,
+  adapters: {
+    accountData?: StellarAccountDataAdapter;
+    rpc?: StellarRpcDataLayer;
+  } = {},
+): Promise<PortfolioSnapshot | null> {
   if (!StrKey.isValidEd25519PublicKey(walletAddress)) return null;
 
   const canonicalWallet = walletAddress.toUpperCase();
-  const { network, server: dataServer } = createStellarDataServer(networkId);
-  const { server: rpcServer } = createStellarRpcServer(networkId);
+  const network = requireStellarNetwork(networkId);
+  const accountData = adapters.accountData ?? new HorizonAccountDataAdapter();
+  const rpcData = adapters.rpc ?? new StellarRpcDataLayer(network.id);
+  const requestId = randomUUID();
   const startedAt = performance.now();
   const [accountResult, rpcAccountResult, xlmPriceResult] = await Promise.allSettled([
-    dataServer.loadAccount(canonicalWallet),
-    rpcServer.getAccountEntry(canonicalWallet),
+    accountData.loadAccount(canonicalWallet, network.id, requestId),
+    rpcData.getLedgerEntries([buildAccountLedgerKey(canonicalWallet)], {
+      requestId,
+    }),
     getXlmPrice(),
   ]);
 
   if (accountResult.status !== "fulfilled" || rpcAccountResult.status !== "fulfilled") return null;
 
-  const account = accountResult.value;
+  const account = accountResult.value.value;
   const xlmMarket = xlmPriceResult.status === "fulfilled" ? xlmPriceResult.value : null;
   const balances = account.balances as HorizonBalance[];
   const preliminary = balances.map((balance) => {
@@ -142,6 +162,14 @@ export async function getStellarPortfolio(walletAddress: string, networkId: stri
       provider: "stellar_rpc_and_data_api",
       network: network.id,
       latencyMs: Math.round(performance.now() - startedAt),
+      requestId: rpcAccountResult.value.meta.requestId,
+      reliability: Math.min(
+        accountResult.value.meta.reliability,
+        rpcAccountResult.value.meta.reliability,
+      ),
+      fallbackUsed:
+        accountResult.value.meta.fallbackUsed ||
+        rpcAccountResult.value.meta.fallbackUsed,
     },
   };
 }

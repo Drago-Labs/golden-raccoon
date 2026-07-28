@@ -10,7 +10,9 @@
     "lint": "eslint",
     "test:agents": "tsx --tsconfig tsconfig.json scripts/agent-fixture-check.ts",
     "test:stellar-config": "tsx --tsconfig tsconfig.json scripts/stellar-config-check.ts",
-    "verify": "npm run test:agents && npm run lint && npm run build"
+    "test:stellar-data-layer": "tsx --tsconfig tsconfig.json scripts/stellar-data-layer-check.ts",
+    "stellar:ingest-events": "tsx --tsconfig tsconfig.json scripts/ingest-stellar-events.ts",
+    "verify": "npm run test:agents && npm run test:stellar-data-layer && npm run lint && npm run build"
   },
   "dependencies": {
     "@coinbase/x402": "^2.1.0",

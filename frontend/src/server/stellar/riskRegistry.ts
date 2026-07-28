@@ -2,7 +2,10 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { Address, BASE_FEE, Contract, TransactionBuilder, nativeToScVal, scValToNative, xdr } from "@stellar/stellar-sdk";
-import { createStellarRpcServer } from "@/server/stellar/client";
+import {
+  createStellarRpcDataLayer,
+  createStellarRpcServer,
+} from "@/server/stellar/client";
 import type { StellarNetworkId } from "@/lib/stellar/config";
 import { getStellarNetwork, getStellarRegistryContractId } from "@/lib/stellar/config";
 
@@ -110,32 +113,37 @@ export async function prepareRiskPublication(networkId: StellarNetworkId, public
 }
 
 export async function submitRiskPublication(networkId: StellarNetworkId, signedXdr: string) {
-  const { network, server } = createStellarRpcServer(networkId);
+  const { network } = createStellarRpcServer(networkId);
   const registry = requireRegistry(network.id);
   const transaction = TransactionBuilder.fromXDR(signedXdr, network.networkPassphrase);
   assertRiskPublicationTransaction(transaction, registry.contractId());
-  const submitted = await server.sendTransaction(transaction);
+  const submitted = await createStellarRpcDataLayer(networkId).submitTransaction(
+    transaction,
+  );
 
   return {
     network: network.id,
-    hash: submitted.hash,
-    status: submitted.status,
-    errorResultXdr: submitted.errorResult?.toXDR("base64"),
-    latestLedger: submitted.latestLedger,
-    latestLedgerCloseTime: submitted.latestLedgerCloseTime,
+    hash: submitted.value.hash,
+    status: submitted.value.status,
+    errorResultXdr: submitted.value.errorResult?.toXDR("base64"),
+    latestLedger: submitted.value.latestLedger,
+    latestLedgerCloseTime: submitted.value.latestLedgerCloseTime,
+    providerMeta: submitted.meta,
   };
 }
 
 export async function getRiskPublicationStatus(networkId: StellarNetworkId, hash: string) {
-  const { network, server } = createStellarRpcServer(networkId);
-  const result = await server.getTransaction(hash);
+  const network = getStellarNetwork(networkId);
+  if (!network) throw new Error(`Unsupported Stellar network: ${networkId}`);
+  const result = await createStellarRpcDataLayer(networkId).pollTransaction(hash);
 
   return {
     network: network.id,
     hash,
-    status: result.status,
-    ledger: "ledger" in result ? result.ledger : undefined,
-    createdAt: "createdAt" in result ? result.createdAt : undefined,
+    status: result.value.status,
+    ledger: "ledger" in result.value ? result.value.ledger : undefined,
+    createdAt: "createdAt" in result.value ? result.value.createdAt : undefined,
+    providerMeta: result.meta,
   };
 }
 
@@ -148,8 +156,15 @@ export async function readRiskRecord(networkId: StellarNetworkId, assetKey: stri
     .addOperation(registry.call("get_risk", nativeToScVal(assetId), nativeToScVal(network.shortName, { type: "symbol" })))
     .setTimeout(30)
     .build();
-  const simulation = await server.simulateTransaction(transaction);
+  const simulation = await createStellarRpcDataLayer(
+    networkId,
+  ).simulateTransaction(transaction);
 
-  if (!("result" in simulation) || !simulation.result?.retval || simulation.result.retval.switch() === xdr.ScValType.scvVoid()) return null;
-  return scValToNative(simulation.result.retval) as Record<string, unknown>;
+  if (
+    !("result" in simulation.value) ||
+    !simulation.value.result?.retval ||
+    simulation.value.result.retval.switch() === xdr.ScValType.scvVoid()
+  )
+    return null;
+  return scValToNative(simulation.value.result.retval) as Record<string, unknown>;
 }

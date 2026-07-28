@@ -2,7 +2,11 @@ import { Contract, StrKey, xdr } from "@stellar/stellar-sdk";
 import type { AgentFinding, AgentResult, AgentSource } from "@/server/types";
 import { buildAgentResult, weightedScore } from "@/server/agents/shared";
 import { parseStellarAssetInput, type StellarAssetIdentity } from "@/server/stellar/assetIdentity";
-import { createStellarDataServer, createStellarRpcServer, getStellarRpcHealth } from "@/server/stellar/client";
+import {
+  createStellarDataServer,
+  createStellarRpcDataLayer,
+  getStellarRpcHealth,
+} from "@/server/stellar/client";
 
 export type StellarOnchainAgentInput = {
   chain: string;
@@ -53,10 +57,12 @@ function resolveIdentity(input: StellarOnchainAgentInput): StellarAssetIdentity 
 async function getContractState(contractId: string, chain: string) {
   if (!StrKey.isValidContract(contractId)) return null;
 
-  const { server } = createStellarRpcServer(chain);
   const footprint = new Contract(contractId).getFootprint();
-  const response = await server.getLedgerEntries(footprint);
-  const entry = response.entries[0];
+  const response = await createStellarRpcDataLayer(chain).getLedgerEntries(
+    [footprint],
+    { requireAll: false },
+  );
+  const entry = response.value.entries[0];
 
   if (!entry || entry.val.switch() !== xdr.LedgerEntryType.contractData()) return null;
 
@@ -71,7 +77,8 @@ async function getContractState(contractId: string, chain: string) {
     wasmHash,
     lastModifiedLedgerSeq: entry.lastModifiedLedgerSeq,
     liveUntilLedgerSeq: entry.liveUntilLedgerSeq,
-    latestLedger: response.latestLedger,
+    latestLedger: response.value.latestLedger,
+    providerMeta: response.meta,
   };
 }
 
