@@ -497,6 +497,44 @@ export type AgentRunRecord = {
   createdAt: string;
 };
 
+export type WatchlistEntry = {
+  id: string;
+  walletAddress: string;
+  chainFamily: "evm" | "stellar";
+  /** Normalised network id (e.g. "base", "goat", "stellar-pubnet") */
+  network: string;
+  /**
+   * Canonical asset identifier:
+   * - EVM contract: `0x...` (lowercased)
+   * - Stellar native: `"native"`
+   * - Stellar classic: `"CODE:ISSUER"`
+   * - Stellar contract: `"C..."`
+   */
+  assetIdentifier: string;
+  assetType: "evm_contract" | "stellar_native" | "stellar_classic" | "stellar_contract";
+  symbol: string;
+  name: string;
+  /** Reference to the latest TokenScanResult.scannedAt timestamp */
+  latestScanAt?: string;
+  latestScanStatus?: "complete" | "partial" | "unavailable" | "stale";
+  latestVerdict?: string;
+  latestRiskScore?: number;
+  /** True when a previous scan result exists and can be shown if rescan fails */
+  previousScanAvailable: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WatchlistEntryInput = {
+  walletAddress: string;
+  chainFamily: "evm" | "stellar";
+  network: string;
+  assetIdentifier: string;
+  assetType: WatchlistEntry["assetType"];
+  symbol: string;
+  name?: string;
+};
+
 export type StorageProvider = "memory" | "supabase_postgres";
 
 export type StorageHealth = {
@@ -561,5 +599,6 @@ export type StorageCounts = {
   transactions: number;
   approvals: number;
   userRules: number;
+  watchlistEntries: number;
   x402PaymentReceipts: number;
 };

@@ -7,8 +7,11 @@ import type {
   TransactionRecord,
   UserApprovalRecord,
   UserRule,
+  WatchlistEntry,
+  WatchlistEntryInput,
   X402PaymentReceipt,
 } from "@/server/types";
+import { canonicalizeAddress } from "@/lib/chainIdentity";
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { validateAgentResult } from "@/server/agents/schema";
 
@@ -31,6 +34,7 @@ export const storageSchemaContract = {
     "approvals",
     "transactions",
     "x402_payment_receipts",
+    "watchlist_entries",
     "token_identities",
     "source_snapshots",
   ],
@@ -59,6 +63,7 @@ const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonTransactions?: TransactionRecord[];
   __goldenRaccoonApprovals?: UserApprovalRecord[];
   __goldenRaccoonUserRules?: UserRule[];
+  __goldenRaccoonWatchlistEntries?: WatchlistEntry[];
   __goldenRaccoonX402PaymentReceipts?: X402PaymentReceipt[];
 };
 
@@ -96,6 +101,12 @@ function getX402PaymentReceipts() {
   memoryStore.__goldenRaccoonX402PaymentReceipts ??= [];
 
   return memoryStore.__goldenRaccoonX402PaymentReceipts;
+}
+
+function getWatchlistEntries() {
+  memoryStore.__goldenRaccoonWatchlistEntries ??= [];
+
+  return memoryStore.__goldenRaccoonWatchlistEntries;
 }
 
 function createId() {
@@ -359,6 +370,92 @@ export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | 
   return record;
 }
 
+export function listWatchlistEntries(walletAddress?: string): WatchlistEntry[] {
+  const normalizedWallet = walletAddress ? canonicalizeAddress(walletAddress, inferFamily(walletAddress)) : undefined;
+
+  return getWatchlistEntries()
+    .filter((entry) => !normalizedWallet || canonicalizeAddress(entry.walletAddress, entry.chainFamily) === normalizedWallet)
+    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+}
+
+export function getWatchlistEntry(id: string): WatchlistEntry | undefined {
+  return getWatchlistEntries().find((entry) => entry.id === id);
+}
+
+/**
+ * Infer chain family from an address for normalisation purposes.
+ */
+function inferFamily(address: string): "evm" | "stellar" {
+  return address.startsWith("G") && address.length === 56 ? "stellar" : "evm";
+}
+
+/**
+ * Find a watchlist entry by canonical identity (wallet + chain + assetIdentifier).
+ * Prevents duplicate-wallet-for-identity and keeps same-code/different-issuer Stellar assets distinct.
+ */
+export function findWatchlistEntry(walletAddress: string, chainFamily: string, assetIdentifier: string): WatchlistEntry | undefined {
+  const normalizedWallet = canonicalizeAddress(walletAddress, chainFamily as "evm" | "stellar");
+
+  return getWatchlistEntries().find(
+    (entry) =>
+      canonicalizeAddress(entry.walletAddress, entry.chainFamily) === normalizedWallet &&
+      entry.chainFamily === chainFamily &&
+      entry.assetIdentifier.toLowerCase() === assetIdentifier.toLowerCase(),
+  );
+}
+
+export function createWatchlistEntry(input: WatchlistEntryInput): WatchlistEntry {
+  const existing = findWatchlistEntry(input.walletAddress, input.chainFamily, input.assetIdentifier);
+
+  if (existing) {
+    throw new Error(
+      `Watchlist entry already exists for ${input.assetIdentifier} on ${input.network}. ` +
+        `Idempotent: entry id ${existing.id}.`,
+    );
+  }
+
+  const now = new Date().toISOString();
+  const entry: WatchlistEntry = {
+    id: createRecordId("watch"),
+    walletAddress: input.walletAddress,
+    chainFamily: input.chainFamily,
+    network: input.network,
+    assetIdentifier: input.assetIdentifier,
+    assetType: input.assetType,
+    symbol: input.symbol,
+    name: input.name ?? input.symbol,
+    previousScanAvailable: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  getWatchlistEntries().unshift(entry);
+
+  return entry;
+}
+
+export function deleteWatchlistEntry(id: string): boolean {
+  const entries = getWatchlistEntries();
+  const index = entries.findIndex((entry) => entry.id === id);
+
+  if (index === -1) return false;
+
+  entries.splice(index, 1);
+
+  return true;
+}
+
+export function updateWatchlistEntry(id: string, update: Partial<Pick<WatchlistEntry, "latestScanAt" | "latestScanStatus" | "latestVerdict" | "latestRiskScore" | "previousScanAvailable">>): WatchlistEntry | undefined {
+  const entries = getWatchlistEntries();
+  const entry = entries.find((e) => e.id === id);
+
+  if (!entry) return undefined;
+
+  Object.assign(entry, update, { updatedAt: new Date().toISOString() });
+
+  return entry;
+}
+
 export function getStorageCounts(): StorageCounts {
   return {
     agentRuns: getAgentRuns().length,
@@ -366,6 +463,7 @@ export function getStorageCounts(): StorageCounts {
     transactions: getTransactions().length,
     approvals: getApprovals().length,
     userRules: getUserRules().length,
+    watchlistEntries: getWatchlistEntries().length,
     x402PaymentReceipts: getX402PaymentReceipts().length,
   };
 }
