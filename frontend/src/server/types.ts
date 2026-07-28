@@ -452,20 +452,112 @@ export type TokenScanResult = {
   scannedAt: string;
 };
 
+export type TransactionLifecycleStatus =
+  | "prepared"
+  | "user_rejected"
+  | "submitted"
+  | "confirmed"
+  | "failed"
+  | "replaced"
+  | "expired"
+  | "pending";
+
+export type TransactionLifecycleEventName =
+  | "prepared"
+  | "submitted"
+  | "submission_failed"
+  | "user_rejected"
+  | "polled"
+  | "confirmed"
+  | "failed"
+  | "replaced"
+  | "expired"
+  | "duplicate_rejected";
+
+export type TransactionLifecycleEvent = {
+  id: string;
+  hash: string;
+  event: TransactionLifecycleEventName;
+  detail?: Record<string, unknown>;
+  occurredAt: string;
+  provider?: string;
+  providerUrl?: string;
+};
+
+export type ChainFamily = "evm" | "stellar";
+
+export type TransactionExpectedEffect = {
+  kind: "transfer" | "swap" | "approval" | "contract_call" | "publish_risk";
+  fromToken?: string;
+  toToken?: string;
+  fromAddress?: string;
+  toAddress?: string;
+  amount?: string;
+  contractAddress?: string;
+  method?: string;
+  assetKey?: string;
+};
+
 export type TransactionRecord = {
   hash: string;
   type: "swap" | "approval" | "agent_log" | "transfer";
   decisionAction?: AgentRecommendedAction;
   asset: string;
   valueUsd: number;
-  status: "prepared" | "user_rejected" | "submitted" | "confirmed" | "failed" | "replaced" | "expired" | "pending";
+  status: TransactionLifecycleStatus;
+  lifecycleStatus: TransactionLifecycleStatus;
+  chainFamily: ChainFamily;
   createdAt: string;
+  submittedAt?: string;
+  terminalAt?: string;
+  lastPolledAt?: string;
   network: string;
   walletAddress?: string;
+  sourceAccount?: string;
   userApproved?: boolean;
   decisionId?: string;
   simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
   policyStatus?: TransactionPreview["policyStatus"];
+  expectedEffects?: TransactionExpectedEffect[];
+  idempotencyKey?: string;
+  explorerUrl?: string;
+  failureReason?: string;
+};
+
+export type SubmitTransactionInput = {
+  chainFamily: ChainFamily;
+  network: string;
+  walletAddress: string;
+  sourceAccount?: string;
+  decisionId?: string;
+  decisionAction?: AgentRecommendedAction;
+  asset: string;
+  valueUsd?: number;
+  simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
+  policyStatus?: TransactionPreview["policyStatus"];
+  expectedEffects?: TransactionExpectedEffect[];
+  userApproved: true;
+  signedPayload: string;
+  idempotencyKey?: string;
+};
+
+export type SubmitTransactionResult = {
+  hash: string;
+  chainFamily: ChainFamily;
+  network: string;
+  submittedAt: string;
+  status: TransactionLifecycleStatus;
+  explorerUrl?: string;
+  idempotent: boolean;
+  reuseReason?: "idempotency_key" | "duplicate_hash";
+  lifecycle: TransactionLifecycleEvent[];
+};
+
+export type PollTransactionResult = {
+  transaction: TransactionRecord;
+  polled: boolean;
+  terminalReached: boolean;
+  events: TransactionLifecycleEvent[];
 };
 
 export type AgentRunRecord = {

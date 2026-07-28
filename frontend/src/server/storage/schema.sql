@@ -119,12 +119,46 @@ create table if not exists transactions (
   asset text not null,
   value_usd numeric not null default 0,
   status text not null,
+  lifecycle_status text not null check (lifecycle_status in ('prepared', 'user_rejected', 'submitted', 'confirmed', 'failed', 'replaced', 'expired', 'pending')),
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
+  source_account text,
+  expected_effects jsonb not null default '[]'::jsonb,
+  idempotency_key text,
+  explorer_url text,
+  failure_reason text,
+  submitted_at timestamptz,
+  terminal_at timestamptz,
+  last_polled_at timestamptz,
   network text not null,
   user_approved boolean not null default false,
   simulation_status text,
   policy_status jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
+
+-- Backfill (idempotent): for rows that pre-date the V2 columns, lift the legacy status into
+-- the lifecycle_status column. Existing rows that already carry a curated lifecycle_status
+-- value are left untouched.
+update transactions
+   set lifecycle_status = status
+ where lifecycle_status not in ('prepared', 'user_rejected', 'submitted', 'confirmed', 'failed', 'replaced', 'expired', 'pending');
+
+create unique index if not exists transactions_idempotency_wallet_idx
+  on transactions(wallet_address, idempotency_key)
+  where idempotency_key is not null;
+
+create table if not exists transaction_lifecycle_events (
+  id uuid primary key default gen_random_uuid(),
+  transaction_hash text not null references transactions(tx_hash) on delete cascade,
+  event text not null check (event in ('prepared', 'submitted', 'submission_failed', 'user_rejected', 'polled', 'confirmed', 'failed', 'replaced', 'expired', 'duplicate_rejected')),
+  detail jsonb not null default '{}'::jsonb,
+  provider text,
+  provider_url text,
+  occurred_at timestamptz not null default now()
+);
+
+create index if not exists transaction_lifecycle_events_hash_occurred_idx
+  on transaction_lifecycle_events(transaction_hash, occurred_at desc);
 
 create table if not exists x402_payment_receipts (
   id uuid primary key default gen_random_uuid(),

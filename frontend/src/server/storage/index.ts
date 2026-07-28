@@ -1,14 +1,19 @@
 import type {
   AgentResult,
   AgentRunRecord,
+  ChainFamily,
   RecommendationRecord,
   StorageCounts,
   StorageHealth,
+  TransactionLifecycleEvent,
+  TransactionLifecycleEventName,
+  TransactionLifecycleStatus,
   TransactionRecord,
   UserApprovalRecord,
   UserRule,
   X402PaymentReceipt,
 } from "@/server/types";
+import { isTransactionHashForChain } from "@/lib/chainIdentity";
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { validateAgentResult } from "@/server/agents/schema";
 
@@ -30,6 +35,7 @@ export const storageSchemaContract = {
     "user_rules",
     "approvals",
     "transactions",
+    "transaction_lifecycle_events",
     "x402_payment_receipts",
     "token_identities",
     "source_snapshots",
@@ -41,7 +47,12 @@ export const storageSchemaContract = {
     "listRecommendationRecords",
     "createRecommendationRecord",
     "listTransactionRecords",
+    "getTransactionRecord",
+    "getTransactionRecordByIdempotencyKey",
     "createTransactionRecord",
+    "updateTransactionRecord",
+    "listTransactionLifecycleEvents",
+    "createTransactionLifecycleEvent",
     "listApprovalRecords",
     "createApprovalRecord",
     "listX402PaymentReceipts",
@@ -57,6 +68,7 @@ const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonAgentRuns?: AgentRunRecord[];
   __goldenRaccoonRecommendations?: RecommendationRecord[];
   __goldenRaccoonTransactions?: TransactionRecord[];
+  __goldenRaccoonTransactionEvents?: TransactionLifecycleEvent[];
   __goldenRaccoonApprovals?: UserApprovalRecord[];
   __goldenRaccoonUserRules?: UserRule[];
   __goldenRaccoonX402PaymentReceipts?: X402PaymentReceipt[];
@@ -78,6 +90,12 @@ function getTransactions() {
   memoryStore.__goldenRaccoonTransactions ??= [];
 
   return memoryStore.__goldenRaccoonTransactions;
+}
+
+function getTransactionEvents() {
+  memoryStore.__goldenRaccoonTransactionEvents ??= [];
+
+  return memoryStore.__goldenRaccoonTransactionEvents;
 }
 
 function getApprovals() {
@@ -256,23 +274,107 @@ export function listTransactionRecords(walletAddress?: string) {
 }
 
 export function getTransactionRecord(hash: string) {
-  return getTransactions().find((record) => record.hash.toLowerCase() === hash.toLowerCase());
+  const family = isTransactionHashForChain(hash, "evm")
+    ? "evm"
+    : isTransactionHashForChain(hash, "stellar")
+      ? "stellar"
+      : "evm";
+  return getTransactionRecordForFamily(hash, family);
 }
 
-export function createTransactionRecord(input: Omit<TransactionRecord, "createdAt"> & { createdAt?: string }) {
-  const existingIndex = getTransactions().findIndex((record) => record.hash.toLowerCase() === input.hash.toLowerCase());
+export function getTransactionRecordForFamily(hash: string, family: ChainFamily) {
+  const normalized = canonicalizeTransactionHash(hash, family);
+  return getTransactions().find((record) => canonicalizeTransactionHash(record.hash, record.chainFamily) === normalized);
+}
+
+export function getTransactionRecordByIdempotencyKey(walletAddress: string, idempotencyKey: string) {
+  if (!idempotencyKey) return undefined;
+  const normalizedWallet = walletAddress.trim().toLowerCase();
+  return getTransactions().find((record) =>
+    record.idempotencyKey === idempotencyKey && (record.walletAddress ?? "").trim().toLowerCase() === normalizedWallet,
+  );
+}
+
+export function createTransactionRecord(input: Omit<TransactionRecord, "createdAt" | "lifecycleStatus"> & { createdAt?: string; lifecycleStatus?: TransactionLifecycleStatus }) {
+  const existing = getTransactionRecord(input.hash);
+
+  if (existing) {
+    return existing;
+  }
+
+  const lifecycleStatus: TransactionLifecycleStatus = input.lifecycleStatus ?? input.status ?? "prepared";
   const record: TransactionRecord = {
     ...input,
+    lifecycleStatus,
+    status: lifecycleStatus,
     createdAt: input.createdAt ?? new Date().toISOString(),
   };
 
-  if (existingIndex >= 0) {
-    getTransactions()[existingIndex] = record;
-  } else {
-    getTransactions().unshift(record);
-  }
+  getTransactions().unshift(record);
 
   return record;
+}
+
+export function updateTransactionRecord(hash: string, updates: Partial<Omit<TransactionRecord, "hash" | "createdAt">> & { status?: TransactionLifecycleStatus }) {
+  const list = getTransactions();
+  const existingIndex = list.findIndex((record) => record.hash.toLowerCase() === hash.toLowerCase());
+
+  if (existingIndex < 0) {
+    return undefined;
+  }
+
+  const previous = list[existingIndex];
+  const nextStatus: TransactionLifecycleStatus = updates.status ?? updates.lifecycleStatus ?? previous.lifecycleStatus;
+  const merged: TransactionRecord = {
+    ...previous,
+    ...updates,
+    hash: previous.hash,
+    createdAt: previous.createdAt,
+    lifecycleStatus: nextStatus,
+    status: nextStatus,
+  };
+
+  list[existingIndex] = merged;
+
+  return merged;
+}
+
+export function listTransactionLifecycleEvents(hash: string) {
+  const normalized = hash.trim().toLowerCase();
+  return getTransactionEvents()
+    .filter((event) => event.hash.toLowerCase() === normalized)
+    .sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime());
+}
+
+export function createTransactionLifecycleEvent(input: Omit<TransactionLifecycleEvent, "id" | "occurredAt"> & { occurredAt?: string }) {
+  const event: TransactionLifecycleEvent = {
+    id: createRecordId("tx_event"),
+    occurredAt: input.occurredAt ?? new Date().toISOString(),
+    ...input,
+  };
+
+  getTransactionEvents().unshift(event);
+
+  return event;
+}
+
+export function canonicalizeTransactionHash(hash: string, family: TransactionRecord["chainFamily"] = "evm") {
+  const trimmed = hash.trim();
+  return family === "stellar" ? trimmed.toUpperCase() : trimmed.toLowerCase();
+}
+
+export function appendLifecycleEventByName(hash: string, event: TransactionLifecycleEventName, detail?: Record<string, unknown>, provider?: { label: string; url?: string }) {
+  return createTransactionLifecycleEvent({
+    hash,
+    event,
+    detail,
+    provider: provider?.label,
+    providerUrl: provider?.url,
+  });
+}
+
+export function isImmutableTerminal(status: TransactionLifecycleStatus) {
+  return status === "confirmed" || status === "failed" || status === "replaced" || status === "expired" || status === "user_rejected";
 }
 
 export function listApprovalRecords(walletAddress?: string) {
