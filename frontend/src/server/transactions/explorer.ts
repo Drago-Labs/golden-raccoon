@@ -71,7 +71,9 @@ export function buildExplorerLink(hash: string, network: string, family: ChainFa
 
 export function attachExplorerUrl(record: Pick<TransactionRecord, "hash" | "network" | "chainFamily">): string | undefined {
   try {
-    return buildExplorerLink(record.hash, record.network, record.chainFamily).url;
+    const family = record.chainFamily;
+    if (!family) return undefined;
+    return buildExplorerLink(record.hash, record.network, family).url;
   } catch {
     return undefined;
   }

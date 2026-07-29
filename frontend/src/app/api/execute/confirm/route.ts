@@ -12,6 +12,8 @@ import { isTransactionHashForChain, getChainFamily } from "@/lib/chainIdentity";
 import { attachExplorerUrl } from "@/server/transactions/explorer";
 import { confirmTransaction } from "@/server/transactions/lifecycleManager";
 import { createStellarRpcServer } from "@/server/stellar/client";
+import { checkSimulationFreshness, checkCalldataMatch, checkParamsMatch, isHighRiskExecution, hashCalldata } from "@/server/simulation/freshness";
+import type { SimulationResultDetail } from "@/server/types";
 
 /**
  * Confirm a Stellar transaction exists on-chain via RPC before persisting.
@@ -80,6 +82,77 @@ const bodySchema = z.object({
   stellarEnvelopeXdr: z.string().optional(),
   stellarResultXdr: z.string().optional(),
   stellarTrustlineAsset: z.string().optional(),
+  simulation: z
+    .object({
+      simulatedTxHash: z.string(),
+      simulatedAt: z.string().optional(),
+      blockNumber: z.number().optional(),
+      ledgerSeq: z.number().optional(),
+      quoteExpiry: z.string().optional(),
+      calldataHash: z.string().optional(),
+      fromAmount: z.string().optional(),
+      route: z.array(z.string()).optional(),
+      slippageBps: z.number().optional(),
+      sequenceNumber: z.union([z.number(), z.string()]).optional(),
+      fee: z.string().optional(),
+      simulatedXdrHash: z.string().optional(),
+      resourceUsage: z
+        .object({
+          gasUnits: z.string().optional(),
+          gasPrice: z.string().optional(),
+          networkFee: z.string().optional(),
+          operationsCount: z.number().optional(),
+          ledgerFee: z.string().optional(),
+        })
+        .optional(),
+      balanceChanges: z
+        .array(
+          z.object({
+            token: z.string(),
+            symbol: z.string(),
+            currentBalance: z.string(),
+            expectedChange: z.string(),
+            direction: z.enum(["inflow", "outflow"]),
+          }),
+        )
+        .optional(),
+      allowanceRisk: z
+        .array(
+          z.object({
+            spender: z.string(),
+            spenderShort: z.string(),
+            token: z.string(),
+            currentAllowance: z.string(),
+            newAllowance: z.string(),
+            isInfinite: z.boolean(),
+          }),
+        )
+        .optional(),
+      trustlineRisk: z
+        .array(
+          z.object({
+            asset: z.string(),
+            assetShort: z.string(),
+            issuer: z.string(),
+            issuerShort: z.string(),
+            action: z.enum(["add", "remove", "update", "authorize", "deauthorize"]),
+            detail: z.string(),
+          }),
+        )
+        .optional(),
+      chainFamily: z.enum(["evm", "stellar"]).optional(),
+    })
+    .optional(),
+
+  currentBlockNumber: z.number().optional(),
+  currentLedgerSeq: z.number().optional(),
+
+  currentCalldata: z.string().optional(),
+  currentFromAmount: z.string().optional(),
+  currentRoute: z.array(z.string()).optional(),
+  currentSlippageBps: z.number().optional(),
+  currentSequenceNumber: z.union([z.number(), z.string()]).optional(),
+  currentFee: z.string().optional(),
 });
 
 export async function POST(request: Request) {
@@ -113,6 +186,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "simulation_failed", detail: "Simulation failed. Confirmation is blocked." }, { status: 403 });
   }
 
+  if (parsed.data.simulationStatus === "unsupported") {
+    return NextResponse.json({ error: "simulation_unsupported", detail: "Simulation is not supported for this transaction type or chain. Approval is blocked." }, { status: 403 });
+  }
+
   if (parsed.data.policyAllowed === false) {
     return NextResponse.json({ error: "policy_violation", detail: parsed.data.policyViolations ?? [] }, { status: 403 });
   }
@@ -127,7 +204,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "wallet_mismatch", detail: "Connected wallet does not match the decision wallet." }, { status: 403 });
   }
 
-  const highRiskTrade = (parsed.data.action === "reduce_exposure" || parsed.data.action === "swap_to_stable" || parsed.data.action === "prepare_transaction") && (parsed.data.riskScore ?? 0) >= 50;
+  const highRiskTrade = isHighRiskExecution(parsed.data.action, parsed.data.riskScore);
 
   if (highRiskTrade && parsed.data.simulationStatus !== "passed") {
     return NextResponse.json({ error: "simulation_required", detail: "High-risk execution confirmation requires a fresh passed simulation." }, { status: 403 });

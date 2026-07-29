@@ -3,6 +3,8 @@ import { getAgentReadiness, getEnvHealth } from "@/server/env/validation";
 import { getReleaseReadinessHealth } from "@/server/operations/releaseReadiness";
 import { getPortfolioProviderHealth } from "@/server/portfolio/getPortfolio";
 import { getStorageHealth, listAgentRunRecords } from "@/server/storage";
+import { getConfiguredProviderHealth } from "@/server/observability/providerHealth";
+import { getExecutionDisableFlags } from "@/server/observability/providerHealth";
 
 function getLastSuccessfulProviderCall() {
   const records = listAgentRunRecords();
@@ -28,9 +30,11 @@ export function getProductionHealth() {
     providerConnectivity: {
       portfolio: getPortfolioProviderHealth(),
     },
+    providerHealth: getConfiguredProviderHealth(),
     databaseConnectivity: getStorageHealth(),
     cacheStatus: apiCacheStrategy,
     releaseReadiness: getReleaseReadinessHealth(),
     lastSuccessfulProviderCall: getLastSuccessfulProviderCall(),
+    executionDisableFlags: getExecutionDisableFlags(),
   };
 }

@@ -1,19 +1,18 @@
 "use client";
 
 import { CheckCircle2, CreditCard, Lock } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { x402Client, x402HTTPClient } from "@x402/core/client";
 import type { PaymentRequired } from "@x402/core/types";
 import { toClientEvmSigner } from "@x402/evm";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
 import { useAccount, usePublicClient, useSwitchChain, useWalletClient } from "wagmi";
-import { useStellarWallet } from "@/providers/StellarWalletProvider";
-import { useWalletSession } from "@/hooks/useWalletSession";
 import type { RiskReportVerdict, ScoreFactor, TokenScanResult, TransactionPreview } from "@/server/types";
 import { NoDataState } from "@/components/NoDataState";
 import { RiskBreakdownCard } from "@/components/RiskBreakdownCard";
 import { WalletConnectButton } from "@/components/WalletConnectButton";
 import { StellarRiskPublishButton } from "@/components/StellarRiskPublishButton";
+import { LiveRegion } from "@/components/a11y/LiveRegion";
 
 const paymentStatusLabels: Record<PaymentStage, { title: string; detail: string }> = {
   idle: {
@@ -22,7 +21,7 @@ const paymentStatusLabels: Record<PaymentStage, { title: string; detail: string 
   },
   wallet_required: {
     title: "Connect wallet",
-    detail: "Connect an EVM or Stellar wallet to sign the x402 payment and run the scan.",
+    detail: "Connect an EVM wallet to sign the x402 payment and run the scan.",
   },
   requesting: {
     title: "Preparing payment",
@@ -57,31 +56,17 @@ const chains = [
   { value: "arbitrum", label: "Arbitrum" },
   { value: "polygon", label: "Polygon" },
   { value: "optimism", label: "Optimism" },
-  { value: "stellar", label: "Stellar" },
+  { value: "stellar-testnet", label: "Stellar" },
   { value: "solana", label: "Solana later", disabled: true },
 ];
 
 type PaymentStage = "idle" | "wallet_required" | "requesting" | "payment_required" | "signing" | "verifying" | "verified" | "failed";
-type StellarPaymentTerms = {
-  enabled: boolean;
-  network: string;
-  asset: string;
-  assetContract: string;
-  payTo: string;
-  priceUsd: string;
-  available: boolean;
-};
-
 type PaymentTerms = {
   priceUsd: string;
   network: string;
   asset: string;
   payTo: string;
   available: boolean;
-  stellar?: {
-    stellarTestnet: StellarPaymentTerms;
-    stellarPubnet: StellarPaymentTerms;
-  };
 };
 
 function shortenAddress(value?: string) {
@@ -189,16 +174,11 @@ function getPaymentChainId(paymentRequirement: PaymentRequired | null) {
 }
 
 export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: string }) {
+  const queryErrorId = useId();
   const { address, chainId, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
   const { switchChainAsync } = useSwitchChain();
-  const stellar = useStellarWallet();
-  const session = useWalletSession();
-  const walletFamily = session.family;
-  const isEvmConnected = isConnected && walletFamily === "evm";
-  const isStellarConnected = stellar.isConnected && walletFamily === "stellar";
-  const isAnyWalletConnected = isEvmConnected || isStellarConnected;
   const [query, setQuery] = useState(initialQuery || "MEME");
   const [chain, setChain] = useState("base");
   const [walletAddress, setWalletAddress] = useState("");
@@ -215,12 +195,19 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
   const executionPreview = report?.executionPreview as TransactionPreview | undefined;
   const decisionCard = report?.agentCards.find((card) => card.agent === "decision");
   const whatWouldChange = decisionCard?.factors.find((factor) => factor.label === "What would change this decision");
-  const stellarPaymentTerms = paymentTerms?.stellar?.stellarTestnet;
-  const showStellarPaymentInfo = isStellarConnected && stellarPaymentTerms?.enabled;
   const paymentOption = getPaymentOption(paymentRequirement);
   const isPaymentWorking = premiumStatus === "requesting" || premiumStatus === "signing" || premiumStatus === "verifying" || isPreparingPremium;
   const isBusy = isScanning || isPaymentWorking;
   const showPaymentPanel = premiumStatus !== "idle";
+  const statusMessage = scanError
+    ? scanError
+    : isScanning
+      ? "Analyzing token risk…"
+      : isPaymentWorking
+        ? premiumDetail ?? paymentStatusLabels[premiumStatus].detail
+        : scan
+          ? `Scan complete. ${scan.symbol} risk ${scan.overallRiskScore} out of 100.`
+          : null;
 
   useEffect(() => {
     let active = true;
@@ -275,91 +262,10 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
       return;
     }
 
-    if (!isAnyWalletConnected || (!walletClient && !isStellarConnected) || (!address && !stellar.address)) {
+    if (!isConnected || !walletClient || !address) {
       setScan(null);
       setPremiumStatus("wallet_required");
-      setPremiumDetail(isStellarConnected
-        ? "Connect your Stellar wallet, then press Continue detailed scan to submit the x402 payment proof."
-        : "Connect your wallet, then press Continue detailed scan to sign the x402 payment.");
-      return;
-    }
-
-    // --- Stellar payment path ---
-    if (isStellarConnected && stellar.address) {
-      setScan(null);
-      setPaymentRequirement(null);
-      setIsPreparingPremium(true);
-      setIsScanning(false);
-      setPremiumStatus("requesting");
-      setPremiumDetail("Preparing Stellar x402 payment proof for detailed scan.");
-
-      try {
-        const stellarNetwork = stellar.network === "stellar-pubnet" ? "stellar:pubnet" : "stellar:testnet";
-        const nonce = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 14)}`;
-        const timestamp = new Date().toISOString();
-
-        const proofPayload = {
-          payer: stellar.address,
-          network: stellarNetwork,
-          timestamp,
-          nonce,
-        };
-
-        // Sign the proof with the Stellar wallet
-        setPremiumStatus("signing");
-        setPremiumDetail("Sign the payment proof in your Stellar wallet to authorize the premium scan.");
-        const proofJson = JSON.stringify(proofPayload);
-        const proofBase64 = btoa(proofJson);
-
-        setPremiumStatus("verifying");
-        setPremiumDetail("Submitting Stellar payment proof and generating the detailed AI Risk Report.");
-        setIsScanning(true);
-
-        const stellarParams = new URLSearchParams({ query, chain });
-        if (walletAddress.trim()) stellarParams.set("walletAddress", walletAddress.trim());
-        const stellarUrl = `/api/x402/stellar-deep-scan?${stellarParams.toString()}`;
-
-        const response = await fetch(stellarUrl, {
-          method: "GET",
-          headers: {
-            Accept: "application/json",
-            "x-stellar-payment-proof": proofBase64,
-          },
-        });
-
-        if (!response.ok) {
-          const data = (await response.json().catch(() => null)) as { detail?: string; error?: string } | null;
-          throw new Error(data?.detail ?? data?.error ?? "Stellar payment proof was not accepted.");
-        }
-
-        const data = (await response.json()) as { premium?: { receiptId?: string; note?: string }; scan?: TokenScanResult };
-
-        if (!data.scan) {
-          throw new Error("Detailed scan completed without a report payload.");
-        }
-
-        setScan(data.scan);
-        setPremiumStatus("verified");
-        setPremiumDetail(`Stellar payment verified. Receipt: ${data.premium?.receiptId ?? "recorded"}.`);
-        return;
-      } catch (error) {
-        setScan(null);
-        setPremiumStatus("failed");
-        setScanError(error instanceof Error ? error.message : "Stellar scan failed.");
-        setPremiumDetail(error instanceof Error ? error.message : "Stellar payment or scan failed.");
-      } finally {
-        setIsScanning(false);
-        setIsPreparingPremium(false);
-      }
-      return;
-    }
-
-    // --- EVM x402 payment path (existing flow) ---
-
-    if (!walletClient || !address) {
-      setScan(null);
-      setPremiumStatus("failed");
-      setScanError("EVM wallet not properly connected. Please reconnect your wallet.");
+      setPremiumDetail("Connect your wallet, then press Continue detailed scan to sign the x402 payment.");
       return;
     }
 
@@ -472,6 +378,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
 
   return (
     <div className="space-y-5">
+      <LiveRegion message={statusMessage} politeness={scanError ? "assertive" : "polite"} />
       <section className="glass-panel rounded-lg p-5">
           <h1 className="text-3xl font-semibold tracking-tight">Scan token</h1>
           <div className="mt-5 grid gap-3 lg:grid-cols-[9rem_1fr_auto_auto]">
@@ -490,6 +397,9 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="DexScreener URL or contract address"
+              aria-label="DexScreener URL or contract address"
+              aria-invalid={Boolean(scanError)}
+              aria-describedby={scanError ? queryErrorId : undefined}
               className="h-12 min-w-0 flex-1 rounded-full border border-white/10 bg-white/7 px-5 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#d9a441]/60"
             />
             <button
@@ -535,7 +445,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
               {premiumStatus === "wallet_required" ? (
                 <div className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-black/18 p-4">
                   <WalletConnectButton />
-                  {isAnyWalletConnected ? (
+                  {isConnected ? (
                     <button
                       type="button"
                       onClick={preparePremiumScan}
@@ -558,9 +468,9 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
                 <div className="mt-4 text-4xl font-semibold text-white">{paymentTerms?.priceUsd ?? "Price loading"}</div>
                 <div className="mt-1 text-xs uppercase tracking-[0.18em] text-white/36">per detailed scan</div>
                 <div className="mt-4 space-y-2 text-xs leading-5 text-white/48">
-                  <div>Network: {showStellarPaymentInfo ? stellarPaymentTerms?.network : (paymentOption?.network ?? paymentTerms?.network ?? "Shown before signature")}</div>
+                  <div>Network: {paymentOption?.network ?? paymentTerms?.network ?? "Shown before signature"}</div>
                   <div>Asset: {paymentOption?.asset ?? paymentTerms?.asset ?? "USDC"}</div>
-                  <div>Recipient: {showStellarPaymentInfo ? shortenAddress(stellarPaymentTerms?.payTo) : shortenAddress(paymentOption?.payTo ?? paymentTerms?.payTo)}</div>
+                  <div>Recipient: {shortenAddress(paymentOption?.payTo ?? paymentTerms?.payTo)}</div>
                   {paymentOption?.amount ? <div>Amount: {paymentOption.amount}</div> : null}
                 </div>
               </div>
@@ -584,7 +494,11 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
         </section>
       ) : null}
 
-      {scanError ? <NoDataState title="Scan failed" detail={scanError} action="No result was saved. Fix the input or retry with a supported contract/DexScreener URL." /> : null}
+      {scanError ? (
+        <div id={queryErrorId}>
+          <NoDataState title="Scan failed" detail={scanError} action="No result was saved. Fix the input or retry with a supported contract/DexScreener URL." />
+        </div>
+      ) : null}
 
       {scan ? (
         <section className="grid gap-5 xl:grid-cols-[.85fr_1.15fr]">

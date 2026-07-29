@@ -67,6 +67,8 @@ export type PrepareTransactionInput = {
   simulationStatus?: NonNullable<TransactionRecord["simulationStatus"]>;
   policyStatus?: NonNullable<TransactionRecord["policyStatus"]>;
   idempotencyKey: string;
+  /** Pre-built EVM calldata (0x-prefixed hex) or Stellar envelope XDR (base64) */
+  rawPayload?: string;
 };
 
 export type PrepareTransactionResult = {
@@ -203,6 +205,10 @@ export function prepareTransaction(input: PrepareTransactionInput): PrepareTrans
     expectedEffects: input.expectedEffects,
     idempotencyKey: input.idempotencyKey,
     explorerUrl: undefined,
+    calldata: input.rawPayload,
+    stellarDetails: input.rawPayload && input.chainFamily === "stellar"
+      ? { envelopeXdr: input.rawPayload }
+      : undefined,
   });
 
   storage.appendEvent(record.hash, "prepared", {
@@ -239,7 +245,7 @@ export async function submitTransaction(input: SubmitTransactionInput): Promise<
         chainFamily: existingByKey.chainFamily,
         network: existingByKey.network,
         submittedAt: existingByKey.submittedAt ?? existingByKey.createdAt,
-        status: existingByKey.lifecycleStatus,
+        status: existingByKey.lifecycleStatus ?? "prepared",
         explorerUrl: existingByKey.explorerUrl,
         idempotent: true,
         reuseReason: "idempotency_key",
@@ -269,7 +275,7 @@ export async function submitTransaction(input: SubmitTransactionInput): Promise<
         chainFamily: existingByHash.chainFamily,
         network: existingByHash.network,
         submittedAt: existingByHash.submittedAt ?? existingByHash.createdAt,
-        status: existingByHash.lifecycleStatus,
+        status: existingByHash.lifecycleStatus ?? "prepared",
         explorerUrl: existingByHash.explorerUrl,
         idempotent: true,
         reuseReason: "duplicate_hash",
@@ -346,7 +352,7 @@ export async function submitTransaction(input: SubmitTransactionInput): Promise<
       chainFamily: updated.chainFamily,
       network: updated.network,
       submittedAt,
-      status: updated.lifecycleStatus,
+      status: updated.lifecycleStatus ?? "prepared",
       explorerUrl: updated.explorerUrl,
       idempotent: false,
       lifecycle: storage.listEvents(updated.hash),

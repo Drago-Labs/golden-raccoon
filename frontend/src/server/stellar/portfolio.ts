@@ -41,6 +41,18 @@ const portfolioCache = new Map<
   { expiresAt: number; value: PortfolioSnapshot }
 >();
 
+export function clearPortfolioCacheForWallet(walletAddress: string): number {
+  const normalized = walletAddress.trim().toUpperCase();
+  let evicted = 0;
+  for (const key of Array.from(portfolioCache.keys())) {
+    if (key.endsWith(`:${normalized}`) || key.includes(normalized)) {
+      portfolioCache.delete(key);
+      evicted++;
+    }
+  }
+  return evicted;
+}
+
 type HorizonBalance = {
   asset_type: string;
   balance: string;

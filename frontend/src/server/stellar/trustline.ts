@@ -1,11 +1,13 @@
+import "server-only";
+
 import { StrKey } from "@stellar/stellar-sdk";
 import type { StellarTrustlinePreview } from "@/server/types";
 import { getStellarNetwork } from "@/lib/stellar/config";
 import { createStellarDataServer } from "@/server/stellar/client";
 import { parseStellarAssetInput } from "@/server/stellar/assetIdentity";
 
-const MIN_XLM_RESERVE_FOR_TRUSTLINE = 1.5; // XLM buffer above base reserve
-const BASE_RESERVE_XLM = 0.5; // Stellar base reserve in XLM
+const MIN_XLM_RESERVE_FOR_TRUSTLINE = 1.5;
+const BASE_RESERVE_NUM = 0.5;
 
 export type TrustlineCheckInput = {
   chain: string;
@@ -25,7 +27,7 @@ function computeReserveRequired(subentryCount: number): number {
   // The 2 accounts for the account entry itself, each subentry (trustline, offer, etc.) adds 1
   // After adding the new trustline, the count is subentryCount + 1
   const totalEntries = 2 + Math.max(0, subentryCount + 1); // +1 for the new trustline
-  return totalEntries * BASE_RESERVE_XLM;
+  return totalEntries * BASE_RESERVE_NUM;
 }
 
 export async function checkTrustlineReserve(
@@ -110,7 +112,7 @@ export async function checkAssetFlags(
       const assetPage = await server.assets().forCode(assetCode).forIssuer(issuer).limit(1).call();
       const assetRecord = assetPage.records[0] as unknown as Record<string, unknown> | undefined;
       if (assetRecord) {
-        const assetFlags = assetRecord.flags as Record<string, unknown> | undefined;
+        const assetFlags = assetRecord.flags as unknown as Record<string, unknown> | undefined;
         clawbackEnabled = assetFlags?.auth_clawback_enabled === true;
       }
     } catch {
@@ -179,7 +181,7 @@ export async function buildTrustlinePreview(input: TrustlineCheckInput): Promise
         assetCode: input.assetCode,
         issuer: input.issuer,
         isNative: false,
-        reserveRequiredXlm: BASE_RESERVE_XLM,
+        reserveRequiredXlm: BASE_RESERVE_NUM,
         currentXlmBalance: 0,
         sufficientReserve: false,
         existingTrustline: false,
@@ -198,7 +200,7 @@ export async function buildTrustlinePreview(input: TrustlineCheckInput): Promise
         assetCode: input.assetCode,
         issuer: input.issuer,
         isNative: input.assetCode.toUpperCase() === "XLM",
-        reserveRequiredXlm: BASE_RESERVE_XLM,
+        reserveRequiredXlm: BASE_RESERVE_NUM,
         currentXlmBalance: 0,
         sufficientReserve: false,
         existingTrustline: false,
@@ -237,7 +239,7 @@ export async function buildTrustlinePreview(input: TrustlineCheckInput): Promise
         issuer: input.issuer,
         contractId: identity.contractId,
         isNative: false,
-        reserveRequiredXlm: BASE_RESERVE_XLM,
+        reserveRequiredXlm: BASE_RESERVE_NUM,
         currentXlmBalance: 0,
         sufficientReserve: false,
         existingTrustline: false,
@@ -255,7 +257,7 @@ export async function buildTrustlinePreview(input: TrustlineCheckInput): Promise
         issuer: input.issuer,
         contractId: identity.contractId,
         isNative: false,
-        reserveRequiredXlm: BASE_RESERVE_XLM,
+        reserveRequiredXlm: BASE_RESERVE_NUM,
         currentXlmBalance: 0,
         sufficientReserve: false,
         issuerFlags: {
@@ -279,7 +281,7 @@ export async function buildTrustlinePreview(input: TrustlineCheckInput): Promise
         issuer: input.issuer,
         contractId: identity.contractId,
         isNative: false,
-        reserveRequiredXlm: BASE_RESERVE_XLM,
+        reserveRequiredXlm: BASE_RESERVE_NUM,
         currentXlmBalance: 0,
         sufficientReserve: false,
         issuerFlags: {

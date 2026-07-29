@@ -405,11 +405,15 @@ export async function getStellarSwapQuote(input: StellarSwapInput): Promise<Stel
         provider: "stellar_aggregator",
         routeType: "classic_path_payment",
         route,
+        exactInputAmount: input.amount,
+        exactOutputAmount: expectedOutput,
         expectedOutputAmount: expectedOutput,
         estimatedValueUsd: expectedOutputUsd,
         priceImpactBps: Math.round((1 - pathResult.rate) * 10_000),
         slippageBps,
         minReceiveAmount: expectedOutput * (1 - slippageBps / 10_000),
+        feesXlm: 0.00001, // base fee in XLM
+        network: network.id,
         pathPaymentOps: [operation],
         status: "fresh",
         fetchedAt,
@@ -444,11 +448,15 @@ export async function getStellarSwapQuote(input: StellarSwapInput): Promise<Stel
       provider: "soroswap",
       routeType: "soroban_swap",
       route,
+      exactInputAmount: input.amount,
+      exactOutputAmount: simulation.expectedOutput ?? 0,
       expectedOutputAmount: simulation.expectedOutput ?? 0,
       estimatedValueUsd: simulation.expectedOutput ?? 0,
       priceImpactBps: 50, // estimated
       slippageBps,
       minReceiveAmount: (simulation.expectedOutput ?? 0) * (1 - slippageBps / 10_000),
+      feesXlm: (simulation.fee ?? 100) / 10_000_000, // stroops to XLM
+      network: network.id,
       sorobanSimulation: {
         contractId: sorobanOp.contractId,
         method: sorobanOp.method,

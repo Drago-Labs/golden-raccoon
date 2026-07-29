@@ -1,4 +1,5 @@
 import type { AgentResult, AgentRunRecord } from "@/server/types";
+import { getExecutionMetrics } from "@/server/observability/executionMetrics";
 
 function percent(part: number, total: number) {
   return total > 0 ? Math.round((part / total) * 1000) / 10 : 0;
@@ -11,6 +12,7 @@ export function getAgentRunMetrics(records: AgentRunRecord[]) {
   const criticalBlockers = results.filter((result) => result.blockingReasons.length > 0 || result.findings.some((finding) => finding.severity === "critical")).length;
   const executionBlocked = results.filter((result) => result.agent === "execution" && result.blockingReasons.length > 0).length;
   const latencies = providerSources.map((source) => source.latencyMs).filter((value): value is number => typeof value === "number");
+  const executionMetrics = getExecutionMetrics(records);
 
   return {
     agentSuccessRate: percent(results.filter((result) => result.status !== "error" && result.status !== "unavailable").length, results.length),
@@ -19,6 +21,7 @@ export function getAgentRunMetrics(records: AgentRunRecord[]) {
     manualReviewRate: percent(manualReviews, results.length),
     criticalBlockerRate: percent(criticalBlockers, results.length),
     executionBlockedRate: percent(executionBlocked, results.filter((result) => result.agent === "execution").length),
+    execution: executionMetrics,
     sampleSize: {
       runs: records.length,
       agentResults: results.length,
@@ -31,6 +34,8 @@ export function getResultMetrics(results: AgentResult[]) {
   return getAgentRunMetrics([
     {
       id: "inline",
+      chainFamily: "evm",
+      network: "legacy-evm",
       walletAddress: "inline",
       status: "completed",
       recommendation: "manual_review",

@@ -123,7 +123,7 @@ export type AgentInputIdentity = {
   tokenName?: string;
   issuer?: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   websiteUrl?: string;
   twitterUrl?: string;
   telegramUrl?: string;
@@ -247,6 +247,9 @@ export type PortfolioSnapshot = {
     provider: string;
     network: string;
     latencyMs: number;
+    requestId?: string;
+    reliability?: number;
+    fallbackUsed?: boolean;
   };
 };
 
@@ -320,14 +323,22 @@ export type StellarTrustlinePreview = {
 };
 
 export type StellarSwapQuote = {
-  provider: "soroswap" | "stellar_aggregator" | "planned_stellar_dex";
+  provider: "soroswap" | "stellar_aggregator";
   routeType: "classic_path_payment" | "soroban_swap" | "mixed";
+  /** Human-readable route with asset code and issuer for classic assets (e.g. "USDC:GBB...") */
   route: string[];
+  /** Exact input amount in atomic units from the quote */
+  exactInputAmount: number;
+  /** Exact output amount from the quote */
+  exactOutputAmount: number;
   expectedOutputAmount: number;
   estimatedValueUsd: number;
   priceImpactBps: number;
   slippageBps: number;
   minReceiveAmount: number;
+  /** Total estimated fees in XLM (stroops converted) */
+  feesXlm: number;
+  network: string;
   pathPaymentOps?: Array<{
     type: "path_payment_strict_send" | "path_payment_strict_receive";
     sendAsset: string;
@@ -379,6 +390,10 @@ export type TransactionPreview = {
     revokeSuggestion?: string;
     permitSupport: "unsupported" | "planned";
     permit2Support: "unsupported" | "planned";
+    /** V3 hint surfaced by recovery state when active recovery requests target the preview asset. */
+    revivePlan?: string;
+    /** V3 explicit surface for consequences (allowance reduce, trustline removal, incidents). */
+    consequences?: string[];
   };
   blockedReason?: string;
   policy?: {
@@ -391,30 +406,41 @@ export type TransactionPreview = {
     blockedTokens?: string[];
     allowedActions?: AgentRecommendedAction[];
     autoExecute: false;
-  };
-  policyStatus?: {
+  };    policyStatus?: {
     allowed: boolean;
     violations: string[];
+    decisions?: StrategyPolicyDecision[];
+    ruleVersion?: number;
+    ruleWalletAddress?: string;
   };
   quote?: {
-    provider: "planned_dex_aggregator" | "soroswap" | "stellar_aggregator";
+    provider: "soroswap" | "stellar_aggregator" | "none";
     route: string[];
+    /** Exact input token and amount from the quote */
+    exactInput: { token: string; amount: number };
+    /** Exact output token and amount from the quote */
+    exactOutput: { token: string; amount: number };
     expectedOutputToken: string;
     expectedOutputAmount?: number;
+    /** Minimum amount received after slippage (in output token units) */
+    minReceiveAmount: number;
     estimatedValueUsd: number;
     priceImpactBps: number;
     slippageBps: number;
+    /** Total fees (gas + protocol fees) in USD */
+    feesUsd: number;
     gasEstimateUsd: number;
-    status: "planned" | "fresh" | "simulated" | "unavailable";
+    network: string;
+    /** ISO timestamp when the quote expires — approval must be disabled after this time */
+    expiresAt: string;
+    /** ISO timestamp when the quote was fetched */
+    fetchedAt: string;
+    /** When true, the quote's assets or network do not match the action request */
+    quoteMismatch: boolean;
+    status: "fresh" | "stale" | "unavailable" | "simulated";
     detail: string;
   };
-  simulation?: {
-    provider: "planned_tenderly" | "not_required" | "stellar_soroban" | "stellar_classic";
-    status: "not_required" | "pending" | "passed" | "failed" | "unavailable";
-    checks: string[];
-    revertReason?: string;
-    detail: string;
-  };
+simulation?: SimulationResultDetail;
   audit?: {
     approvalRequired: boolean;
     serverCanSign: false;
@@ -424,6 +450,57 @@ export type TransactionPreview = {
   };
 };
 
+export type StrategyPolicyRuleCategory =
+  | "risk_threshold"
+  | "trade_size"
+  | "daily_limit"
+  | "liquidity"
+  | "exposure"
+  | "stable_reserve"
+  | "allowed_chain"
+  | "blocked_token"
+  | "blocked_category"
+  | "slippage"
+  | "allowed_action"
+  | "stellar_issuer"
+  | "stellar_trustline"
+  | "auto_execute";
+
+/**
+ * Structured policy decision returned by the shared strategy enforcer.
+ * Each decision records the specific rule, observed value, threshold,
+ * and a human-readable reason so the UI and audit log can show which
+ * user rule changed or blocked the recommendation.
+ */
+export type StrategyPolicyDecision = {
+  ruleId: string;
+  ruleVersion: number;
+  ruleLabel: string;
+  ruleCategory: StrategyPolicyRuleCategory;
+  /** The value observed from the agent input / portfolio context */
+  observedValue: number | string;
+  /** The threshold defined in the user rule */
+  threshold: number | string;
+  violated: boolean;
+  reason: string;
+  action: "blocked" | "warned" | "passed";
+};
+
+/**
+ * Full strategy enforcement result combining legacy violations
+ * with structured policy decisions for audit and UI.
+ */
+export type StrategyPolicyResult = {
+  allowed: boolean;
+  violations: StrategyPolicyDecision[];
+  passed: StrategyPolicyDecision[];
+  warnings: StrategyPolicyDecision[];
+  ruleVersion: number;
+  ruleWalletAddress: string;
+  /** Legacy string[] for backward-compatible API responses */
+  violationMessages: string[];
+};
+
 export type UserRule = {
   walletAddress: string;
   maxRiskScore: number;
@@ -431,10 +508,14 @@ export type UserRule = {
   maxMemeExposurePercent: number;
   maxDailyTransactionValueUsd?: number;
   maxSlippageBps?: number;
+  minStableReservePercent?: number;
   allowedChains?: string[];
   blockedTokens?: string[];
+  blockedIssuers?: string[];
+  blockedCategories?: string[];
   allowedActions?: AgentRecommendedAction[];
   autoExecute: boolean;
+  version?: number;
   createdAt: string;
 };
 
@@ -522,7 +603,7 @@ export type RiskReportInput = {
   symbol?: string;
   tokenName?: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   issuer?: string;
   source: "contract_address" | "dexscreener_pair_url" | "dexscreener_token_url" | "stellar_asset" | "stellar_issuer" | "unresolved";
 };
@@ -539,7 +620,7 @@ export type DiscoveryCandidate = {
   tokenName?: string;
   assetKey?: string;
   issuer?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   source: DiscoverySourceKind;
   sourceUrl?: string;
   discoveredAt: string;
@@ -573,13 +654,14 @@ export type DiscoveryScanResult = {
 export type WatchlistEntryInput = {
   walletAddress: string;
   chain: string;
+  network?: string;
   contractAddress?: string;
   pairAddress?: string;
   symbol?: string;
   tokenName?: string;
   assetKey?: string;
   issuer?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   source: DiscoveryCandidate["source"] | "manual_watchlist";
   note?: string;
 };
@@ -589,13 +671,14 @@ export type WatchlistEntry = {
   walletAddress: string;
   identityKey: string;
   chain: string;
+  network?: string;
   contractAddress?: string;
   pairAddress?: string;
   symbol?: string;
   tokenName?: string;
   assetKey?: string;
   issuer?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   source: WatchlistEntryInput["source"];
   note?: string;
   createdAt: string;
@@ -770,10 +853,12 @@ export type TransactionRecord = {
   sourceAccount?: string;
   userApproved?: boolean;
   decisionId?: string;
-  simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
+  simulationStatus?: SimulationResultDetail["status"];
   policyStatus?: TransactionPreview["policyStatus"];
   expectedEffects?: TransactionExpectedEffect[];
   idempotencyKey?: string;
+  /** Pre-built EVM calldata (0x-prefixed hex) carried from prepare to approve */
+  calldata?: string;
   explorerUrl?: string;
   failureReason?: string;
   stellarDetails?: {
@@ -865,6 +950,14 @@ export type StorageHealth = {
   };
 };
 
+export type X402ChainFamily = "evm" | "stellar";
+
+export type X402PayerIdentity = {
+  chainFamily: X402ChainFamily;
+  payer?: string;
+  transactionHash?: string;
+};
+
 export type X402PaymentReceipt = {
   id: string;
   requestId: string;
@@ -872,6 +965,8 @@ export type X402PaymentReceipt = {
   walletAddress?: string;
   payer?: string;
   transactionHash?: string;
+  chainFamily: X402ChainFamily;
+  payerIdentity?: X402PayerIdentity;
   network: string;
   asset: string;
   amount: string;
@@ -880,6 +975,7 @@ export type X402PaymentReceipt = {
   facilitatorUrl: string;
   protectedResource: string;
   requestBodyHash: string;
+  paymentExpiry?: string;
   verificationStatus: "payment_required" | "verified" | "settled" | "failed" | "duplicate" | "expired";
   createdAt: string;
   updatedAt: string;
@@ -894,6 +990,76 @@ export type RecommendationRecord = {
   confidence: number;
   summary: string;
   createdAt: string;
+};
+
+export type BalanceChange = {
+  token: string;
+  symbol: string;
+  currentBalance: string;
+  expectedChange: string;
+  direction: "inflow" | "outflow";
+};
+
+export type AllowanceRiskDetail = {
+  spender: string;
+  spenderShort: string;
+  token: string;
+  currentAllowance: string;
+  newAllowance: string;
+  isInfinite: boolean;
+};
+
+export type StellarTrustlineRisk = {
+  asset: string;
+  assetShort: string;
+  issuer: string;
+  issuerShort: string;
+  action: "add" | "remove" | "update" | "authorize" | "deauthorize";
+  detail: string;
+};
+
+export type SimulationFreshnessConfig = {
+  maxBlockAge: number;
+  maxLedgerAge: number;
+  maxElapsedMs: number;
+};
+
+export type SimulationFreshnessResult = {
+  fresh: boolean;
+  reason?: string;
+  expiredAt?: string;
+};
+
+export type SimulationResultDetail = {
+  provider: "planned_tenderly" | "not_required";
+  status: "not_required" | "pending" | "passed" | "failed" | "unavailable" | "unsupported";
+  checks: string[];
+  revertReason?: string;
+  revertReasonHuman?: string;
+  detail: string;
+  simulatedTxHash: string;
+  simulatedAt?: string;
+  blockNumber?: number;
+  ledgerSeq?: number;
+  quoteExpiry?: string;
+  calldataHash?: string;
+  fromAmount?: string;
+  route?: string[];
+  slippageBps?: number;
+  sequenceNumber?: number | string;
+  fee?: string;
+  simulatedXdrHash?: string;
+  resourceUsage?: {
+    gasUnits?: string;
+    gasPrice?: string;
+    networkFee?: string;
+    operationsCount?: number;
+    ledgerFee?: string;
+  };
+  balanceChanges?: BalanceChange[];
+  allowanceRisk?: AllowanceRiskDetail[];
+  trustlineRisk?: StellarTrustlineRisk[];
+  chainFamily?: "evm" | "stellar";
 };
 
 export type UserApprovalRecord = {
@@ -1059,4 +1225,98 @@ export type AlertDelivery = {
   attemptCount: number;
   createdAt: string;
   sentAt?: string;
+};
+
+// ──────────────────────────────────────────────
+// Explicit wallet approval flow types (V2-051+)
+// ──────────────────────────────────────────────
+
+/**
+ * Discriminated prepared-transaction payload for EVM calldata vs Stellar XDR.
+ * The server rebuilds and validates the exact payload from the approved quote
+ * and simulation before returning it to the client for wallet signing.
+ */
+export type EvmPreparedTransactionPayload = {
+  chainFamily: "evm";
+  /** Target contract address */
+  to: string;
+  /** Encoded calldata (0x-prefixed hex) */
+  data: string;
+  /** Value in wei as decimal string */
+  value: string;
+  /** EIP-155 chain id */
+  chainId: number;
+  /** Gas limit (optional — wallet estimates if absent) */
+  gas?: string;
+  /** Gas price in wei (optional — wallet estimates if absent) */
+  gasPrice?: string;
+  /** Human-readable method name for display */
+  method?: string;
+  /** Decoded human-readable parameters for display */
+  displayParams?: Record<string, unknown>;
+};
+
+export type StellarPreparedTransactionPayload = {
+  chainFamily: "stellar";
+  /** Unsigned base64 XDR envelope to be signed by Stellar Wallets Kit */
+  xdr: string;
+  networkPassphrase: string;
+  sourceAccount: string;
+  /** Decoded operations for display */
+  operations: Array<{
+    type: string;
+    asset?: string;
+    amount?: string;
+    destination?: string;
+    contractId?: string;
+    method?: string;
+  }>;
+  /** Fee in stroops (optional — wallet estimates if absent) */
+  fee?: number;
+  /** Sequence number for the transaction */
+  sequence?: string;
+  /** Time bounds for the transaction */
+  timeBounds?: {
+    minTime?: number;
+    maxTime?: number;
+  };
+  /** Human-readable method name for display */
+  method?: string;
+  /** Decoded human-readable parameters for display */
+  displayParams?: Record<string, unknown>;
+};
+
+export type PreparedTransactionPayload = EvmPreparedTransactionPayload | StellarPreparedTransactionPayload;
+
+/**
+ * Result of the approval validation step.
+ * The server validates the prepared transaction and returns the payload
+ * that the client should send to the user's wallet for signing.
+ */
+export type ApprovalValidationResult = {
+  /** Whether the approval is allowed */
+  allowed: boolean;
+  /** Reason if blocked */
+  blockedReason?: string;
+  /** The typed payload for wallet signing */
+  payload?: PreparedTransactionPayload;
+  /** Wallet mismatch info */
+  walletOk: boolean;
+  /** Network mismatch info */
+  networkOk: boolean;
+  /** Whether the plan has expired */
+  expired: boolean;
+  /** Whether the action is safe to sign */
+  actionSafe: boolean;
+};
+
+/**
+ * Input for the approve API endpoint.
+ */
+export type ApproveTransactionInput = {
+  idempotencyKey: string;
+  walletAddress: string;
+  chainFamily: ChainFamily;
+  network: string;
+  sourceAccount?: string;
 };
