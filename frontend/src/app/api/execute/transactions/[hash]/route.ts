@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { withCacheHeaders } from "@/server/cache/strategy";
-import { getTransactionRecord, listTransactionLifecycleEvents } from "@/server/storage";
+import { getTransactionRecord } from "@/server/storage";
 import { pollTransaction } from "@/server/transactions/lifecycleManager";
 import { attachExplorerUrl } from "@/server/transactions/explorer";
 

@@ -9,6 +9,7 @@
     "test:agents": "npm --prefix frontend run test:agents",
     "test:auto-mode": "npm --prefix frontend run test:auto-mode",
     "test:stellar-config": "npm --prefix frontend run test:stellar-config",
+    "test:recovery": "npm --prefix frontend run test:recovery",
     "test:stellar-rpc": "node scripts/check-stellar-rpc.mjs",
     "test:a11y": "npm --prefix frontend run test:a11y",
     "smoke": "node scripts/smoke-api.mjs",

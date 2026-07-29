@@ -33,12 +33,18 @@ const statusTones: Record<AlertStatus, string> = {
   acknowledged: "border-white/10 bg-white/5 text-white/58",
 };
 
+const VISIBLE_PAGE_SIZE = 30;
+
 export function AlertHistoryList({ initialData }: { initialData?: AlertResponse }) {
   const { address, isConnected } = useWalletSession();
   const [data, setData] = useState<AlertResponse | null>(initialData ?? null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Progressive disclosure: render only a page of already-fetched alerts at a
+  // time, so a long history does not force hundreds of DOM nodes up front on
+  // constrained mobile. See docs/PERFORMANCE_BUDGETS.md.
+  const [visibleCount, setVisibleCount] = useState(VISIBLE_PAGE_SIZE);
 
   useEffect(() => {
     if (!address) return;
@@ -97,7 +103,8 @@ export function AlertHistoryList({ initialData }: { initialData?: AlertResponse 
     );
   }
 
-  const recent = data.alerts.slice(0, 30);
+  const recent = data.alerts.slice(0, visibleCount);
+  const hasMore = data.alerts.length > recent.length;
 
   return (
     <section className="space-y-4">
@@ -166,6 +173,15 @@ export function AlertHistoryList({ initialData }: { initialData?: AlertResponse 
             </article>
           );
         })}
+        {hasMore ? (
+          <button
+            type="button"
+            onClick={() => setVisibleCount((count) => count + VISIBLE_PAGE_SIZE)}
+            className="w-full rounded-lg border border-white/10 bg-white/5 py-2.5 text-xs font-medium text-white/64 transition hover:text-white"
+          >
+            Show more ({data.alerts.length - recent.length} remaining)
+          </button>
+        ) : null}
       </div>
     </section>
   );

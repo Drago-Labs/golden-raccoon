@@ -298,6 +298,7 @@ export async function buildExecutionPreview(input: ExecutionAgentInput): Promise
     priceImpactBps,
     gasEstimateUsd,
     policy: {
+      // policyVersion is intentionally added at recovery merge time below.
       maxTradePercent: executionPolicy.maxTradePercent,
       maxRiskScore: executionPolicy.maxRiskScoreForTrade,
       maxMemeExposurePercent: executionPolicy.maxMemeExposurePercent,
@@ -316,6 +317,7 @@ export async function buildExecutionPreview(input: ExecutionAgentInput): Promise
       ruleWalletAddress: policyStatus.ruleWalletAddress,
     },
     quote,
+    realQuote,
     simulation,
     stellarTrustline: stellarTrustlinePreview,
     stellarQuote: stellarSwapQuote,
@@ -349,7 +351,9 @@ export async function buildExecutionPreview(input: ExecutionAgentInput): Promise
     preview.blockedReason = blockedReason;
   }
 
-  return preview;
+  // V3: surface recovery state (incident mode, paused/revoked agents, infinite approvals)
+  // on the preview without breaking existing consumers.
+  return applyRecoveryToExecutionPreview(preview, { walletAddress: input.walletAddress, rules: input.rules });
 }
 
 export async function buildExecutionPreviewFromPortfolio(portfolio: PortfolioSnapshot, input: ExecutionAgentInput): Promise<TransactionPreview> {

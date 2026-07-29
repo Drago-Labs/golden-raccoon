@@ -10,6 +10,7 @@ import {
   verifyWalletChallenge,
 } from "@/server/security/walletSession";
 import { checkRateLimitProfile } from "@/server/security/rateLimit";
+import { commonErrorCodes, jsonError } from "@/server/api/errors";
 
 const claimSchema = z.object({
   walletAddress: z
@@ -26,13 +27,14 @@ const claimSchema = z.object({
 });
 
 function notConfigured() {
-  return NextResponse.json(
-    {
-      error: "wallet_session_disabled",
-      detail:
-        "Set ALLOW_WALLET_SESSION_COOKIE=1 and a random WALLET_SESSION_COOKIE_SECRET of at least 32 characters to enable signed wallet sessions.",
-    },
-    { status: 503 },
+  const detail =
+    "Set ALLOW_WALLET_SESSION_COOKIE=1 and a random WALLET_SESSION_COOKIE_SECRET of at least 32 characters to enable signed wallet sessions.";
+
+  // The `error`/`detail` fields are kept for existing clients; `code`/`message`/
+  // `retryable`/`requestId` are the stable fields new clients should read.
+  return jsonError(
+    { code: "wallet_session_disabled", message: detail, status: 503 },
+    { legacy: { error: "wallet_session_disabled", detail } },
   );
 }
 
@@ -44,21 +46,29 @@ export async function POST(request: NextRequest) {
 
   const challenge = readChallengeCookie(request);
   if (!challenge) {
-    return NextResponse.json(
-      { error: "challenge_required", detail: "Request /api/wallet-session/nonce first to receive a wallet-ownership challenge." },
-      { status: 401 },
+    const detail = "Request /api/wallet-session/nonce first to receive a wallet-ownership challenge.";
+
+    return jsonError(
+      { code: commonErrorCodes.unauthorized, message: detail, status: 401 },
+      { legacy: { error: "challenge_required", detail } },
     );
   }
 
   const body = await request.json().catch(() => ({}));
   const parsed = claimSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return jsonError(
+      { code: commonErrorCodes.validationError, message: "Request validation failed.", status: 400, details: parsed.error.flatten() },
+      { legacy: { error: parsed.error.flatten() } },
+    );
   }
 
   const wallet = parsed.data.walletAddress.trim().toLowerCase();
   if (parsed.data.nonce !== challenge.nonce) {
-    const response = NextResponse.json({ error: "nonce_mismatch" }, { status: 401 });
+    const response = jsonError(
+      { code: commonErrorCodes.unauthorized, message: "Challenge nonce does not match.", status: 401 },
+      { legacy: { error: "nonce_mismatch" } },
+    );
 
     return clearChallengeCookie(response);
   }
@@ -73,7 +83,10 @@ export async function POST(request: NextRequest) {
   });
 
   if (!result.ok) {
-    const response = NextResponse.json({ error: "signature_invalid", detail: result.error }, { status: 401 });
+    const response = jsonError(
+      { code: commonErrorCodes.unauthorized, message: result.error ?? "Signature verification failed.", status: 401, details: { reason: result.error } },
+      { legacy: { error: "signature_invalid", detail: result.error } },
+    );
 
     return clearChallengeCookie(response);
   }

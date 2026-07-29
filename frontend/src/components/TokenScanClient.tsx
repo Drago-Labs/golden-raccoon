@@ -56,6 +56,7 @@ const chains = [
   { value: "arbitrum", label: "Arbitrum" },
   { value: "polygon", label: "Polygon" },
   { value: "optimism", label: "Optimism" },
+  { value: "stellar-testnet", label: "Stellar" },
   { value: "solana", label: "Solana later", disabled: true },
 ];
 

@@ -67,7 +67,7 @@ export async function PATCH(
       asset: existingApproval.asset ?? "Approval update",
       valueUsd: existingApproval.valueUsd ?? 0,
       status: status === "confirmed" ? "confirmed" : "submitted",
-      network: existingApproval.network,
+      network: existingApproval.network ?? "unknown",
       walletAddress: existingApproval.walletAddress,
       userApproved: true,
       decisionId: existingApproval.decisionId,

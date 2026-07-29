@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "updatedAt": "2026-07-29",
+  "profiles": {
+    "desktop": {
+      "label": "Desktop (cable, unthrottled CPU)",
+      "network": "unthrottled",
+      "cpuSlowdown": 1
+    },
+    "constrainedMobile": {
+      "label": "Constrained mobile (Slow 4G, 4x CPU slowdown)",
+      "network": "slow-4g",
+      "cpuSlowdown": 4
+    }
+  },
+  "bundles": {
+    "initialJsKb": {
+      "desktop": 220,
+      "constrainedMobile": 220
+    },
+    "routeChunkKb": {
+      "desktop": 120,
+      "constrainedMobile": 120
+    }
+  },
+  "webVitals": {
+    "lcpMs": {
+      "desktop": 2500,
+      "constrainedMobile": 4000
+    },
+    "inpMs": {
+      "desktop": 200,
+      "constrainedMobile": 500
+    },
+    "cls": {
+      "desktop": 0.1,
+      "constrainedMobile": 0.1
+    },
+    "ttfbMs": {
+      "desktop": 800,
+      "constrainedMobile": 1800
+    }
+  },
+  "apiLatencyMs": {
+    "scan:token": {
+      "p50": 4000,
+      "p95": 9000
+    },
+    "health": {
+      "p50": 300,
+      "p95": 800
+    }
+  },
+  "timeToFirstMeaningfulRiskResultMs": {
+    "desktop": 6000,
+    "constrainedMobile": 11000
+  }
+}

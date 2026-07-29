@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { checkRateLimit } from "@/server/security/rateLimit";
-import { getAgentRunRecord } from "@/server/storage";
+import { getAgentRunRecord, getDecisionDetail, getSourceSnapshotDetails } from "@/server/storage";
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const rateLimited = checkRateLimit(request, { namespace: "history:agent-run-detail", limit: 80, windowMs: 60_000 });
@@ -17,5 +17,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ error: "agent_run_not_found" }, { status: 404 });
   }
 
-  return withCacheHeaders(NextResponse.json(record), "history");
+  const decisionDetail = getDecisionDetail(id);
+  const sourceSnapshots = getSourceSnapshotDetails(id);
+
+  return withCacheHeaders(
+    NextResponse.json({ record, decisionDetail, sourceSnapshots }),
+    "history",
+  );
 }

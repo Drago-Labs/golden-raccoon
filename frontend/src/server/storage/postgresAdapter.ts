@@ -1021,6 +1021,186 @@ class PostgresStorageAdapter {
 
     return hydrationCount;
   }
+
+  async deleteWalletDataFromPg(
+    walletAddress: string,
+    network?: string,
+    chainFamily?: "evm" | "stellar"
+  ): Promise<{
+    deletedCount: number;
+    unlinkedAuditCount: number;
+  }> {
+    if (!this.connectionString || !(await this.ensurePool()) || !this.pool) {
+      return { deletedCount: 0, unlinkedAuditCount: 0 };
+    }
+
+    const addr = walletAddress.trim();
+    const isEvm = addr.startsWith("0x");
+    const canonicalAddr = isEvm ? addr.toLowerCase() : addr;
+    const targetChainFamily = chainFamily ?? (isEvm ? "evm" : "stellar");
+    const targetNetwork = network?.trim() || null;
+    const client = this.pool;
+
+    let deletedCount = 0;
+    let unlinkedAuditCount = 0;
+
+    const tablesToDelete = [
+      { name: "wallets", col: "address", hasNetwork: false },
+      { name: "agent_runs", col: "wallet_address", hasNetwork: false },
+      { name: "recommendations", col: "wallet_address", hasNetwork: false },
+      { name: "approvals", col: "wallet_address", hasNetwork: true },
+      { name: "user_rules", col: "wallet_address", hasNetwork: false },
+      { name: "alert_rules", col: "wallet_address", hasNetwork: false },
+      { name: "alert_observations", col: "wallet_address", hasNetwork: false },
+      { name: "watchlist_entries", col: "wallet_address", hasNetwork: false },
+      { name: "token_identities", col: "wallet_address", hasNetwork: false },
+    ];
+
+    for (const table of tablesToDelete) {
+      if (table.hasNetwork && targetNetwork) {
+        const res = await client.query(
+          `DELETE FROM ${table.name} WHERE (LOWER(${table.col}) = LOWER($1) OR ${table.col} = $1) AND (network = $2 OR network IS NULL)`,
+          [canonicalAddr, targetNetwork]
+        );
+        deletedCount += res.rowCount ?? 0;
+      } else {
+        const res = await client.query(
+          `DELETE FROM ${table.name} WHERE LOWER(${table.col}) = LOWER($1) OR ${table.col} = $1`,
+          [canonicalAddr]
+        );
+        deletedCount += res.rowCount ?? 0;
+      }
+    }
+
+    if (targetNetwork) {
+      const txRes = await client.query(
+        `UPDATE transactions SET wallet_address = NULL, source_account = NULL WHERE (LOWER(wallet_address) = LOWER($1) OR wallet_address = $1) AND network = $2`,
+        [canonicalAddr, targetNetwork]
+      );
+      unlinkedAuditCount += txRes.rowCount ?? 0;
+
+      const x402Res = await client.query(
+        `UPDATE x402_payment_receipts SET wallet_address = NULL, payer = NULL WHERE (LOWER(wallet_address) = LOWER($1) OR wallet_address = $1) AND network = $2`,
+        [canonicalAddr, targetNetwork]
+      );
+      unlinkedAuditCount += x402Res.rowCount ?? 0;
+    } else {
+      const txRes = await client.query(
+        `UPDATE transactions SET wallet_address = NULL, source_account = NULL WHERE (LOWER(wallet_address) = LOWER($1) OR wallet_address = $1) AND chain_family = $2`,
+        [canonicalAddr, targetChainFamily]
+      );
+      unlinkedAuditCount += txRes.rowCount ?? 0;
+
+      const x402Res = await client.query(
+        `UPDATE x402_payment_receipts SET wallet_address = NULL, payer = NULL WHERE LOWER(wallet_address) = LOWER($1) OR wallet_address = $1`,
+        [canonicalAddr]
+      );
+      unlinkedAuditCount += x402Res.rowCount ?? 0;
+    }
+
+    return { deletedCount, unlinkedAuditCount };
+  }
+
+  async exportWalletDataFromPg(
+    walletAddress: string,
+    network?: string,
+    chainFamily?: "evm" | "stellar"
+  ): Promise<Record<string, unknown[]>> {
+    if (!this.connectionString || !(await this.ensurePool()) || !this.pool) {
+      return {};
+    }
+
+    const addr = walletAddress.trim();
+    const isEvm = addr.startsWith("0x");
+    const canonicalAddr = isEvm ? addr.toLowerCase() : addr;
+    const targetNetwork = network?.trim() || null;
+    const client = this.pool;
+
+    const result: Record<string, unknown[]> = {};
+    const tables = [
+      "agent_runs",
+      "recommendations",
+      "approvals",
+      "transactions",
+      "x402_payment_receipts",
+      "user_rules",
+      "alert_rules",
+      "alert_observations",
+      "alerts",
+      "alert_deliveries",
+      "watchlist_entries",
+      "discovery_alerts",
+    ];
+
+    for (const table of tables) {
+      if (targetNetwork && ["transactions", "approvals", "x402_payment_receipts"].includes(table)) {
+        const query = `SELECT * FROM ${table} WHERE (LOWER(wallet_address) = LOWER($1) OR wallet_address = $1) AND network = $2`;
+        const res = await client.query(query, [canonicalAddr, targetNetwork]);
+        result[table] = res.rows ?? [];
+      } else {
+        const query = `SELECT * FROM ${table} WHERE LOWER(wallet_address) = LOWER($1) OR wallet_address = $1`;
+        const res = await client.query(query, [canonicalAddr]);
+        result[table] = res.rows ?? [];
+      }
+    }
+
+    return result;
+  }
+
+  async pruneExpiredRecordsFromPg(config: {
+    agentRunsCutoff: Date;
+    alertObservationsCutoff: Date;
+    alertsCutoff: Date;
+    watchlistScanRunsCutoff: Date;
+    transactionsUnlinkCutoff: Date;
+    x402ReceiptsUnlinkCutoff: Date;
+  }): Promise<{ prunedCount: number; unlinkedCount: number }> {
+    if (!this.connectionString || !(await this.ensurePool()) || !this.pool) {
+      return { prunedCount: 0, unlinkedCount: 0 };
+    }
+
+    const client = this.pool;
+    let prunedCount = 0;
+    let unlinkedCount = 0;
+
+    const runsRes = await client.query(
+      `DELETE FROM agent_runs WHERE created_at < $1`,
+      [config.agentRunsCutoff.toISOString()]
+    );
+    prunedCount += runsRes.rowCount ?? 0;
+
+    const obsRes = await client.query(
+      `DELETE FROM alert_observations WHERE created_at < $1`,
+      [config.alertObservationsCutoff.toISOString()]
+    );
+    prunedCount += obsRes.rowCount ?? 0;
+
+    const alertsRes = await client.query(
+      `DELETE FROM alerts WHERE triggered_at < $1`,
+      [config.alertsCutoff.toISOString()]
+    );
+    prunedCount += alertsRes.rowCount ?? 0;
+
+    const watchlistRunsRes = await client.query(
+      `DELETE FROM watchlist_scan_runs WHERE scanned_at < $1`,
+      [config.watchlistScanRunsCutoff.toISOString()]
+    );
+    prunedCount += watchlistRunsRes.rowCount ?? 0;
+
+    const txRes = await client.query(
+      `UPDATE transactions SET wallet_address = NULL, source_account = NULL WHERE created_at < $1 AND wallet_address IS NOT NULL`,
+      [config.transactionsUnlinkCutoff.toISOString()]
+    );
+    unlinkedCount += txRes.rowCount ?? 0;
+
+    const x402Res = await client.query(
+      `UPDATE x402_payment_receipts SET wallet_address = NULL, payer = NULL WHERE created_at < $1 AND wallet_address IS NOT NULL`,
+      [config.x402ReceiptsUnlinkCutoff.toISOString()]
+    );
+    unlinkedCount += x402Res.rowCount ?? 0;
+
+    return { prunedCount, unlinkedCount };
+  }
 }
 
 function toIso(value: unknown): string {
@@ -1201,11 +1381,8 @@ export function getPostgresStorageAdapter(): PostgresStorageAdapter {
   return adapterSingleton;
 }
 
-/**
- * Fire-and-forget write-through helper used by the in-memory storage
- * functions. Errors are absorbed into the adapter health snapshot; the
- * caller always sees a synchronous in-memory write complete.
- */
+
+
 export function mirrorAlertRuleWrite(rule: AlertRule): void {
   void getPostgresStorageAdapter().mirrorAlertRule(rule);
 }
@@ -1222,19 +1399,31 @@ export function mirrorAlertDeliveryWrite(delivery: AlertDelivery): void {
   void getPostgresStorageAdapter().mirrorAlertDelivery(delivery);
 }
 
-/**
- * Mirror a partial alert update (status / recovered_at / acknowledged_at /
- * evidence fields refreshed by deterioration). Always re-writes the row
- * via INSERT ... ON CONFLICT DO UPDATE so the SQL `alerts` table stays
- * consistent with the in-memory record across recovery/acknowledgement
- * cycles.
- */
 export function mirrorAlertUpdate(alert: Alert): void {
   mirrorAlertWrite(alert);
 }
 
 export function mirrorAlertDeliveryUpdate(delivery: AlertDelivery): void {
   mirrorAlertDeliveryWrite(delivery);
+}
+
+export async function deleteWalletDataFromPg(walletAddress: string, network?: string, chainFamily?: "evm" | "stellar") {
+  return getPostgresStorageAdapter().deleteWalletDataFromPg(walletAddress, network, chainFamily);
+}
+
+export async function exportWalletDataFromPg(walletAddress: string, network?: string, chainFamily?: "evm" | "stellar") {
+  return getPostgresStorageAdapter().exportWalletDataFromPg(walletAddress, network, chainFamily);
+}
+
+export async function pruneExpiredRecordsFromPg(config: {
+  agentRunsCutoff: Date;
+  alertObservationsCutoff: Date;
+  alertsCutoff: Date;
+  watchlistScanRunsCutoff: Date;
+  transactionsUnlinkCutoff: Date;
+  x402ReceiptsUnlinkCutoff: Date;
+}) {
+  return getPostgresStorageAdapter().pruneExpiredRecordsFromPg(config);
 }
 
 // ── Transaction mirror helpers ────────────────────────────────────────────
@@ -1334,6 +1523,7 @@ export function mirrorWatchlistEntryLatestScanUpdate(entryId: string, update: {
 }): void {
   void getPostgresStorageAdapter().updateMirrorWatchlistEntryLatestScan(entryId, update);
 }
+
 
 export async function bootstrapPostgresStorage(): Promise<{ tried: boolean; connected: boolean; detail: string }> {
   const adapter = getPostgresStorageAdapter();

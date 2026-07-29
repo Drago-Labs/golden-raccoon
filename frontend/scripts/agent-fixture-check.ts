@@ -1,5 +1,6 @@
 import { runNewsAgent } from "../src/server/agents/news";
 import { runOnchainAgent } from "../src/server/agents/onchain";
+import { runStellarOnchainAgent, type StellarOnchainProviders } from "../src/server/agents/onchain/stellar";
 import { runDecisionAgent } from "../src/server/agents/decision";
 import { buildExecutionPreview, runExecutionAgent } from "../src/server/agents/execution";
 import { buildAgentResult, scoreToRiskLevel } from "../src/server/agents/shared";
@@ -20,7 +21,7 @@ import { createAgentLog, redactSecrets } from "../src/server/observability/loggi
 import { evaluateAlertThresholds } from "../src/server/observability/alerts";
 import { getResultMetrics } from "../src/server/observability/metrics";
 import { goldenFixtureSuite, assertGoldenScore } from "../src/server/evaluation/goldenFixtures";
-import { compareReplaySnapshot, createReplaySnapshot } from "../src/server/evaluation/replay";
+import { compareReplaySnapshot, createReplaySnapshot, createStellarReplaySnapshot, stellarReplaySnapshots } from "../src/server/evaluation/replay";
 import { criticalFindingDoesNotLowerRisk, missingDataDoesNotIncreaseConfidence, noAgentResultRequiresManualReview, reliableSourcesDoNotLowerConfidence } from "../src/server/evaluation/properties";
 import { hashSourceSnapshot } from "../src/server/storage";
 import { rateLimitProfiles } from "../src/server/security/rateLimit";
@@ -706,7 +707,7 @@ async function runDecisionChecks() {
 }
 
 async function runExecutionChecks() {
-  const defaultPreview = buildExecutionPreview({
+  const defaultPreview = await buildExecutionPreview({
     action: "reduce_exposure",
     fromToken: "MEME",
     toToken: "USDC",
@@ -722,7 +723,7 @@ async function runExecutionChecks() {
   assert(defaultPreview.blockedReason?.includes("Live quote provider"), "Quote-missing trade action must expose blocked reason.");
   assert(defaultPreview.audit?.serverCanSign === false, "Server signing must remain disabled.");
 
-  const quotedPreview = buildExecutionPreview({
+  const quotedPreview = await buildExecutionPreview({
     action: "reduce_exposure",
     fromToken: "MEME",
     toToken: "USDC",
@@ -738,7 +739,7 @@ async function runExecutionChecks() {
   assert(quotedPreview.approvalRisk?.existingAllowanceCheck === "required", "Approval risk analysis must require allowance check for trade actions.");
   assert(quotedPreview.lifecycle?.status === "prepared", "Execution preview must expose prepared lifecycle status.");
 
-  const policyBlocked = buildExecutionPreview({
+  const policyBlocked = await buildExecutionPreview({
     action: "reduce_exposure",
     fromToken: "MEME",
     toToken: "USDC",
@@ -750,7 +751,7 @@ async function runExecutionChecks() {
   assert(policyBlocked.requiresApproval === false, "Policy violation must not prepare a wallet approval.");
   assert(Boolean(policyBlocked.blockedReason), "Policy violation must expose blocked reason.");
 
-  const manualReview = buildExecutionPreview({
+  const manualReview = await buildExecutionPreview({
     action: "manual_review",
     fromToken: "MEME",
     toToken: "USDC",
@@ -759,7 +760,7 @@ async function runExecutionChecks() {
   });
   assert(manualReview.requiresApproval === false && manualReview.action === "no_action", "Manual review action must not prepare a transaction.");
 
-  const executionResult = runExecutionAgent({
+  const executionResult = await runExecutionAgent({
     action: "swap_to_stable",
     fromToken: "MEME",
     toToken: "USDC",
@@ -775,7 +776,7 @@ async function runExecutionChecks() {
     new Request("http://localhost/api/execute/confirm", {
       method: "POST",
       body: JSON.stringify({
-        walletAddress: "0xabc",
+        walletAddress: "0x1111111111111111111111111111111111111111",
         txHash: `0x${"a".repeat(64)}`,
         userApproved: true,
         simulationStatus: "failed",
@@ -788,7 +789,7 @@ async function runExecutionChecks() {
     new Request("http://localhost/api/execute/confirm", {
       method: "POST",
       body: JSON.stringify({
-        walletAddress: "0xabc",
+        walletAddress: "0x1111111111111111111111111111111111111111",
         txHash: `0x${"c".repeat(64)}`,
         userApproved: true,
         action: "reduce_exposure",
@@ -803,8 +804,8 @@ async function runExecutionChecks() {
     new Request("http://localhost/api/execute/confirm", {
       method: "POST",
       body: JSON.stringify({
-        decisionWalletAddress: "0xabc",
-        walletAddress: "0xdef",
+        decisionWalletAddress: "0x1111111111111111111111111111111111111111",
+        walletAddress: "0x2222222222222222222222222222222222222222",
         txHash: `0x${"d".repeat(64)}`,
         userApproved: true,
       }),
@@ -816,7 +817,7 @@ async function runExecutionChecks() {
     new Request("http://localhost/api/execute/confirm", {
       method: "POST",
       body: JSON.stringify({
-        walletAddress: "0xabc",
+        walletAddress: "0x1111111111111111111111111111111111111111",
         txHash: "not-a-tx",
         userApproved: true,
       }),
@@ -829,7 +830,7 @@ async function runExecutionChecks() {
       method: "POST",
       body: JSON.stringify({
         decisionId: "decision_fixture",
-        walletAddress: "0xabc",
+        walletAddress: "0x1111111111111111111111111111111111111111",
         txHash: `0x${"b".repeat(64)}`,
         userApproved: true,
         network: "GOAT Network",
@@ -848,9 +849,10 @@ async function runExecutionChecks() {
       method: "POST",
       body: JSON.stringify({
         decisionId: "decision_fixture",
-        walletAddress: "0xabc",
+        walletAddress: "0x1111111111111111111111111111111111111111",
         txHash: `0x${"b".repeat(64)}`,
         userApproved: true,
+        network: "GOAT Network",
       }),
     }),
   );
@@ -859,7 +861,7 @@ async function runExecutionChecks() {
   assert(duplicateConfirmJson.pendingVerification === true, "Re-confirming an externally-broadcast hash must report pendingVerification until on-chain verification succeeds.");
 
   const runRecord = createAgentRunRecord({
-    walletAddress: "0xabc",
+    walletAddress: "0x1111111111111111111111111111111111111111",
     mode: "token_scan",
     inputSnapshot: { symbol: "MEME", chain: "base" },
     targetToken: { symbol: "MEME", chain: "base", riskScore: 60 },
@@ -1091,6 +1093,14 @@ async function runReadinessChecks() {
 
   assert(goldenFixtureSuite.includes("honeypot"), "Golden fixture suite must include honeypot case.");
   assert(assertGoldenScore("honeypot", 88), "Regression snapshot must accept expected honeypot score range.");
+  assert(goldenFixtureSuite.includes("stellar_xlm"), "Golden fixture suite must include stellar XLM case.");
+  assert(goldenFixtureSuite.includes("stellar_known_classic"), "Golden fixture suite must include stellar known classic case.");
+  assert(goldenFixtureSuite.includes("stellar_restricted_asset"), "Golden fixture suite must include stellar restricted asset case.");
+  assert(goldenFixtureSuite.includes("stellar_sac"), "Golden fixture suite must include stellar SAC case.");
+  assert(goldenFixtureSuite.includes("stellar_sep41"), "Golden fixture suite must include stellar SEP-41 case.");
+  assert(goldenFixtureSuite.includes("stellar_invalid_issuer"), "Golden fixture suite must include stellar invalid issuer case.");
+  assert(goldenFixtureSuite.includes("stellar_unknown_contract"), "Golden fixture suite must include stellar unknown contract case.");
+  assert(goldenFixtureSuite.includes("stellar_unavailable_provider"), "Golden fixture suite must include stellar unavailable provider case.");
   assert(noAgentResultRequiresManualReview(), "Property test must enforce no result -> manual_review.");
   assert(criticalFindingDoesNotLowerRisk(blueChipLikeResult(), agentResult({
     agent: "onchain",
@@ -1106,6 +1116,14 @@ async function runReadinessChecks() {
   const snapshotHash = hashSourceSnapshot({ sources: blueChipLikeResult().sources, rawSignals: blueChipLikeResult().rawSignals });
   const replaySnapshot = createReplaySnapshot(blueChipLikeResult(), snapshotHash);
   assert(compareReplaySnapshot(replaySnapshot, blueChipLikeResult()).compatible, "Replay snapshot must compare compatible deterministic results.");
+
+  // Verify Stellar replay snapshot registry has entries for all Stellar golden fixtures
+  const stellarGoldenFixtures = ["stellar_xlm", "stellar_known_classic", "stellar_restricted_asset", "stellar_sac", "stellar_sep41", "stellar_invalid_issuer", "stellar_unknown_contract", "stellar_unavailable_provider"];
+  for (const fixtureName of stellarGoldenFixtures) {
+    assert(stellarReplaySnapshots[fixtureName] !== undefined, `Stellar replay snapshot registry must include ${fixtureName}.`);
+    assert(stellarReplaySnapshots[fixtureName].chainFamily === "stellar", `Stellar replay snapshot ${fixtureName} must have chainFamily stellar.`);
+    assert(stellarReplaySnapshots[fixtureName].agent === "onchain", `Stellar replay snapshot ${fixtureName} must be for onchain agent.`);
+  }
 }
 
 async function runTransactionLifecycleChecks() {
@@ -1732,12 +1750,14 @@ async function runTransactionLifecycleChecks() {
   assert(evmMismatchedSource.status === 403, "Submit must reject EVM source/wallet mismatches.");
 
   // Confirm API chain-family validation
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
   const stellarConfirmCollision = await confirmExecution(
     new Request("http://localhost/api/execute/confirm", {
       method: "POST",
       body: JSON.stringify({
         walletAddress: stellarWallet,
         chainFamily: "stellar",
+        network: "stellar-testnet",
         txHash: stellarHash2,
         userApproved: true,
       }),
@@ -1854,6 +1874,258 @@ function runCachePolicyChecks() {
   assert(onchain.ttlClass === "medium" && onchain.criticalFreshnessVisible, "Security flags must use medium TTL with freshness visible.");
   assert(news.ttlClass === "long" && social.ttlClass === "long", "News/social cache policy must use longer TTL.");
   assert(execution.scope === "no-store", "Execution planning must not be shared-cacheable.");
+}
+
+function stellarRpcHealthConnected() {
+  return Promise.resolve({
+    healthy: true,
+    status: "healthy",
+    network: "stellar-testnet",
+    passphrase: "Test SDF Network ; September 2015",
+    protocolVersion: 27,
+    latestLedger: 1234567,
+    closeTime: Math.floor(Date.now() / 1000),
+    checkedAt: now.toISOString(),
+    latencyMs: 42,
+    providerUrl: "https://soroban-testnet.stellar.org",
+    fallbackUsed: false,
+    attempts: 1,
+  });
+}
+
+const classicAssetRecordFactory = (overrides: Record<string, unknown> = {}) => ({
+  asset_code: "USDC",
+  asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  contract_id: "CBMT5M7Z7Y4FJ3H7Y5K6L7M8N9O0P1Q2R3S4T5U6V7W8X9Y0Z1A2B3C4D",
+  num_liquidity_pools: 5,
+  liquidity_pools_amount: "1250000",
+  accounts: {
+    authorized: 850,
+    authorized_to_maintain_liabilities: 12,
+    unauthorized: 8,
+  },
+  flags: {
+    auth_required: false,
+    auth_revocable: false,
+    auth_immutable: true,
+    auth_clawback_enabled: false,
+  },
+  ...overrides,
+});
+
+const issuerAccountFactory = (overrides: Record<string, unknown> = {}) => ({
+  id: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  accountId: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  sequence: "123456789",
+  subentryCount: 3,
+  flags: {
+    auth_required: false,
+    auth_revocable: false,
+    auth_immutable: true,
+    auth_clawback_enabled: false,
+  },
+  balances: [],
+  ...overrides,
+});
+
+const sacContractState = {
+  deployed: true,
+  type: "stellar_asset_contract",
+  lastModifiedLedgerSeq: 1234000,
+  liveUntilLedgerSeq: 2234000,
+  latestLedger: 1234567,
+};
+
+const wasmContractState = {
+  deployed: true,
+  type: "wasm_contract",
+  wasmHash: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+  lastModifiedLedgerSeq: 1234000,
+  liveUntilLedgerSeq: 2234000,
+  latestLedger: 1234567,
+};
+
+function assertStellarReplay(fixtureName: string, result: AgentResult) {
+  const expected = stellarReplaySnapshots[fixtureName];
+  assert(expected !== undefined, `Stellar replay snapshot must exist for ${fixtureName}.`);
+  assert(expected.chainFamily === "stellar", `Stellar replay snapshot ${fixtureName} must have chainFamily stellar.`);
+  assert(result.agent === "onchain", `Stellar ${fixtureName} must be an onchain agent result.`);
+  assert(result.agent === expected.agent, `Stellar ${fixtureName} agent mismatch: expected ${expected.agent}, got ${result.agent}.`);
+  assert(result.recommendedAction === expected.recommendedAction, `Stellar ${fixtureName} recommendedAction drift: expected ${expected.recommendedAction}, got ${result.recommendedAction}.${expected.migrationNote ? ` Note: ${expected.migrationNote}` : ""}`);
+  assert(Math.abs(result.riskScore - expected.riskScore) <= 3, `Stellar ${fixtureName} riskScore drift: expected ${expected.riskScore}, got ${result.riskScore}.${expected.migrationNote ? ` Note: ${expected.migrationNote}` : ""}`);
+  // Also verify deterministic snapshot creation
+  const snapshotHash = hashSourceSnapshot({ sources: result.sources, rawSignals: result.rawSignals });
+  const replaySnapshot = createStellarReplaySnapshot(result, snapshotHash, fixtureName);
+  assert(replaySnapshot.chainFamily === "stellar", `Stellar replay snapshot must set chainFamily to stellar for ${fixtureName}.`);
+  const selfComparison = compareReplaySnapshot(replaySnapshot, result);
+  assert(selfComparison.compatible, `Stellar replay snapshot ${fixtureName} self-comparison failed: ${selfComparison.migrationNote}`);
+}
+
+async function runStellarOnchainChecks() {
+  // 1. XLM (native)
+  const xlmResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", assetType: "native", symbol: "XLM" },
+    { fetchRpcHealth: stellarRpcHealthConnected },
+  );
+  assertAgentContract(xlmResult);
+  assert(xlmResult.riskScore < 50, "XLM native fixture must produce low/medium risk.");
+  assert(xlmResult.recommendedAction === "hold" || xlmResult.recommendedAction === "watch", "XLM native fixture must not force manual review.");
+  assert(xlmResult.findings.some((f) => f.label === "Asset identity" && f.detail.includes("Native XLM identity")), "XLM report must reference native identity.");
+  assert(xlmResult.findings.some((f) => f.label === "Issuer controls" && f.detail.includes("XLM has no asset issuer")), "XLM report must state no issuer.");
+  assert(xlmResult.findings.some((f) => f.label === "Clawback capability" && f.detail.includes("cannot be clawed back")), "XLM report must state no clawback possible.");
+  assert(xlmResult.findings.some((f) => f.label === "Trustline state" && f.detail.includes("XLM does not require a trustline")), "XLM report must state no trustline needed.");
+  assert(!xlmResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "XLM report must not contain EVM-only checks.");
+  assert(xlmResult.sources.some((s) => s.label === "Soroban contract state" && s.status === "unavailable"), "XLM report must show contract state as unavailable.");
+  assert(assertGoldenScore("stellar_xlm", xlmResult.riskScore), "XLM fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_xlm", xlmResult);
+
+  // 2. Known classic asset (USDC on Stellar, clean)
+  const classicProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchClassicAssetRecord: async () => classicAssetRecordFactory(),
+    fetchIssuerAccount: async () => issuerAccountFactory(),
+    fetchContractState: async () => sacContractState,
+  };
+  const classicResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", assetType: "classic", symbol: "USDC", issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" },
+    classicProviders,
+  );
+  assertAgentContract(classicResult);
+  assert(classicResult.riskScore < 50, "Known classic fixture must produce low/medium risk.");
+  assert(classicResult.recommendedAction === "hold" || classicResult.recommendedAction === "watch", "Known classic fixture must not force manual review.");
+  assert(classicResult.findings.some((f) => f.label === "Asset identity" && f.detail.includes("USDC")), "Classic report must reference asset code.");
+  assert(classicResult.findings.some((f) => f.label === "Contract interface" && f.detail.includes("Stellar Asset Contract")), "Classic SAC report must mention SAC.");
+  assert(!classicResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Classic report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_known_classic", classicResult.riskScore), "Known classic fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_known_classic", classicResult);
+
+  // 3. Restricted asset (auth_required + auth_revocable + clawback enabled)
+  const restrictedProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchClassicAssetRecord: async () => classicAssetRecordFactory({
+      num_liquidity_pools: 1,
+      liquidity_pools_amount: "25000",
+      accounts: { authorized: 50, authorized_to_maintain_liabilities: 200, unauthorized: 100 },
+      flags: {
+        auth_required: true,
+        auth_revocable: true,
+        auth_immutable: false,
+        auth_clawback_enabled: true,
+      },
+    }),
+    fetchIssuerAccount: async () => issuerAccountFactory({
+      flags: {
+        auth_required: true,
+        auth_revocable: true,
+        auth_immutable: false,
+        auth_clawback_enabled: true,
+      },
+    }),
+    fetchContractState: async () => sacContractState,
+  };
+  const restrictedResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", assetType: "classic", symbol: "REST", issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" },
+    restrictedProviders,
+  );
+  assertAgentContract(restrictedResult);
+  assert(restrictedResult.riskScore >= 25, "Restricted asset fixture must produce at least medium risk.");
+  assert(restrictedResult.findings.some((f) => f.label === "Clawback capability" && f.severity === "high"), "Restricted asset report must flag clawback as high severity.");
+  assert(restrictedResult.findings.some((f) => f.label === "Trustline state" && f.detail.includes("unauthorized")), "Restricted asset report must mention unauthorized accounts.");
+  assert(restrictedResult.findings.some((f) => f.label === "Issuer controls" && f.detail.includes("Authorization required: yes")), "Restricted asset report must show auth_required.");
+  assert(!restrictedResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Restricted asset report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_restricted_asset", restrictedResult.riskScore), "Restricted asset fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_restricted_asset", restrictedResult);
+
+  // 4. SAC (Stellar Asset Contract, via contract address)
+  const sacProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchContractState: async () => sacContractState,
+  };
+  const sacResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", contractAddress: "CBMT5M7Z7Y4FJ3H7Y5K6L7M8N9O0P1Q2R3S4T5U6V7W8X9Y0Z1A2B3C4D", assetType: "contract" },
+    sacProviders,
+  );
+  assertAgentContract(sacResult);
+  assert(sacResult.riskScore < 50, "SAC fixture must produce low/medium risk.");
+  assert(sacResult.findings.some((f) => f.label === "Contract interface" && f.detail.includes("Stellar Asset Contract")), "SAC report must state SAC interface.");
+  assert(sacResult.findings.some((f) => f.label === "Contract storage" && f.detail.includes("live until ledger")), "SAC report must show contract storage TTL.");
+  assert(!sacResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "SAC report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_sac", sacResult.riskScore), "SAC fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_sac", sacResult);
+
+  // 5. SEP-41 (generic Soroban WASM contract)
+  const sep41Providers: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchContractState: async () => wasmContractState,
+  };
+  const sep41Result = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", contractAddress: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", assetType: "contract" },
+    sep41Providers,
+  );
+  assertAgentContract(sep41Result);
+  assert(sep41Result.riskScore >= 25, "SEP-41 WASM fixture must produce at least medium risk (unknown issuer, no classic backing).");
+  assert(sep41Result.findings.some((f) => f.label === "Contract interface" && f.detail.includes("WASM contract")), "SEP-41 report must state WASM contract.");
+  assert(sep41Result.findings.some((f) => f.label === "Contract interface" && f.detail.includes("SEP-41")), "SEP-41 report must mention SEP-41 simulation requirement.");
+  assert(sep41Result.confidence < 0.84, "SEP-41 WASM contract (no issuer) must have reduced confidence.");
+  assert(!sep41Result.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "SEP-41 report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_sep41", sep41Result.riskScore), "SEP-41 fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_sep41", sep41Result);
+
+  // 6. Invalid issuer (CODE:ISSUER where issuer doesn't exist)
+  const invalidIssuerProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchClassicAssetRecord: async () => null,
+    fetchIssuerAccount: async () => null,
+  };
+  const invalidIssuerResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", assetType: "classic", symbol: "FAKE", issuer: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" },
+    invalidIssuerProviders,
+  );
+  assertAgentContract(invalidIssuerResult);
+  assert(invalidIssuerResult.riskScore >= 60, "Invalid issuer fixture must produce high/critical risk.");
+  assert(invalidIssuerResult.recommendedAction === "manual_review" || invalidIssuerResult.recommendedAction === "avoid", "Invalid issuer fixture must not recommend hold.");
+  assert(invalidIssuerResult.findings.some((f) => f.label === "Issuer controls" && f.severity === "critical"), "Invalid issuer report must flag missing issuer as critical.");
+  assert(invalidIssuerResult.findings.some((f) => f.label === "Asset identity" && f.detail.includes("could not be confirmed")), "Invalid issuer report must state identity not confirmed.");
+  assert(!invalidIssuerResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Invalid issuer report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_invalid_issuer", invalidIssuerResult.riskScore), "Invalid issuer fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_invalid_issuer", invalidIssuerResult);
+
+  // 7. Unknown contract (contract address with no deployed code)
+  const unknownContractProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchContractState: async () => null,
+  };
+  const unknownContractResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", contractAddress: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", assetType: "contract" },
+    unknownContractProviders,
+  );
+  assertAgentContract(unknownContractResult);
+  assert(unknownContractResult.riskScore >= 55, "Unknown contract fixture must produce high/critical risk.");
+  assert(unknownContractResult.recommendedAction === "manual_review" || unknownContractResult.recommendedAction === "avoid", "Unknown contract fixture must not recommend hold.");
+  assert(unknownContractResult.findings.some((f) => f.label === "Contract interface" && f.detail.includes("No deployed Soroban contract")), "Unknown contract report must state no contract deployed.");
+  assert(unknownContractResult.findings.some((f) => f.label === "Contract storage" && f.detail.includes("was unavailable")), "Unknown contract report must state storage unavailable.");
+  assert(!unknownContractResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Unknown contract report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_unknown_contract", unknownContractResult.riskScore), "Unknown contract fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_unknown_contract", unknownContractResult);
+
+  // 8. Unavailable provider (all RPC calls fail)
+  const unavailableProviders: StellarOnchainProviders = {
+    fetchRpcHealth: async () => {
+      throw new Error("RPC unavailable");
+    },
+  };
+  const unavailableResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", contractAddress: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", assetType: "contract" },
+    unavailableProviders,
+  );
+  assertAgentContract(unavailableResult);
+  assert(unavailableResult.riskScore >= 60, "Unavailable provider fixture must produce high/critical risk.");
+  assert(unavailableResult.recommendedAction === "manual_review" || unavailableResult.recommendedAction === "avoid", "Unavailable provider fixture must not recommend hold.");
+  assert(unavailableResult.sources.some((s) => s.status === "unavailable"), "Unavailable provider report must show unavailable sources.");
+  assert(unavailableResult.confidence < 0.5, "Unavailable provider fixture must have reduced confidence.");
+  assert(!unavailableResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Unavailable provider report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_unavailable_provider", unavailableResult.riskScore), "Unavailable provider fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_unavailable_provider", unavailableResult);
 }
 
 function runX402Checks() {
@@ -2250,6 +2522,7 @@ function runStellarAssetIdentityChecks() {
 async function main() {
   await runDiscoveryFixtures();
   await runOnchainChecks();
+  await runStellarOnchainChecks();
   await runNewsChecks();
   await runSocialChecks();
   await runDecisionChecks();

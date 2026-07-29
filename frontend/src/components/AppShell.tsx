@@ -10,6 +10,7 @@ const navItems = [
   { href: "/strategy", label: "Strategy" },
   { href: "/alerts", label: "Alerts" },
   { href: "/history", label: "History" },
+  { href: "/recovery", label: "Recovery" },
 ];
 
 const navLinkClassName =

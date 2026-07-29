@@ -283,6 +283,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Execution policy failed" }, { status: 403 });
   }
 
+  try {
+    assertPrepareAllowedByRecovery();
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: "incident_mode",
+        detail: error instanceof Error ? error.message : "Incident mode is active.",
+        incidentMode: getIncidentMode(),
+      },
+      { status: 423 },
+    );
+  }
+
   const { portfolio } = await getPortfolioSnapshot(parsed.data.walletAddress);
   const rules = getUserRuleRecord(parsed.data.walletAddress ?? portfolio.walletAddress);
   const preview = await buildExecutionPreviewFromPortfolio(portfolio, { ...parsed.data, rules });

@@ -10,6 +10,7 @@ import { buildRiskReport, createRiskReportInput } from "@/server/scan/riskReport
 import { normalizeTokenInput } from "@/server/scan/tokenInput";
 import { isVerifiedEstablishedAsset } from "@/server/portfolio/tokenRegistry";
 import { getChainFamily } from "@/lib/chainIdentity";
+import type { PhaseTimer } from "@/server/observability/timing";
 
 type ScanCheck = NonNullable<TokenScanResult["analysisChecks"]>[number];
 const unavailableCheckLabels = ["Deployed", "Honeypot", "Sell tax", "Ownership", "Holders", "Liquidity", "LP lock", "Market"];
@@ -335,76 +336,89 @@ function buildUnresolvedTokenScan(query: string, chain?: string): TokenScanResul
   };
 }
 
-export async function runTokenScan(query: string, chain?: string, walletAddress?: string): Promise<TokenScanResult> {
-  const normalized = await normalizeTokenInput(query, chain);
+export async function runTokenScan(query: string, chain?: string, walletAddress?: string, timer?: PhaseTimer): Promise<TokenScanResult> {
+  const normalized = timer ? await timer.track("identity", () => normalizeTokenInput(query, chain)) : await normalizeTokenInput(query, chain);
 
   if (!normalized) {
     return buildUnresolvedTokenScan(query, chain);
   }
 
-  const [onchainResult, newsResult, socialResult, portfolioResult] = await Promise.all([
-    runAgentSafely("onchain", () =>
-      runOnchainAgent({
-        chain: normalized.chain,
-        contractAddress: normalized.contractAddress,
-        symbol: normalized.symbol,
-        issuer: normalized.issuer,
-        assetKey: normalized.assetKey,
-        assetType: normalized.assetType,
-      }),
-    ),
-    runAgentSafely("news", () =>
-      runNewsAgent({
-        symbol: normalized.symbol,
-        tokenName: normalized.name,
-        contractAddress: normalized.contractAddress,
-      }),
-    ),
-    runAgentSafely("social", () =>
-      runSocialAgent({
-        symbol: normalized.symbol,
-        tokenName: normalized.name,
-        query: normalized.symbol ?? normalized.name ?? normalized.contractAddress,
-        websiteUrl: normalized.links?.websiteUrl,
-        twitterUrl: normalized.links?.twitterUrl,
-        telegramUrl: normalized.links?.telegramUrl,
-      }),
-    ),
-    runAgentSafely("portfolio", () =>
-      runPortfolioAgent(walletAddress, {
-        contractAddress: normalized.contractAddress,
-        symbol: normalized.symbol,
-      }),
-    ),
-  ]);
+  const runProviders = () =>
+    Promise.all([
+      runAgentSafely("onchain", () =>
+        runOnchainAgent({
+          chain: normalized.chain,
+          contractAddress: normalized.contractAddress,
+          symbol: normalized.symbol,
+          issuer: normalized.issuer,
+          assetKey: normalized.assetKey,
+          assetType: normalized.assetType,
+        }),
+      ),
+      runAgentSafely("news", () =>
+        runNewsAgent({
+          symbol: normalized.symbol,
+          tokenName: normalized.name,
+          contractAddress: normalized.contractAddress,
+        }),
+      ),
+      runAgentSafely("social", () =>
+        runSocialAgent({
+          symbol: normalized.symbol,
+          tokenName: normalized.name,
+          query: normalized.symbol ?? normalized.name ?? normalized.contractAddress,
+          websiteUrl: normalized.links?.websiteUrl,
+          twitterUrl: normalized.links?.twitterUrl,
+          telegramUrl: normalized.links?.telegramUrl,
+        }),
+      ),
+      runAgentSafely("portfolio", () =>
+        runPortfolioAgent(walletAddress, {
+          contractAddress: normalized.contractAddress,
+          symbol: normalized.symbol,
+        }),
+      ),
+    ]);
+
+  const [onchainResult, newsResult, socialResult, portfolioResult] = timer ? await timer.track("providers", runProviders) : await runProviders();
   const targetExposure = typeof portfolioResult.rawSignals?.targetTokenExposurePercent === "number" ? portfolioResult.rawSignals.targetTokenExposurePercent : 0;
   const includePortfolioContext = Boolean(walletAddress && targetExposure > 0 && portfolioResult.sources.some((source) => source.status === "connected"));
   const specialistResults = includePortfolioContext ? [onchainResult, newsResult, socialResult, portfolioResult] : [onchainResult, newsResult, socialResult];
   const stableReserve = portfolioResult.rawSignals?.portfolioRisk as { stableReservePercent?: unknown } | undefined;
   const establishedAsset = isVerifiedEstablishedAsset(normalized.symbol, normalized.chain, normalized.contractAddress);
-  const decisionResult = runDecisionAgent({
-    results: specialistResults,
-    context: {
-      mode: "token_scan",
-      walletAddress,
-      tokenSymbol: normalized.symbol,
-      establishedAsset,
-      userAlreadyOwnsToken: Boolean(walletAddress && targetExposure > 0),
-      holdingAllocationPercent: targetExposure,
-      stableReservePercent: typeof stableReserve?.stableReservePercent === "number" ? stableReserve.stableReservePercent : undefined,
-    },
-  });
+
+  const runAgentsPhase = () =>
+    Promise.resolve(
+      runDecisionAgent({
+        results: specialistResults,
+        context: {
+          mode: "token_scan",
+          walletAddress,
+          tokenSymbol: normalized.symbol,
+          establishedAsset,
+          userAlreadyOwnsToken: Boolean(walletAddress && targetExposure > 0),
+          holdingAllocationPercent: targetExposure,
+          stableReservePercent: typeof stableReserve?.stableReservePercent === "number" ? stableReserve.stableReservePercent : undefined,
+        },
+      }),
+    );
+
+  const decisionResult = timer ? await timer.track("agents", runAgentsPhase) : await runAgentsPhase();
   const overallRiskScore = decisionResult.score;
-  const executionPreview = await buildExecutionPreview({
-    action: decisionResult.recommendedAction,
-    fromToken: normalized.symbol ?? "TOKEN",
-    toToken: "USDC",
-    percent: decisionResult.recommendedAction === "reduce_exposure" || decisionResult.recommendedAction === "swap_to_stable" ? 30 : 0,
-    riskScore: overallRiskScore,
-    network: normalized.chain,
-    quoteAvailable: false,
-    simulationStatus: overallRiskScore >= 50 ? "pending" : "not_required",
-  });
+
+  const runScoringPhase = () =>
+    buildExecutionPreview({
+      action: decisionResult.recommendedAction,
+      fromToken: normalized.symbol ?? "TOKEN",
+      toToken: "USDC",
+      percent: decisionResult.recommendedAction === "reduce_exposure" || decisionResult.recommendedAction === "swap_to_stable" ? 30 : 0,
+      riskScore: overallRiskScore,
+      network: normalized.chain,
+      quoteAvailable: false,
+      simulationStatus: overallRiskScore >= 50 ? "pending" : "not_required",
+    });
+
+  const executionPreview = timer ? await timer.track("scoring", runScoringPhase) : await runScoringPhase();
   const combinedFindings = [
     ...decisionResult.findings,
     ...onchainResult.findings,
@@ -450,6 +464,9 @@ export async function runTokenScan(query: string, chain?: string, walletAddress?
   ];
   const dataQuality = getDataQuality(sources);
   const scannedAt = onchainResult.createdAt;
+
+  timer?.mark("rendering");
+
   const riskReport = buildRiskReport({
     query,
     requestedChain: chain,

@@ -1,13 +1,13 @@
 import "server-only";
 
-import { BASE_RESERVE, StrKey } from "@stellar/stellar-sdk";
+import { StrKey } from "@stellar/stellar-sdk";
 import type { StellarTrustlinePreview } from "@/server/types";
 import { getStellarNetwork } from "@/lib/stellar/config";
 import { createStellarDataServer } from "@/server/stellar/client";
 import { parseStellarAssetInput } from "@/server/stellar/assetIdentity";
 
-const MIN_XLM_RESERVE_FOR_TRUSTLINE = 1.5; // XLM buffer above base reserve
-const BASE_RESERVE_NUM = Number(BASE_RESERVE.toString()) || 0.5; // ~0.5 XLM base reserve
+const MIN_XLM_RESERVE_FOR_TRUSTLINE = 1.5;
+const BASE_RESERVE_NUM = 0.5;
 
 export type TrustlineCheckInput = {
   chain: string;
@@ -110,9 +110,9 @@ export async function checkAssetFlags(
     let clawbackEnabled = false;
     try {
       const assetPage = await server.assets().forCode(assetCode).forIssuer(issuer).limit(1).call();
-      const assetRecord = assetPage.records[0] as Record<string, unknown> | undefined;
+      const assetRecord = assetPage.records[0] as unknown as Record<string, unknown> | undefined;
       if (assetRecord) {
-        const assetFlags = assetRecord.flags as Record<string, unknown> | undefined;
+        const assetFlags = assetRecord.flags as unknown as Record<string, unknown> | undefined;
         clawbackEnabled = assetFlags?.auth_clawback_enabled === true;
       }
     } catch {

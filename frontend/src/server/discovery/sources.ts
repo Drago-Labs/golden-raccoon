@@ -1,4 +1,4 @@
-import type { DiscoveryCandidate, DiscoverySourceKind } from "@/server/types";
+import type { DiscoveryCandidate } from "@/server/types";
 import { scanNetworks, getScanNetwork } from "@/lib/scanNetworks";
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com/latest/dex";

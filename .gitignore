@@ -15,6 +15,7 @@ build/
 dist/
 coverage/
 artifacts/
+frontend/.data/
 backend/contracts/cache/
 backend/contracts/artifacts/
 backend/contracts/typechain-types/

@@ -1,0 +1,1874 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Golden Raccoon HTTP API",
+    "version": "1.0.0",
+    "summary": "Token risk-scanning, portfolio, discovery, alerting, and transaction-execution API for the Golden Raccoon Next.js app.",
+    "description": "Versioned OpenAPI contract for every public HTTP route under `frontend/src/app/api/**`. See `docs/openapi/COMPATIBILITY.md` for the versioning/deprecation policy and `docs/openapi/ROUTE_COVERAGE.md` for the route-to-operationId-to-test mapping.\n\nAuthentication: most wallet-scoped routes derive the authoritative wallet from a signed, httpOnly `gr_wallet` session cookie (see `WalletSessionCookieAuth`). A `walletAddress` request field/query param may also be supplied, but it is validated against the session and rejected on mismatch; it never overrides the cookie. Routes that only accept a bare `walletAddress` value with no session enforcement are documented as unauthenticated.\n\nAll examples use synthetic placeholder addresses, hashes, and tokens. No real user data or secrets are included.",
+    "contact": { "name": "Drago-Labs/golden-raccoon" }
+  },
+  "servers": [
+    { "url": "/api", "description": "Same-origin Next.js API routes (relative to the deployed frontend origin)." }
+  ],
+  "tags": [
+    { "name": "agents", "description": "Individual specialist risk agents (onchain, news, social, portfolio, execution) and the decision aggregator." },
+    { "name": "scan", "description": "Composite token risk scan." },
+    { "name": "discovery", "description": "Candidate discovery, classification, and watchlist scanning pipeline." },
+    { "name": "watchlist", "description": "Per-wallet watchlist of tracked assets." },
+    { "name": "portfolio", "description": "Wallet portfolio snapshots and provider health." },
+    { "name": "execute", "description": "Transaction preparation, submission, confirmation, and lifecycle status." },
+    { "name": "history", "description": "Historical agent runs, approvals, recommendations, and transactions." },
+    { "name": "alerts", "description": "Alert rules, observations, triggered alerts, and delivery records." },
+    { "name": "auto-mode", "description": "Auto-mode policy configuration and authorization." },
+    { "name": "rules", "description": "Per-wallet user trading/risk rules." },
+    { "name": "stellar", "description": "Stellar on-chain risk registry publication." },
+    { "name": "wallet-session", "description": "Wallet-ownership challenge/response session cookie issuance." },
+    { "name": "x402", "description": "x402 payment-gated premium endpoints." },
+    { "name": "health", "description": "Service and provider health checks." }
+  ],
+  "components": {
+    "securitySchemes": {
+      "WalletSessionCookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "gr_wallet",
+        "description": "Signed, httpOnly wallet-session cookie issued by `POST /wallet-session` after a successful `POST /wallet-session/nonce` challenge/response. Routes documented with this scheme resolve the authoritative wallet address from this cookie; a `walletAddress` body/query field is accepted for transparency but must match the cookie or the route responds 401/403."
+      }
+    },
+    "parameters": {
+      "WalletAddressQuery": {
+        "name": "walletAddress",
+        "in": "query",
+        "required": false,
+        "description": "Wallet address, informational only on session-scoped routes (the session cookie is authoritative). Required on routes with no session enforcement.",
+        "schema": { "type": "string", "minLength": 1, "maxLength": 120 }
+      },
+      "ChainQuery": {
+        "name": "chain",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "string", "minLength": 1, "maxLength": 40 }
+      },
+      "LimitQuery": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "integer", "minimum": 1, "maximum": 500 }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "description": "Stable error contract. Routes migrated to `frontend/src/server/api/errors.ts` return exactly this shape (optionally with extra legacy fields kept for backward compatibility). Not-yet-migrated routes return `LegacyErrorEnvelope` instead; see COMPATIBILITY.md.",
+        "required": ["code", "message", "retryable", "requestId"],
+        "properties": {
+          "code": { "type": "string", "description": "Stable machine-readable error code, e.g. `validation_error`, `rate_limited`, `not_found`.", "examples": ["validation_error"] },
+          "message": { "type": "string", "description": "Human-readable summary safe to display or log." },
+          "retryable": { "type": "boolean", "description": "Whether retrying the same request may succeed without changes." },
+          "requestId": { "type": "string", "description": "Opaque id for correlating this error with server logs." },
+          "details": { "description": "Optional machine-readable extra context (e.g. field validation errors)." }
+        }
+      },
+      "ValidationErrorDetails": {
+        "type": "object",
+        "description": "Zod `.flatten()` shape used across all input-validated routes.",
+        "properties": {
+          "formErrors": { "type": "array", "items": { "type": "string" } },
+          "fieldErrors": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }
+        }
+      },
+      "LegacyErrorEnvelope": {
+        "type": "object",
+        "description": "Ad hoc error shape used by not-yet-migrated routes. `error` is either a short machine-readable string or a `ValidationErrorDetails` object; `detail` is an optional human-readable string.",
+        "required": ["error"],
+        "properties": {
+          "error": { "oneOf": [{ "type": "string" }, { "$ref": "#/components/schemas/ValidationErrorDetails" }] },
+          "detail": { "type": "string" }
+        }
+      },
+      "MigratedErrorEnvelope": {
+        "description": "Response shape for routes migrated to the stable error contract while preserving their pre-existing `error`/`detail` fields for backward compatibility (see COMPATIBILITY.md, dual-shape policy).",
+        "allOf": [
+          { "$ref": "#/components/schemas/Error" },
+          { "$ref": "#/components/schemas/LegacyErrorEnvelope" }
+        ]
+      },
+      "EvmChainIdentity": {
+        "type": "object",
+        "required": ["family", "address"],
+        "properties": {
+          "family": { "type": "string", "const": "evm" },
+          "address": { "type": "string", "pattern": "^0x[a-fA-F0-9]{40}$", "examples": ["0x1111111111111111111111111111111111111111"] },
+          "network": { "type": "string", "examples": ["GOAT Network", "ethereum", "base"] }
+        }
+      },
+      "StellarChainIdentity": {
+        "type": "object",
+        "required": ["family", "address"],
+        "properties": {
+          "family": { "type": "string", "const": "stellar" },
+          "address": { "type": "string", "pattern": "^G[A-Z2-7]{20,}$", "examples": ["GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"] },
+          "network": { "type": "string", "examples": ["stellar-testnet", "stellar-public"] }
+        }
+      },
+      "ChainIdentity": {
+        "description": "Discriminated wallet/account identity: either an EVM address or a Stellar G-address, never both.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/EvmChainIdentity" },
+          { "$ref": "#/components/schemas/StellarChainIdentity" }
+        ],
+        "discriminator": {
+          "propertyName": "family",
+          "mapping": { "evm": "#/components/schemas/EvmChainIdentity", "stellar": "#/components/schemas/StellarChainIdentity" }
+        }
+      },
+      "GenericObject": {
+        "type": "object",
+        "description": "Loosely-typed object. Used for large internal result shapes (portfolio snapshots, decision raw signals, transaction records, discovery scan payloads) whose full shape is defined in TypeScript but not yet exhaustively modeled here.",
+        "additionalProperties": true
+      },
+      "AgentName": { "type": "string", "enum": ["portfolio", "news", "social", "onchain", "decision", "execution"] },
+      "AgentStatus": { "type": "string", "enum": ["idle", "running", "complete", "partial", "warning", "error", "unavailable", "blocked", "manual_review_required"] },
+      "RiskLevel": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+      "RecommendedAction": {
+        "type": "string",
+        "enum": ["hold", "watch", "reduce_exposure", "swap_to_stable", "avoid", "manual_review", "prepare_transaction", "create_trustline", "no_action"]
+      },
+      "AgentSource": {
+        "type": "object",
+        "required": ["label", "status"],
+        "properties": {
+          "label": { "type": "string" },
+          "url": { "type": "string" },
+          "status": { "type": "string", "enum": ["mock", "connected", "unavailable"] },
+          "detail": { "type": "string" },
+          "checkedAt": { "type": "string", "format": "date-time" },
+          "latencyMs": { "type": "number" },
+          "error": { "type": "string" },
+          "errorCode": { "type": "string" },
+          "provider": { "type": "string" },
+          "fallbackRank": { "type": "number" },
+          "reliability": { "type": "number", "minimum": 0, "maximum": 1 },
+          "cache": {
+            "type": "object",
+            "properties": {
+              "policy": { "type": "string" },
+              "ttlSeconds": { "type": "number" },
+              "hit": { "type": "boolean" },
+              "freshnessSeconds": { "type": "number" }
+            }
+          }
+        }
+      },
+      "AgentFinding": {
+        "type": "object",
+        "required": ["label", "severity", "detail"],
+        "properties": {
+          "label": { "type": "string" },
+          "severity": { "$ref": "#/components/schemas/RiskLevel" },
+          "detail": { "type": "string" },
+          "scoreImpact": { "type": "number", "minimum": 0, "maximum": 100 },
+          "weight": { "type": "number" },
+          "sourceLabel": { "type": "string" },
+          "raw": { "type": "string" },
+          "interpretation": { "type": "string" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "AgentMissingData": {
+        "type": "object",
+        "required": ["field", "reason", "impact"],
+        "properties": {
+          "field": { "type": "string" },
+          "reason": { "type": "string" },
+          "impact": { "type": "string", "enum": ["low", "medium", "high"] },
+          "requiredFor": { "type": "string" },
+          "canRetry": { "type": "boolean" },
+          "fallbackUsed": { "type": "boolean" }
+        }
+      },
+      "AgentBlockingReasonDetail": {
+        "type": "object",
+        "required": ["category", "severity", "detail"],
+        "properties": {
+          "category": { "type": "string", "enum": ["critical", "policy", "identity", "provider_coverage", "simulation"] },
+          "severity": { "$ref": "#/components/schemas/RiskLevel" },
+          "detail": { "type": "string" },
+          "sourceLabel": { "type": "string" }
+        }
+      },
+      "SourceDataQuality": {
+        "type": "object",
+        "required": ["mode", "connectedSources", "unavailableSources", "mockSources", "sourceCount", "reliability", "detail"],
+        "properties": {
+          "mode": { "type": "string", "enum": ["live", "partial", "unavailable", "stale", "conflicting"] },
+          "connectedSources": { "type": "number" },
+          "unavailableSources": { "type": "number" },
+          "mockSources": { "type": "number" },
+          "sourceCount": { "type": "number" },
+          "reliability": { "type": "number" },
+          "lastCheckedAt": { "type": "string", "format": "date-time" },
+          "freshnessSeconds": { "type": "number" },
+          "averageLatencyMs": { "type": "number" },
+          "conflictCount": { "type": "number" },
+          "detail": { "type": "string" }
+        }
+      },
+      "AgentResult": {
+        "type": "object",
+        "description": "Runtime-validated result contract shared by every specialist agent and the decision agent (`frontend/src/server/agents/schema.ts`).",
+        "required": ["agent", "status", "riskScore", "score", "riskLevel", "verdict", "summary", "findings", "sources", "confidence", "recommendedAction", "blockingReasons", "missingData", "createdAt"],
+        "properties": {
+          "agent": { "$ref": "#/components/schemas/AgentName" },
+          "status": { "$ref": "#/components/schemas/AgentStatus" },
+          "riskScore": { "type": "number", "minimum": 0, "maximum": 100 },
+          "score": { "type": "number", "minimum": 0, "maximum": 100 },
+          "riskLevel": { "$ref": "#/components/schemas/RiskLevel" },
+          "verdict": { "type": "string" },
+          "summary": { "type": "string" },
+          "findings": { "type": "array", "items": { "$ref": "#/components/schemas/AgentFinding" } },
+          "sources": { "type": "array", "items": { "$ref": "#/components/schemas/AgentSource" } },
+          "dataQuality": { "$ref": "#/components/schemas/SourceDataQuality" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "recommendedAction": { "$ref": "#/components/schemas/RecommendedAction" },
+          "blockingReasons": { "type": "array", "items": { "type": "string" } },
+          "blockingReasonDetails": { "type": "array", "items": { "$ref": "#/components/schemas/AgentBlockingReasonDetail" } },
+          "missingData": { "type": "array", "items": { "$ref": "#/components/schemas/AgentMissingData" } },
+          "rawSignals": { "type": "object", "additionalProperties": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ExpectedEffect": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["transfer", "swap", "approval", "contract_call", "publish_risk"] },
+          "fromToken": { "type": "string" },
+          "toToken": { "type": "string" },
+          "fromAddress": { "type": "string" },
+          "toAddress": { "type": "string" },
+          "amount": { "type": "string" },
+          "contractAddress": { "type": "string" },
+          "method": { "type": "string" },
+          "assetKey": { "type": "string" }
+        }
+      },
+      "SimulationStatus": { "type": "string", "enum": ["not_required", "pending", "passed", "failed", "unavailable"] },
+      "ChainFamily": { "type": "string", "enum": ["evm", "stellar"] },
+      "TransactionLifecycleStatus": {
+        "type": "string",
+        "enum": ["prepared", "submitted", "pending", "confirmed", "failed", "replaced", "expired", "user_rejected"]
+      },
+      "PolicyStatus": {
+        "type": "object",
+        "required": ["allowed", "violations"],
+        "properties": {
+          "allowed": { "type": "boolean" },
+          "violations": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "TransactionRecord": {
+        "type": "object",
+        "description": "Persisted transaction lifecycle record. Additional provider/chain-specific fields (e.g. `stellarDetails`) may be present.",
+        "required": ["hash", "asset", "status", "lifecycleStatus", "walletAddress"],
+        "properties": {
+          "hash": { "type": "string" },
+          "type": { "type": "string", "enum": ["approval", "swap", "transfer", "trustline_create", "contract_call"] },
+          "decisionId": { "type": "string" },
+          "decisionAction": { "$ref": "#/components/schemas/RecommendedAction" },
+          "asset": { "type": "string" },
+          "valueUsd": { "type": "number" },
+          "status": { "type": "string" },
+          "lifecycleStatus": { "$ref": "#/components/schemas/TransactionLifecycleStatus" },
+          "chainFamily": { "$ref": "#/components/schemas/ChainFamily" },
+          "network": { "type": "string" },
+          "walletAddress": { "type": "string" },
+          "sourceAccount": { "type": "string" },
+          "userApproved": { "type": "boolean" },
+          "idempotencyKey": { "type": "string" },
+          "explorerUrl": { "type": "string" },
+          "failureReason": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "submittedAt": { "type": "string", "format": "date-time" },
+          "terminalAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": true
+      },
+      "TransactionLifecycleEvent": {
+        "type": "object",
+        "required": ["event"],
+        "properties": {
+          "event": { "type": "string", "examples": ["prepared", "submitted", "confirmed", "failed", "user_rejected", "duplicate_rejected", "submission_failed"] },
+          "at": { "type": "string", "format": "date-time" },
+          "detail": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "responses": {
+      "ValidationError400": {
+        "description": "Request body/query failed schema validation.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" }, "example": { "error": { "formErrors": [], "fieldErrors": { "chain": ["Required"] } } } } }
+      },
+      "MigratedValidationError400": {
+        "description": "Request body/query failed schema validation. Response includes both the stable error contract and the legacy `error` field.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/MigratedErrorEnvelope" },
+            "example": {
+              "code": "validation_error",
+              "message": "Request validation failed.",
+              "retryable": false,
+              "requestId": "req_m1a2b3_1_c4d5e6",
+              "details": { "formErrors": [], "fieldErrors": { "query": ["String must contain at least 1 character(s)"] } },
+              "error": { "formErrors": [], "fieldErrors": { "query": ["String must contain at least 1 character(s)"] } }
+            }
+          }
+        }
+      },
+      "Unauthorized401": {
+        "description": "No valid wallet session cookie present.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } }
+      },
+      "Forbidden403": {
+        "description": "The session wallet does not own the requested resource, or the supplied wallet does not match the session.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } }
+      },
+      "NotFound404": {
+        "description": "Resource not found (or not visible to the caller's wallet).",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } }
+      },
+      "Conflict409": {
+        "description": "The request conflicts with current state (e.g. duplicate payment signature, already-recovered alert).",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } }
+      },
+      "RateLimited429": {
+        "description": "Too many requests for this route's rate-limit namespace.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } }
+      },
+      "ProviderError502": {
+        "description": "An upstream provider (RPC, Stellar Horizon/RPC, market data, etc.) failed or timed out.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } }
+      },
+      "ServiceUnavailable503": {
+        "description": "The route is intentionally disabled by configuration (e.g. wallet-session cookie signing not configured).",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MigratedErrorEnvelope" } } }
+      },
+      "PaymentRequired402": {
+        "description": "x402 payment required or the supplied payment could not be verified. Standard x402 response with `PAYMENT-REQUIRED`/`accepts` payment requirements; on retry with a valid `PAYMENT-SIGNATURE` header the request proceeds.",
+        "headers": {
+          "WWW-Authenticate": { "schema": { "type": "string" }, "description": "x402 payment challenge, when applicable." }
+        },
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/GenericObject" },
+            "example": {
+              "x402Version": 1,
+              "error": "payment_required",
+              "accepts": [
+                { "scheme": "exact", "network": "eip155:84532", "maxAmountRequired": "10000", "resource": "/api/x402/deep-scan", "payTo": "0x0000000000000000000000000000000000000001", "asset": "USDC" }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/agent/analyze": {
+      "post": {
+        "operationId": "postAgentAnalyze",
+        "summary": "Run the legacy single-shot Gold Raccoon agent against a wallet's portfolio.",
+        "tags": ["agents"],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "walletAddress": { "type": "string" } } }, "example": { "walletAddress": "0x1111111111111111111111111111111111111111" } } }
+        },
+        "responses": {
+          "200": { "description": "Legacy agent analysis result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" }
+        }
+      }
+    },
+    "/agent/decision": {
+      "post": {
+        "operationId": "postAgentDecisionLegacy",
+        "summary": "Create a simple pending decision record (legacy shape, distinct from /agents/decision).",
+        "tags": ["agents"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletAddress", "summary", "riskScore", "decision", "reasoning", "suggestedAction"],
+                "properties": {
+                  "walletAddress": { "type": "string", "minLength": 1 },
+                  "summary": { "type": "string", "minLength": 1 },
+                  "riskScore": { "type": "number", "minimum": 0, "maximum": 100 },
+                  "decision": { "type": "string", "minLength": 1 },
+                  "reasoning": { "type": "array", "items": { "type": "string" } },
+                  "suggestedAction": {
+                    "type": "object",
+                    "required": ["type", "fromToken", "toToken", "percent"],
+                    "properties": {
+                      "type": { "type": "string" },
+                      "fromToken": { "type": "string" },
+                      "toToken": { "type": "string" },
+                      "percent": { "type": "number", "minimum": 0, "maximum": 100 }
+                    }
+                  },
+                  "status": { "type": "string", "enum": ["pending", "approved", "rejected", "executed"], "default": "pending" }
+                }
+              },
+              "example": {
+                "walletAddress": "0x1111111111111111111111111111111111111111",
+                "summary": "Reduce exposure to MEME.",
+                "riskScore": 62,
+                "decision": "reduce_exposure",
+                "reasoning": ["Liquidity concentrated in a single pool.", "Holder concentration is high."],
+                "suggestedAction": { "type": "reduce_exposure", "fromToken": "MEME", "toToken": "USDC", "percent": 20 }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created decision record echo.",
+            "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/GenericObject" }] }, "example": { "id": "d1c2e3f4-0000-4000-8000-000000000000", "walletAddress": "0x1111111111111111111111111111111111111111", "status": "pending", "createdAt": "2026-07-29T12:00:00.000Z" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError400" }
+        }
+      }
+    },
+    "/agents/decision": {
+      "post": {
+        "operationId": "postAgentsDecision",
+        "summary": "Aggregate specialist agent results into a final risk decision.",
+        "tags": ["agents"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "results": { "type": "array", "items": { "$ref": "#/components/schemas/AgentResult" } },
+                  "context": {
+                    "type": "object",
+                    "properties": {
+                      "mode": { "type": "string", "enum": ["portfolio_review", "token_scan", "pre_buy_check", "holding_review", "execution_prepare"] },
+                      "userAlreadyOwnsToken": { "type": "boolean" },
+                      "targetExposurePercent": { "type": "number", "minimum": 0, "maximum": 100 },
+                      "holdingAllocationPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+                      "stableReservePercent": { "type": "number", "minimum": 0, "maximum": 100 },
+                      "walletAddress": { "type": "string" },
+                      "tokenSymbol": { "type": "string" }
+                    }
+                  },
+                  "executionReadiness": {
+                    "type": "object",
+                    "properties": {
+                      "feasible": { "type": "boolean" },
+                      "actionAllowed": { "type": "boolean" },
+                      "blockedReason": { "type": "string" },
+                      "simulationStatus": { "$ref": "#/components/schemas/SimulationStatus" }
+                    }
+                  },
+                  "userRules": { "$ref": "#/components/schemas/GenericObject" },
+                  "userRiskProfile": { "$ref": "#/components/schemas/GenericObject" }
+                }
+              },
+              "example": { "results": [], "context": { "mode": "token_scan" } }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Aggregated decision agent result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentResult" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/agents/execution": {
+      "post": {
+        "operationId": "postAgentsExecution",
+        "summary": "Build an approval-only execution preview for a recommended action (never signs or broadcasts).",
+        "tags": ["agents"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": { "type": "string" },
+                  "walletAddress": { "type": "string" },
+                  "decisionId": { "type": "string" },
+                  "fromToken": { "type": "string" },
+                  "toToken": { "type": "string" },
+                  "percent": { "type": "number", "minimum": 0, "maximum": 100 },
+                  "riskScore": { "type": "number", "minimum": 0, "maximum": 100 },
+                  "estimatedValueUsd": { "type": "number", "minimum": 0 },
+                  "network": { "type": "string" },
+                  "slippageBps": { "type": "number", "minimum": 0, "maximum": 10000 },
+                  "priceImpactBps": { "type": "number", "minimum": 0 },
+                  "gasEstimateUsd": { "type": "number", "minimum": 0 },
+                  "quoteAvailable": { "type": "boolean" },
+                  "expectedOutputAmount": { "type": "number", "minimum": 0 },
+                  "simulationStatus": { "$ref": "#/components/schemas/SimulationStatus" },
+                  "simulationRevertReason": { "type": "string" }
+                }
+              },
+              "example": { "action": "reduce_exposure", "fromToken": "MEME", "toToken": "USDC", "percent": 10, "riskScore": 40, "estimatedValueUsd": 100, "network": "GOAT Network", "simulationStatus": "passed" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Execution preview / Execution agent result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentResult" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "403": { "description": "Auto-execute policy rejected the request (server never auto-executes).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/agents/news": {
+      "post": {
+        "operationId": "postAgentsNews",
+        "summary": "Run the News Oracle agent for a token identity.",
+        "tags": ["agents"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tokenName": { "type": "string", "maxLength": 120 },
+                  "symbol": { "type": "string", "maxLength": 32 },
+                  "contractAddress": { "type": "string" },
+                  "projectName": { "type": "string", "maxLength": 120 },
+                  "websiteUrl": { "type": "string", "format": "uri" },
+                  "chain": { "type": "string", "maxLength": 40 }
+                }
+              },
+              "example": { "symbol": "GOAT", "tokenName": "Goat Token", "chain": "base" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "News agent result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentResult" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/agents/onchain": {
+      "post": {
+        "operationId": "postAgentsOnchain",
+        "summary": "Run the Contract Guard onchain agent for a chain + contract/asset.",
+        "description": "Migrated to the stable error contract: validation failures include both `error` (legacy) and `code`/`message`/`retryable`/`requestId` (stable).",
+        "tags": ["agents"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "chain": { "type": "string", "maxLength": 40 },
+                  "contractAddress": { "type": "string", "maxLength": 128 },
+                  "symbol": { "type": "string", "maxLength": 32 },
+                  "issuer": { "type": "string", "maxLength": 64 },
+                  "assetKey": { "type": "string", "maxLength": 180 },
+                  "assetType": { "type": "string", "enum": ["native", "classic", "contract", "issuer_account"] }
+                }
+              },
+              "example": { "chain": "base", "contractAddress": "0x3333333333333333333333333333333333333333" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Onchain agent result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentResult" } } } },
+          "400": { "$ref": "#/components/responses/MigratedValidationError400" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/agents/portfolio": {
+      "post": {
+        "operationId": "postAgentsPortfolio",
+        "summary": "Run the Portfolio Keeper agent for a connected wallet.",
+        "tags": ["agents"],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "walletAddress": { "type": "string" } } }, "example": { "walletAddress": "0x1111111111111111111111111111111111111111" } } }
+        },
+        "responses": {
+          "200": { "description": "Portfolio agent result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentResult" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/agents/social": {
+      "post": {
+        "operationId": "postAgentsSocial",
+        "summary": "Run the Social Scout agent for a token/project's social presence.",
+        "tags": ["agents"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": { "type": "string", "maxLength": 80 },
+                  "symbol": { "type": "string", "maxLength": 32 },
+                  "tokenName": { "type": "string", "maxLength": 120 },
+                  "contractAddress": { "type": "string" },
+                  "websiteUrl": { "type": "string", "format": "uri" },
+                  "twitterUrl": { "type": "string", "format": "uri" },
+                  "telegramUrl": { "type": "string", "format": "uri" },
+                  "discordUrl": { "type": "string", "format": "uri" },
+                  "dexScreenerPairUrl": { "type": "string", "format": "uri" },
+                  "coingeckoId": { "type": "string", "maxLength": 80 }
+                }
+              },
+              "example": { "symbol": "GOAT", "tokenName": "Goat Token", "twitterUrl": "https://x.com/official_goat" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Social agent result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentResult" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/scan/token": {
+      "post": {
+        "operationId": "postScanToken",
+        "summary": "Run the composite token risk scan (onchain + news + social + portfolio + decision).",
+        "description": "Migrated to the stable error contract: validation failures include both `error` (legacy) and `code`/`message`/`retryable`/`requestId` (stable).",
+        "tags": ["scan"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                  "query": { "type": "string", "minLength": 1, "maxLength": 260, "description": "Contract address, pair URL, or symbol to scan." },
+                  "chain": { "type": "string", "maxLength": 40 },
+                  "walletAddress": { "type": "string", "maxLength": 80 }
+                }
+              },
+              "example": { "query": "0x3333333333333333333333333333333333333333", "chain": "base" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Full risk report for the scanned asset.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/GenericObject" },
+                "example": { "query": "0x3333333333333333333333333333333333333333", "requestedChain": "base", "decision": { "recommendedAction": "hold", "riskScore": 18 }, "agentCards": [] }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/MigratedValidationError400" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/watchlist": {
+      "get": {
+        "operationId": "getWatchlist",
+        "summary": "List the session wallet's watchlist entries.",
+        "tags": ["watchlist"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }],
+        "responses": {
+          "200": { "description": "Watchlist entries for the wallet.", "content": { "application/json": { "schema": { "type": "object", "properties": { "entries": { "type": "array", "items": { "$ref": "#/components/schemas/GenericObject" } } } } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "401": { "$ref": "#/components/responses/Unauthorized401" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      },
+      "post": {
+        "operationId": "postWatchlist",
+        "summary": "Add or remove an entry from the session wallet's watchlist.",
+        "description": "Discriminated by the `action` field: `add` (default) or `remove`.",
+        "tags": ["watchlist"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": ["chain"],
+                    "properties": {
+                      "action": { "type": "string", "enum": ["add"], "default": "add" },
+                      "walletAddress": { "type": "string", "maxLength": 80 },
+                      "chain": { "type": "string", "minLength": 1, "maxLength": 40 },
+                      "network": { "type": "string", "maxLength": 40 },
+                      "contractAddress": { "type": "string", "maxLength": 80 },
+                      "pairAddress": { "type": "string", "maxLength": 120 },
+                      "symbol": { "type": "string", "maxLength": 32 },
+                      "tokenName": { "type": "string", "maxLength": 120 },
+                      "assetKey": { "type": "string", "maxLength": 180 },
+                      "issuer": { "type": "string", "maxLength": 64 },
+                      "assetType": { "type": "string", "enum": ["native", "classic", "contract", "issuer_account", "sac", "sep41"] },
+                      "source": { "type": "string", "enum": ["dexscreener", "stellar_market", "manual"], "default": "manual" },
+                      "note": { "type": "string", "maxLength": 280 }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": ["action", "entryId"],
+                    "properties": {
+                      "action": { "type": "string", "enum": ["remove"] },
+                      "entryId": { "type": "string", "minLength": 1, "maxLength": 120 },
+                      "walletAddress": { "type": "string", "maxLength": 80 }
+                    }
+                  }
+                ]
+              },
+              "examples": {
+                "add": { "value": { "action": "add", "chain": "base", "contractAddress": "0x3333333333333333333333333333333333333333", "symbol": "GOAT" } },
+                "remove": { "value": { "action": "remove", "entryId": "watch_abc123" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Entry added/removed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "401": { "$ref": "#/components/responses/Unauthorized401" },
+          "404": { "$ref": "#/components/responses/NotFound404" },
+          "422": { "description": "Entry could not be added (e.g. duplicate/invalid combination).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/watchlist/{id}/rescan": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "getWatchlistHistory",
+        "summary": "List rescan history for a watchlist entry owned by the session wallet.",
+        "tags": ["watchlist"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }],
+        "responses": {
+          "200": { "description": "Rescan run history.", "content": { "application/json": { "schema": { "type": "object", "properties": { "runs": { "type": "array", "items": { "$ref": "#/components/schemas/GenericObject" } } } } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "401": { "$ref": "#/components/responses/Unauthorized401" },
+          "404": { "$ref": "#/components/responses/NotFound404" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      },
+      "post": {
+        "operationId": "postWatchlistRescan",
+        "summary": "Re-run the risk scan for a watchlist entry owned by the session wallet.",
+        "tags": ["watchlist"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "requestBody": {
+          "required": false,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "walletAddress": { "type": "string", "maxLength": 80 } } } } }
+        },
+        "responses": {
+          "200": { "description": "Updated entry with a fresh classification.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "401": { "$ref": "#/components/responses/Unauthorized401" },
+          "404": { "$ref": "#/components/responses/NotFound404" },
+          "429": { "$ref": "#/components/responses/RateLimited429" },
+          "500": { "description": "Rescan failed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } }
+        }
+      }
+    },
+    "/discovery/candidates": {
+      "post": {
+        "operationId": "postDiscoveryCandidates",
+        "summary": "List live discovery candidates from a market data provider.",
+        "tags": ["discovery"],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "chain": { "type": "string", "maxLength": 64 }, "provider": { "type": "string", "enum": ["dexscreener", "stellar_market", "manual"], "default": "manual" } } },
+              "example": { "chain": "base", "provider": "dexscreener" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Discovery candidates and their origin.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/discovery/classify": {
+      "post": {
+        "operationId": "postDiscoveryClassify",
+        "summary": "Classify a single discovery candidate (lightweight, no full scan persistence).",
+        "tags": ["discovery"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["candidate"],
+                "properties": {
+                  "candidate": {
+                    "type": "object",
+                    "required": ["chain"],
+                    "properties": {
+                      "id": { "type": "string", "maxLength": 120 },
+                      "chain": { "type": "string", "minLength": 1, "maxLength": 40 },
+                      "contractAddress": { "type": "string", "maxLength": 80 },
+                      "pairAddress": { "type": "string", "maxLength": 120 },
+                      "symbol": { "type": "string", "maxLength": 32 },
+                      "tokenName": { "type": "string", "maxLength": 120 },
+                      "assetKey": { "type": "string", "maxLength": 180 },
+                      "issuer": { "type": "string", "maxLength": 64 },
+                      "assetType": { "type": "string", "enum": ["native", "classic", "contract", "issuer_account"] },
+                      "source": { "type": "string", "enum": ["dexscreener", "stellar_market", "manual"], "default": "manual" },
+                      "metrics": { "type": "object", "additionalProperties": { "oneOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] } }
+                    }
+                  },
+                  "walletAddress": { "type": "string", "maxLength": 80 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Classification summary.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "403": { "description": "Auto-execute policy blocked the request.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" },
+          "500": { "description": "Classification failed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } }
+        }
+      }
+    },
+    "/discovery/scan": {
+      "post": {
+        "operationId": "postDiscoveryScan",
+        "summary": "Run and persist a full discovery scan for a candidate.",
+        "tags": ["discovery"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["candidate"],
+                "properties": {
+                  "candidate": {
+                    "type": "object",
+                    "required": ["chain"],
+                    "properties": {
+                      "id": { "type": "string", "maxLength": 120 },
+                      "chain": { "type": "string", "minLength": 1, "maxLength": 40 },
+                      "contractAddress": { "type": "string", "maxLength": 80 },
+                      "pairAddress": { "type": "string", "maxLength": 120 },
+                      "pairUrl": { "type": "string", "format": "uri" },
+                      "symbol": { "type": "string", "maxLength": 32 },
+                      "tokenName": { "type": "string", "maxLength": 120 },
+                      "assetKey": { "type": "string", "maxLength": 180 },
+                      "issuer": { "type": "string", "maxLength": 64 },
+                      "assetType": { "type": "string", "enum": ["native", "classic", "contract", "issuer_account"] },
+                      "source": { "type": "string", "enum": ["dexscreener", "stellar_market", "manual"], "default": "manual" },
+                      "sourceUrl": { "type": "string", "format": "uri" },
+                      "discoveredAt": { "type": "string", "format": "date-time" },
+                      "metrics": {
+                        "type": "object",
+                        "properties": {
+                          "liquidityUsd": { "type": "number", "minimum": 0 },
+                          "volume24hUsd": { "type": "number", "minimum": 0 },
+                          "fdvUsd": { "type": "number", "minimum": 0 },
+                          "fdvLiquidityRatio": { "type": "number", "minimum": 0 },
+                          "priceChange24hPercent": { "type": "number" },
+                          "pairAgeDays": { "type": "number", "minimum": 0 }
+                        }
+                      },
+                      "raw": { "type": "object", "additionalProperties": true }
+                    }
+                  },
+                  "walletAddress": { "type": "string", "maxLength": 80 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Full discovery scan result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "403": { "description": "Auto-execute policy blocked the request.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" },
+          "500": { "description": "Discovery scan failed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } }
+        }
+      }
+    },
+    "/execute/prepare": {
+      "post": {
+        "operationId": "postExecutePrepare",
+        "summary": "Build an execution preview and persist a `prepared` transaction record (idempotent).",
+        "tags": ["execute"],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "walletAddress": { "type": "string" },
+                  "chainFamily": { "$ref": "#/components/schemas/ChainFamily" },
+                  "network": { "type": "string" },
+                  "idempotencyKey": { "type": "string", "maxLength": 160 },
+                  "action": { "type": "string" },
+                  "decisionId": { "type": "string" },
+                  "fromToken": { "type": "string" },
+                  "toToken": { "type": "string" },
+                  "percent": { "type": "number", "minimum": 0, "maximum": 100 },
+                  "riskScore": { "type": "number", "minimum": 0, "maximum": 100 },
+                  "estimatedValueUsd": { "type": "number", "minimum": 0 },
+                  "slippageBps": { "type": "number", "minimum": 0, "maximum": 10000 },
+                  "priceImpactBps": { "type": "number", "minimum": 0 },
+                  "gasEstimateUsd": { "type": "number", "minimum": 0 },
+                  "quoteAvailable": { "type": "boolean" },
+                  "expectedOutputAmount": { "type": "number", "minimum": 0 },
+                  "simulationStatus": { "$ref": "#/components/schemas/SimulationStatus" },
+                  "simulationRevertReason": { "type": "string" },
+                  "sourceAccount": { "type": "string" },
+                  "expectedEffects": { "type": "array", "items": { "$ref": "#/components/schemas/ExpectedEffect" } }
+                }
+              },
+              "example": { "walletAddress": "0xabc", "chainFamily": "evm", "network": "GOAT Network", "action": "reduce_exposure", "fromToken": "MEME", "toToken": "USDC", "percent": 10, "riskScore": 40, "estimatedValueUsd": 50, "simulationStatus": "passed", "idempotencyKey": "idem_prepare_route" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Execution preview plus the prepared transaction lifecycle record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "403": { "description": "Auto-execute policy failed (server never auto-executes).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/execute/submit": {
+      "post": {
+        "operationId": "postExecuteSubmit",
+        "summary": "Submit an already-signed transaction payload for broadcast tracking.",
+        "description": "Never signs on the server; `signedPayload` must already be signed by the user's wallet. Duplicate hashes/idempotency keys are handled idempotently.",
+        "tags": ["execute"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["chainFamily", "network", "walletAddress", "signedPayload", "asset"],
+                "properties": {
+                  "chainFamily": { "$ref": "#/components/schemas/ChainFamily" },
+                  "network": { "type": "string", "minLength": 1, "maxLength": 64 },
+                  "walletAddress": { "type": "string", "minLength": 1 },
+                  "sourceAccount": { "type": "string" },
+                  "signedPayload": { "type": "string", "minLength": 10, "maxLength": 200000 },
+                  "decisionId": { "type": "string" },
+                  "decisionAction": { "$ref": "#/components/schemas/RecommendedAction" },
+                  "asset": { "type": "string", "minLength": 1, "maxLength": 80 },
+                  "valueUsd": { "type": "number", "minimum": 0 },
+                  "simulationStatus": { "$ref": "#/components/schemas/SimulationStatus" },
+                  "policyStatus": { "$ref": "#/components/schemas/PolicyStatus" },
+                  "expectedEffects": { "type": "array", "items": { "$ref": "#/components/schemas/ExpectedEffect" } },
+                  "idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 160 }
+                }
+              },
+              "example": { "chainFamily": "stellar", "network": "stellar-testnet", "walletAddress": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "signedPayload": "7777777777777777777777777777777777777777777777777777777777777777", "asset": "GOAT", "idempotencyKey": "idem_route_stellar" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Submission report and the resulting transaction record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "description": "Validation failed, or chain family/network/address mismatch.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "403": { "description": "Source account does not match the connected wallet.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "404": { "$ref": "#/components/responses/NotFound404" },
+          "429": { "$ref": "#/components/responses/RateLimited429" },
+          "502": { "$ref": "#/components/responses/ProviderError502" }
+        }
+      }
+    },
+    "/execute/confirm": {
+      "post": {
+        "operationId": "postExecuteConfirm",
+        "summary": "Confirm/verify an externally-broadcast transaction hash and persist its lifecycle status.",
+        "tags": ["execute"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletAddress", "txHash", "userApproved"],
+                "properties": {
+                  "decisionId": { "type": "string" },
+                  "walletAddress": { "type": "string", "minLength": 1 },
+                  "decisionWalletAddress": { "type": "string" },
+                  "chainFamily": { "$ref": "#/components/schemas/ChainFamily" },
+                  "txHash": { "type": "string", "minLength": 1 },
+                  "userApproved": { "type": "boolean", "enum": [true], "description": "Must be exactly `true`; the confirm route always requires explicit user approval." },
+                  "network": { "type": "string" },
+                  "action": { "type": "string", "enum": ["hold", "watch", "reduce_exposure", "swap_to_stable", "avoid", "manual_review", "prepare_transaction", "create_trustline", "no_action"] },
+                  "asset": { "type": "string" },
+                  "valueUsd": { "type": "number", "minimum": 0 },
+                  "riskScore": { "type": "number", "minimum": 0, "maximum": 100 },
+                  "sourceAccount": { "type": "string" },
+                  "simulationStatus": { "$ref": "#/components/schemas/SimulationStatus" },
+                  "policyAllowed": { "type": "boolean" },
+                  "policyViolations": { "type": "array", "items": { "type": "string" } },
+                  "expectedEffects": { "type": "array", "items": { "$ref": "#/components/schemas/ExpectedEffect" } },
+                  "idempotencyKey": { "type": "string" },
+                  "stellarSequenceNumber": { "type": "string" },
+                  "stellarFeeCharged": { "type": "number" },
+                  "stellarOperationCount": { "type": "number" },
+                  "stellarLedger": { "type": "number" },
+                  "stellarEnvelopeXdr": { "type": "string" },
+                  "stellarResultXdr": { "type": "string" },
+                  "stellarTrustlineAsset": { "type": "string" }
+                }
+              },
+              "example": { "decisionId": "decision_fixture", "walletAddress": "0xabc", "txHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "userApproved": true, "network": "GOAT Network", "action": "reduce_exposure", "asset": "MEME", "valueUsd": 25, "simulationStatus": "passed", "policyAllowed": true }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Confirmation report. `pendingVerification: true` means the on-chain verifier could not yet reach a terminal answer; retry the poll endpoint.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" }, "example": { "success": true, "pendingVerification": false, "transaction": { "hash": "0xbb..bb", "lifecycleStatus": "confirmed" } } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "403": { "description": "Simulation not passed for a high-risk action, or wallet mismatch.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/execute/reject": {
+      "post": {
+        "operationId": "postExecuteReject",
+        "summary": "Record that the user rejected a prepared/submitted transaction in their wallet.",
+        "tags": ["execute"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["txHash"],
+                "properties": {
+                  "txHash": { "type": "string", "minLength": 1 },
+                  "walletAddress": { "type": "string" },
+                  "decisionWalletAddress": { "type": "string" },
+                  "reason": { "type": "string", "maxLength": 280 },
+                  "source": { "type": "string", "enum": ["wallet", "frontend"] },
+                  "network": { "type": "string" },
+                  "chainFamily": { "$ref": "#/components/schemas/ChainFamily" }
+                }
+              },
+              "example": { "txHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1", "walletAddress": "0xabc", "reason": "User clicked reject in wallet.", "source": "wallet" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "The transaction was marked `user_rejected`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "description": "Validation failed or txHash does not match the chain family.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "403": { "description": "Wallet does not match the transaction/decision wallet.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "404": { "$ref": "#/components/responses/NotFound404" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/execute/transactions/{hash}": {
+      "parameters": [{ "name": "hash", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "getExecuteTransaction",
+        "summary": "Poll a transaction's current lifecycle status and events.",
+        "tags": ["execute"],
+        "parameters": [{ "name": "network", "in": "query", "required": false, "schema": { "type": "string" } }],
+        "responses": {
+          "200": {
+            "description": "Current transaction record, poll outcome, and lifecycle events.",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "transaction": { "$ref": "#/components/schemas/TransactionRecord" }, "polled": { "type": "boolean" }, "terminalReached": { "type": "boolean" }, "events": { "type": "array", "items": { "$ref": "#/components/schemas/TransactionLifecycleEvent" } } } }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "404": { "$ref": "#/components/responses/NotFound404" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Service health: environment, storage, agent readiness, alert engine, and runtime mode.",
+        "tags": ["health"],
+        "responses": {
+          "200": {
+            "description": "Composite health snapshot.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" }, "example": { "ok": true, "service": "golden-raccoon", "mockFallbacksEnabled": false, "liveModeUsesMockData": false, "checkedAt": "2026-07-29T12:00:00.000Z" } } }
+          }
+        }
+      }
+    },
+    "/portfolio": {
+      "get": {
+        "operationId": "getPortfolio",
+        "summary": "Get a wallet's portfolio snapshot (holdings, risk score, native balance).",
+        "tags": ["portfolio"],
+        "parameters": [
+          { "name": "walletAddress", "in": "query", "required": false, "schema": { "type": "string" }, "description": "EVM 0x address or Stellar G-address." },
+          { "$ref": "#/components/parameters/ChainQuery" }
+        ],
+        "responses": {
+          "200": { "description": "Portfolio snapshot.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/portfolio/health": {
+      "get": {
+        "operationId": "getPortfolioHealth",
+        "summary": "Portfolio provider health and fallback order.",
+        "tags": ["portfolio", "health"],
+        "responses": {
+          "200": { "description": "Portfolio provider health snapshot.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } }
+        }
+      }
+    },
+    "/rules": {
+      "get": {
+        "operationId": "getRules",
+        "summary": "Get a wallet's stored trading/risk rules (or defaults if none saved).",
+        "tags": ["rules"],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }],
+        "responses": {
+          "200": { "description": "User rule record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      },
+      "post": {
+        "operationId": "postRules",
+        "summary": "Create or update a wallet's trading/risk rules.",
+        "description": "`autoExecute` is always persisted as `false`; the server never enables unattended execution regardless of the request payload.",
+        "tags": ["rules"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletAddress", "maxRiskScore", "maxTradePercent", "maxMemeExposurePercent", "autoExecute"],
+                "properties": {
+                  "walletAddress": { "type": "string", "minLength": 1 },
+                  "maxRiskScore": { "type": "number", "minimum": 0, "maximum": 100 },
+                  "maxTradePercent": { "type": "number", "minimum": 0, "maximum": 100 },
+                  "maxMemeExposurePercent": { "type": "number", "minimum": 0, "maximum": 100 },
+                  "maxDailyTransactionValueUsd": { "type": "number", "minimum": 0 },
+                  "maxSlippageBps": { "type": "number", "minimum": 0, "maximum": 10000 },
+                  "minStableReservePercent": { "type": "number", "minimum": 0, "maximum": 100 },
+                  "allowedChains": { "type": "array", "items": { "type": "string" } },
+                  "blockedTokens": { "type": "array", "items": { "type": "string" } },
+                  "blockedIssuers": { "type": "array", "items": { "type": "string" } },
+                  "blockedCategories": { "type": "array", "items": { "type": "string" } },
+                  "allowedActions": { "type": "array", "items": { "$ref": "#/components/schemas/RecommendedAction" } },
+                  "autoExecute": { "type": "boolean" },
+                  "version": { "type": "integer", "minimum": 1 },
+                  "createdAt": { "type": "string", "format": "date-time" }
+                }
+              },
+              "example": { "walletAddress": "0xabc", "maxRiskScore": 60, "maxTradePercent": 20, "maxMemeExposurePercent": 10, "autoExecute": false }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Saved user rule record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "403": { "description": "Execution policy failed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/transactions": {
+      "get": {
+        "operationId": "getTransactions",
+        "summary": "List a wallet's transaction records (no lifecycle events attached).",
+        "tags": ["execute", "history"],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }],
+        "responses": {
+          "200": { "description": "Transaction records.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/TransactionRecord" } } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/history/transactions": {
+      "get": {
+        "operationId": "getHistoryTransactions",
+        "summary": "List a wallet's transaction records enriched with lifecycle events and explorer URLs.",
+        "tags": ["history"],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }],
+        "responses": {
+          "200": {
+            "description": "Enriched transaction records.",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "allOf": [{ "$ref": "#/components/schemas/TransactionRecord" }, { "type": "object", "properties": { "events": { "type": "array", "items": { "$ref": "#/components/schemas/TransactionLifecycleEvent" } } } }] } } } }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/history/agent-runs": {
+      "get": {
+        "operationId": "getAgentRuns",
+        "summary": "List stored agent run records for a wallet.",
+        "tags": ["history"],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }],
+        "responses": {
+          "200": { "description": "Agent run records.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/GenericObject" } } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      },
+      "post": {
+        "operationId": "postAgentRun",
+        "summary": "Persist a new agent run record and schedule alert-observation ingestion.",
+        "tags": ["history"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletAddress", "results"],
+                "properties": {
+                  "walletAddress": { "type": "string", "minLength": 1 },
+                  "mode": { "type": "string", "enum": ["portfolio_review", "token_scan", "pre_buy_check", "holding_review", "execution_prepare"] },
+                  "inputSnapshot": { "type": "object", "additionalProperties": true },
+                  "targetToken": {
+                    "type": "object",
+                    "properties": {
+                      "symbol": { "type": "string" },
+                      "name": { "type": "string" },
+                      "tokenAddress": { "type": "string" },
+                      "chain": { "type": "string" },
+                      "riskScore": { "type": "number", "minimum": 0, "maximum": 100 },
+                      "allocationPercent": { "type": "number", "minimum": 0, "maximum": 100 }
+                    }
+                  },
+                  "results": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/AgentResult" } },
+                  "userAction": { "type": "string", "enum": ["pending", "approved", "rejected", "adjusted", "executed"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Created agent run record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/history/agent-runs/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "getAgentRun",
+        "summary": "Get a single agent run record by id.",
+        "tags": ["history"],
+        "responses": {
+          "200": { "description": "Agent run record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "404": { "$ref": "#/components/responses/NotFound404" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/history/approvals": {
+      "get": {
+        "operationId": "getApprovals",
+        "summary": "List approval records for a wallet.",
+        "tags": ["history"],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }],
+        "responses": {
+          "200": { "description": "Approval records.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/GenericObject" } } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/history/approvals/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "patch": {
+        "operationId": "patchApproval",
+        "summary": "Update an approval record's status (and optionally attach/update the linked transaction).",
+        "tags": ["history"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["status"],
+                "properties": {
+                  "status": { "type": "string", "enum": ["prepared", "user_rejected", "submitted", "confirmed", "failed", "replaced", "expired", "pending"] },
+                  "txHash": { "type": "string" },
+                  "reason": { "type": "string" },
+                  "stellarSequenceNumber": { "type": "string" },
+                  "stellarFeeCharged": { "type": "number" },
+                  "stellarOperationCount": { "type": "number" },
+                  "stellarLedger": { "type": "number" },
+                  "stellarResultXdr": { "type": "string" }
+                }
+              },
+              "example": { "status": "confirmed", "txHash": "0xbb..bb" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Updated approval status.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "404": { "$ref": "#/components/responses/NotFound404" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/history/recommendations": {
+      "get": {
+        "operationId": "getRecommendations",
+        "summary": "List stored recommendation records for a wallet.",
+        "tags": ["history"],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }],
+        "responses": {
+          "200": { "description": "Recommendation records.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/GenericObject" } } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/alerts": {
+      "get": {
+        "operationId": "getDiscoveryAlerts",
+        "summary": "List discovery-pipeline alerts for a wallet.",
+        "description": "Legacy discovery-alert list, distinct from `/alerts/alerts` (rule-engine alerts).",
+        "tags": ["alerts"],
+        "parameters": [{ "name": "walletAddress", "in": "query", "required": true, "schema": { "type": "string", "minLength": 1 } }],
+        "responses": {
+          "200": { "description": "Discovery alerts.", "content": { "application/json": { "schema": { "type": "object", "properties": { "alerts": { "type": "array", "items": { "$ref": "#/components/schemas/GenericObject" } } } } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      },
+      "post": {
+        "operationId": "postDiscoveryAlertAcknowledge",
+        "summary": "Acknowledge a discovery-pipeline alert.",
+        "tags": ["alerts"],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["action", "alertId"], "properties": { "action": { "type": "string", "enum": ["acknowledge"] }, "alertId": { "type": "string", "minLength": 1, "maxLength": 120 } } } } }
+        },
+        "responses": {
+          "200": { "description": "Acknowledged alert.", "content": { "application/json": { "schema": { "type": "object", "properties": { "alert": { "$ref": "#/components/schemas/GenericObject" } } } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "404": { "$ref": "#/components/responses/NotFound404" },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/alerts/rules": {
+      "get": {
+        "operationId": "getAlertRules",
+        "summary": "List the session wallet's alert rules (seeded with defaults on first read).",
+        "tags": ["alerts"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }],
+        "responses": {
+          "200": { "description": "Alert rules.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/GenericObject" } } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized401" }
+        }
+      },
+      "post": {
+        "operationId": "postAlertRule",
+        "summary": "Create or update an alert rule for the session wallet.",
+        "tags": ["alerts"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletAddress", "triggerType", "threshold"],
+                "properties": {
+                  "walletAddress": { "type": "string", "minLength": 1 },
+                  "triggerType": {
+                    "type": "string",
+                    "enum": ["critical_risk", "liquidity_drop", "holder_concentration_change", "tax_control_change", "phishing_detected", "exploit_news", "portfolio_concentration", "stable_reserve_change", "stellar_issuer_auth", "stellar_clawback", "stellar_trustline", "stellar_contract_ttl", "rpc_degradation"]
+                  },
+                  "observationKey": { "type": "string", "maxLength": 160 },
+                  "threshold": { "type": "number" },
+                  "hysteresis": { "type": "number", "minimum": 0, "default": 0 },
+                  "cooldownMinutes": { "type": "number", "minimum": 0, "maximum": 1440, "default": 60 },
+                  "direction": { "type": "string", "enum": ["high_is_bad", "low_is_bad"] },
+                  "severity": { "$ref": "#/components/schemas/RiskLevel" },
+                  "enabled": { "type": "boolean", "default": true }
+                }
+              },
+              "example": { "walletAddress": "0xabc", "triggerType": "critical_risk", "threshold": 80, "severity": "critical" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Saved alert rule.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "401": { "$ref": "#/components/responses/Unauthorized401" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAlertRule",
+        "summary": "Delete an alert rule owned by the session wallet.",
+        "tags": ["alerts"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/WalletAddressQuery" }
+        ],
+        "responses": {
+          "200": { "description": "Deletion result.", "content": { "application/json": { "schema": { "type": "object", "properties": { "deleted": { "type": "boolean" } } } } } },
+          "400": { "description": "Missing `id` query parameter.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized401" },
+          "403": { "$ref": "#/components/responses/Forbidden403" },
+          "404": { "$ref": "#/components/responses/NotFound404" }
+        }
+      }
+    },
+    "/alerts/alerts": {
+      "get": {
+        "operationId": "getAlerts",
+        "summary": "List triggered/recovered/acknowledged rule-engine alerts for the session wallet, enriched with delivery and observation counts.",
+        "tags": ["alerts"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/WalletAddressQuery" },
+          { "name": "status", "in": "query", "required": false, "schema": { "type": "string", "enum": ["triggered", "recovered", "acknowledged"] } },
+          { "$ref": "#/components/parameters/LimitQuery" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Enriched alerts with counts.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "walletAddress": { "type": "string" }, "alerts": { "type": "array", "items": { "$ref": "#/components/schemas/GenericObject" } }, "counts": { "type": "object", "properties": { "triggered": { "type": "integer" }, "recovered": { "type": "integer" }, "acknowledged": { "type": "integer" } } } } } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "401": { "$ref": "#/components/responses/Unauthorized401" }
+        }
+      }
+    },
+    "/alerts/alerts/{id}/acknowledge": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "operationId": "postAlertAcknowledge",
+        "summary": "Acknowledge a triggered rule-engine alert owned by the session wallet.",
+        "tags": ["alerts"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "requestBody": {
+          "required": false,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "walletAddress": { "type": "string" } }, "additionalProperties": true } } }
+        },
+        "responses": {
+          "200": { "description": "Alert (already acknowledged, or newly acknowledged).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "401": { "$ref": "#/components/responses/Unauthorized401" },
+          "404": { "$ref": "#/components/responses/NotFound404" },
+          "409": { "description": "Alert already recovered; cannot acknowledge.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } }
+        }
+      }
+    },
+    "/alerts/observations": {
+      "get": {
+        "operationId": "getAlertObservations",
+        "summary": "List raw alert-threshold observations for the session wallet.",
+        "tags": ["alerts"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }, { "$ref": "#/components/parameters/LimitQuery" }],
+        "responses": {
+          "200": { "description": "Observations, most recent first.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/GenericObject" } } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "401": { "$ref": "#/components/responses/Unauthorized401" }
+        }
+      }
+    },
+    "/alerts/observations/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "getAlertObservation",
+        "summary": "Get a single observation owned by the session wallet.",
+        "tags": ["alerts"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }],
+        "responses": {
+          "200": { "description": "Observation record.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized401" },
+          "404": { "$ref": "#/components/responses/NotFound404" }
+        }
+      }
+    },
+    "/alerts/deliveries": {
+      "get": {
+        "operationId": "getAlertDeliveries",
+        "summary": "List alert delivery attempts for the session wallet, optionally filtered by alert id.",
+        "tags": ["alerts"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }, { "name": "alertId", "in": "query", "required": false, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Delivery attempts.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/GenericObject" } } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "401": { "$ref": "#/components/responses/Unauthorized401" }
+        }
+      }
+    },
+    "/auto-mode": {
+      "get": {
+        "operationId": "getAutoMode",
+        "summary": "Get the session wallet's auto-mode policy snapshot and activation prerequisites.",
+        "tags": ["auto-mode"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/WalletAddressQuery" }],
+        "responses": {
+          "200": { "description": "Auto-mode snapshot.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized401" }
+        }
+      },
+      "put": {
+        "operationId": "putAutoMode",
+        "summary": "Save the session wallet's auto-mode policy (does not itself enable auto-mode; see /auto-mode/authorization).",
+        "tags": ["auto-mode"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletAddress", "policy", "requestedEnabled", "explanationAccepted"],
+                "properties": {
+                  "walletAddress": { "type": "string", "minLength": 1, "maxLength": 120 },
+                  "policy": {
+                    "type": "object",
+                    "required": ["schemaVersion", "policyVersion", "walletAddress", "maxDailyValueUsd", "maxRiskScore", "maxTradePercent", "maxSlippageBps", "maxPriceImpactBps", "allowedChains", "allowedAssets", "minStableReservePercent", "stopConditions"],
+                    "properties": {
+                      "schemaVersion": { "type": "integer" },
+                      "policyVersion": { "type": "integer", "minimum": 1 },
+                      "walletAddress": { "type": "string", "minLength": 1, "maxLength": 120 },
+                      "maxDailyValueUsd": { "type": "number", "exclusiveMinimum": 0 },
+                      "maxRiskScore": { "type": "number", "minimum": 0, "maximum": 100 },
+                      "maxTradePercent": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+                      "maxSlippageBps": { "type": "number", "minimum": 0, "maximum": 10000 },
+                      "maxPriceImpactBps": { "type": "number", "minimum": 0, "maximum": 10000 },
+                      "allowedChains": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 50 },
+                      "allowedAssets": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 250 },
+                      "minStableReservePercent": { "type": "number", "minimum": 0, "maximum": 100 },
+                      "stopConditions": {
+                        "type": "object",
+                        "required": ["stopLossPercent", "takeProfitPercent", "pauseOnCriticalRisk", "pauseOnSourceCoverageLoss"],
+                        "properties": {
+                          "stopLossPercent": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+                          "takeProfitPercent": { "type": "number", "exclusiveMinimum": 0 },
+                          "pauseOnCriticalRisk": { "type": "boolean", "enum": [true] },
+                          "pauseOnSourceCoverageLoss": { "type": "boolean", "enum": [true] }
+                        }
+                      }
+                    }
+                  },
+                  "requestedEnabled": { "type": "boolean" },
+                  "explanationAccepted": { "type": "boolean" },
+                  "confirmExpansion": { "type": "boolean", "default": false }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Updated auto-mode snapshot.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "description": "Invalid policy payload.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized401" },
+          "403": { "description": "Policy wallet does not match the session wallet.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "409": { "description": "Policy expands authority; explicit confirmation required before saving.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } }
+        }
+      }
+    },
+    "/auto-mode/authorization": {
+      "post": {
+        "operationId": "postAutoModeAuthorization",
+        "summary": "Authorize, cancel, or reject auto-mode for the session wallet.",
+        "description": "Authorization currently always fails with 409 until durable storage, shared execution enforcement, independent contract verification, and a policy-bound wallet signature are integrated; this is an intentional safety gate, not a bug.",
+        "tags": ["auto-mode"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": ["action", "walletAddress", "confirmationPhrase", "allowanceUsd", "expiresAt"],
+                    "properties": {
+                      "action": { "type": "string", "enum": ["authorize"] },
+                      "walletAddress": { "type": "string", "minLength": 1, "maxLength": 120 },
+                      "confirmationPhrase": { "type": "string", "enum": ["AUTHORIZE AUTO MODE"] },
+                      "allowanceUsd": { "type": "number", "exclusiveMinimum": 0 },
+                      "expiresAt": { "type": "string", "format": "date-time" }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": ["action", "walletAddress"],
+                    "properties": { "action": { "type": "string", "enum": ["cancel", "reject"] }, "walletAddress": { "type": "string", "minLength": 1, "maxLength": 120 } }
+                  }
+                ]
+              },
+              "example": { "action": "authorize", "walletAddress": "0xabc", "confirmationPhrase": "AUTHORIZE AUTO MODE", "allowanceUsd": 100, "expiresAt": "2026-08-01T00:00:00.000Z" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Updated auto-mode snapshot (cancel/reject).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "description": "Invalid authorization payload.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized401" },
+          "409": { "description": "Activation prerequisites incomplete, or contract unverified.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } }
+        }
+      }
+    },
+    "/wallet-session/nonce": {
+      "post": {
+        "operationId": "postWalletSessionNonce",
+        "summary": "Mint a wallet-ownership challenge (nonce) and set a short-lived challenge cookie.",
+        "tags": ["wallet-session"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletAddress", "family"],
+                "properties": {
+                  "walletAddress": { "type": "string", "minLength": 1, "maxLength": 120 },
+                  "family": { "$ref": "#/components/schemas/ChainFamily" },
+                  "network": { "type": "string", "maxLength": 120 }
+                }
+              },
+              "example": { "walletAddress": "0x1111111111111111111111111111111111111111", "family": "evm" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Challenge nonce and (family-specific) challenge payload to sign.",
+            "headers": { "Set-Cookie": { "schema": { "type": "string" }, "description": "Short-lived signed challenge cookie." } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" }, "example": { "nonce": "n_abc123", "family": "evm", "walletAddress": "0x1111111111111111111111111111111111111111", "issuedAt": "2026-07-29T12:00:00.000Z", "expiresAt": "2026-07-29T12:05:00.000Z", "network": null, "challenge": "Sign this message to prove wallet ownership. Nonce: n_abc123" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "503": { "description": "Wallet-session cookie signing is not configured.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } }
+        }
+      }
+    },
+    "/wallet-session": {
+      "get": {
+        "operationId": "getWalletSession",
+        "summary": "Read the current wallet session (or `null` if not signed in).",
+        "tags": ["wallet-session"],
+        "security": [{ "WalletSessionCookieAuth": [] }],
+        "responses": {
+          "200": { "description": "Current session wallet, or `null`.", "content": { "application/json": { "schema": { "type": "object", "properties": { "walletAddress": { "type": ["string", "null"] } } }, "example": { "walletAddress": "0x1111111111111111111111111111111111111111" } } } }
+        }
+      },
+      "post": {
+        "operationId": "postWalletSession",
+        "summary": "Claim a wallet session by proving ownership of a previously-issued challenge.",
+        "description": "Migrated to the stable error contract: error responses include both the legacy `error`/`detail` fields and `code`/`message`/`retryable`/`requestId`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["walletAddress", "family", "nonce"],
+                "properties": {
+                  "walletAddress": { "type": "string", "minLength": 1, "maxLength": 120 },
+                  "family": { "$ref": "#/components/schemas/ChainFamily" },
+                  "nonce": { "type": "string", "minLength": 1, "maxLength": 96 },
+                  "signature": { "type": "string", "maxLength": 4096, "description": "Required for EVM (personal_sign over the issued challenge)." },
+                  "signedTxXdr": { "type": "string", "maxLength": 8192, "description": "Required for Stellar (signed challenge XDR)." },
+                  "network": { "type": "string", "maxLength": 120 }
+                }
+              },
+              "example": { "walletAddress": "0x1111111111111111111111111111111111111111", "family": "evm", "nonce": "n_abc123", "signature": "0xsig..." }
+            }
+          }
+        },
+        "tags": ["wallet-session"],
+        "responses": {
+          "200": {
+            "description": "Session established; sets the `gr_wallet` session cookie.",
+            "headers": { "Set-Cookie": { "schema": { "type": "string" } } },
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "walletAddress": { "type": "string" }, "ttlSeconds": { "type": "integer" } } }, "example": { "walletAddress": "0x1111111111111111111111111111111111111111", "ttlSeconds": 43200 } } }
+          },
+          "400": { "$ref": "#/components/responses/MigratedValidationError400" },
+          "401": {
+            "description": "No challenge cookie present, nonce mismatch, or signature verification failed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MigratedErrorEnvelope" } } }
+          },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable503" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteWalletSession",
+        "summary": "Clear the current wallet session and challenge cookies.",
+        "tags": ["wallet-session"],
+        "responses": {
+          "200": { "description": "Session cleared.", "content": { "application/json": { "schema": { "type": "object", "properties": { "walletAddress": { "type": "null" } } } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    },
+    "/stellar/registry/prepare": {
+      "post": {
+        "operationId": "postStellarRegistryPrepare",
+        "summary": "Build an unsigned Soroban transaction XDR to publish a risk record to the on-chain registry.",
+        "tags": ["stellar"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["network", "publisher", "assetKey", "assetLabel", "score", "verdict"],
+                "properties": {
+                  "network": { "type": "string" },
+                  "publisher": { "type": "string", "pattern": "^G[A-Z2-7]{20,}$" },
+                  "assetKey": { "type": "string", "minLength": 1, "maxLength": 180 },
+                  "assetLabel": { "type": "string", "minLength": 1, "maxLength": 180 },
+                  "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+                  "confidenceBps": { "type": "integer", "minimum": 0, "maximum": 10000, "default": 5000 },
+                  "verdict": { "type": "string", "pattern": "^[a-zA-Z0-9_]{1,32}$" },
+                  "evidenceUri": { "type": "string", "maxLength": 512, "default": "" },
+                  "updatedAt": { "type": "integer", "exclusiveMinimum": 0 },
+                  "report": {}
+                }
+              },
+              "example": { "network": "stellar-testnet", "publisher": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "assetKey": "GOAT:issuer", "assetLabel": "GOAT", "score": 22, "verdict": "hold" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Unsigned transaction XDR ready for the publisher to sign.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "429": { "$ref": "#/components/responses/RateLimited429" },
+          "502": { "$ref": "#/components/responses/ProviderError502" }
+        }
+      }
+    },
+    "/stellar/registry/submit": {
+      "post": {
+        "operationId": "postStellarRegistrySubmit",
+        "summary": "Submit a user-signed registry-publication XDR to the Stellar network.",
+        "tags": ["stellar"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "required": ["network", "signedXdr"], "properties": { "network": { "type": "string" }, "signedXdr": { "type": "string", "minLength": 32, "maxLength": 200000 } } },
+              "example": { "network": "stellar-testnet", "signedXdr": "AAAAAgAAAAA..." }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Submission result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "429": { "$ref": "#/components/responses/RateLimited429" },
+          "502": { "$ref": "#/components/responses/ProviderError502" }
+        }
+      }
+    },
+    "/stellar/registry/status": {
+      "get": {
+        "operationId": "getStellarRegistryStatus",
+        "summary": "Check a submitted registry-publication transaction's on-chain status.",
+        "tags": ["stellar"],
+        "parameters": [
+          { "name": "network", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "hash", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Transaction status.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" } } } },
+          "400": { "description": "Invalid network or transaction hash.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "502": { "$ref": "#/components/responses/ProviderError502" }
+        }
+      }
+    },
+    "/stellar/registry/record": {
+      "get": {
+        "operationId": "getStellarRegistryRecord",
+        "summary": "Read the current on-chain risk record for an asset key.",
+        "tags": ["stellar"],
+        "parameters": [
+          { "name": "network", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "assetKey", "in": "query", "required": true, "schema": { "type": "string", "maxLength": 180 } }
+        ],
+        "responses": {
+          "200": { "description": "Risk record, or `null` if not published.", "content": { "application/json": { "schema": { "type": "object", "properties": { "record": { "$ref": "#/components/schemas/GenericObject" } } } } } },
+          "400": { "description": "Invalid request.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "502": { "$ref": "#/components/responses/ProviderError502" }
+        }
+      }
+    },
+    "/x402/terms": {
+      "get": {
+        "operationId": "getX402Terms",
+        "summary": "Get the current x402 pricing/network terms for the premium deep-scan endpoint.",
+        "tags": ["x402"],
+        "responses": {
+          "200": { "description": "Public x402 terms.", "content": { "application/json": { "schema": { "type": "object", "properties": { "priceUsd": { "type": "string" }, "network": { "type": "string" }, "asset": { "type": "string" }, "payTo": { "type": "string" }, "available": { "type": "boolean" } } }, "example": { "priceUsd": "$0.01", "network": "eip155:84532", "asset": "USDC", "payTo": "0x0000000000000000000000000000000000000001", "available": true } } } }
+        }
+      }
+    },
+    "/x402/deep-scan": {
+      "get": {
+        "operationId": "getX402DeepScan",
+        "summary": "Premium (x402 payment-gated) deep token scan.",
+        "description": "Requires a valid x402 `PAYMENT-SIGNATURE` header proving a fresh, unique payment. Unpaid or invalid-payment requests receive a `402 Payment Required` challenge with `accepts` payment requirements per the x402 protocol.",
+        "tags": ["x402", "scan"],
+        "parameters": [
+          { "name": "query", "in": "query", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 260 } },
+          { "$ref": "#/components/parameters/ChainQuery" },
+          { "name": "walletAddress", "in": "query", "required": false, "schema": { "type": "string", "maxLength": 80 } },
+          { "name": "PAYMENT-SIGNATURE", "in": "header", "required": false, "schema": { "type": "string" }, "description": "x402 payment proof for the current request body/query." }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deep scan result, unlocked after payment verification.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenericObject" }, "example": { "premium": { "unlocked": true, "tier": "deep_scan", "provider": "x402", "receiptId": "x402_abc123" }, "scan": {} } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError400" },
+          "402": { "$ref": "#/components/responses/PaymentRequired402" },
+          "409": { "description": "Duplicate payment signature (replay) rejected before premium work runs.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyErrorEnvelope" } } } },
+          "429": { "$ref": "#/components/responses/RateLimited429" }
+        }
+      }
+    }
+  }
+}
