@@ -1059,8 +1059,12 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
   // Strategy violations must constrain the final recommendation.
   // If any rule was violated, downgrade to manual_review so downstream
   // code cannot consume a buy/prepare action the user's rules blocked.
+  // CRITICAL: never downgrade avoid or manual_review — those are
+  // already safety-critical outcomes from deterministic blockers
+  // (honeypot, phishing, identity conflict, etc.) that must take
+  // precedence over user-strategy rules.
   let finalAction = recommendedAction;
-  if (strategyEnforcement.strategyBlockers.length > 0) {
+  if (strategyEnforcement.strategyBlockers.length > 0 && finalAction !== "avoid" && finalAction !== "manual_review") {
     finalAction = "manual_review";
   }
 

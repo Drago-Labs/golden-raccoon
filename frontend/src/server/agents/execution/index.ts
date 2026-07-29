@@ -186,6 +186,8 @@ export async function buildExecutionPreview(input: ExecutionAgentInput): Promise
       estimatedValueUsd,
       slippageBps,
       simulationStatus: simulation.status,
+      stellarIssuer: input.stellarIssuer,
+      stellarQuoteStatus: input.stellarQuoteStatus,
     },
     executionPolicy,
     input.rules,

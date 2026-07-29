@@ -22,7 +22,35 @@ export function TransactionPreview({ preview }: { preview: Preview }) {
         <div className="mt-5 rounded-2xl border border-red-300/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
           {preview.blockedReason}
         </div>
-      ) : (
+      ) : null}
+      {preview.policyStatus?.decisions && preview.policyStatus.decisions.length > 0 ? (
+        <div className="mt-4 space-y-2">
+          <div className="text-xs uppercase tracking-[0.15em] text-white/35">Policy rules evaluated</div>
+          {preview.policyStatus.decisions.map((d, i) => (
+            <div
+              key={`${d.ruleId}-${d.ruleLabel}-${i}`}
+              className={`rounded-xl border px-3 py-2 text-xs ${
+                d.action === "blocked"
+                  ? "border-red-300/20 bg-red-500/8 text-red-100"
+                  : d.action === "warned"
+                    ? "border-yellow-300/20 bg-yellow-500/8 text-yellow-100"
+                    : "border-green-300/20 bg-green-500/8 text-green-100"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold">{d.ruleLabel}</span>
+                <span className="tabular-nums opacity-70">v{d.ruleVersion}</span>
+              </div>
+              <div className="mt-1 opacity-80">{d.reason}</div>
+              <div className="mt-1 flex gap-3 text-[10px] opacity-50">
+                <span>Observed: {String(d.observedValue)}</span>
+                <span>Threshold: {String(d.threshold)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {preview.blockedReason ? null : (
         <div className="mt-5 rounded-2xl bg-black/20 px-4 py-3 text-sm text-white/56">
           {preview.requiresApproval ? "Approval required" : "No wallet approval required"} on {preview.network}
           {preview.percent ? ` · ${preview.percent}% ${preview.fromToken ?? "TOKEN"} to ${preview.toToken ?? "USDC"}` : null}

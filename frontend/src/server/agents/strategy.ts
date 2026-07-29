@@ -38,8 +38,10 @@ export type StrategyEnforcerContext = {
   slippageBps?: number;
   /** Whether the token is categorized as a meme coin */
   isMemeToken?: boolean;
-  /** User-configured blocked token categories */
+  /** User-configured blocked token categories (runtime context; rules snapshot takes precedence) */
   blockedCategories?: string[];
+  /** Cumulative USD value already transacted today (for daily limit enforcement) */
+  dailyValueUsed?: number;
   /** Simulation status */
   simulationStatus?: "not_required" | "pending" | "passed" | "failed" | "unavailable";
   // Stellar-specific fields
@@ -282,39 +284,38 @@ export function evaluateStrategy(
     );
   }
 
-  // ---- 5. Max daily transaction value ----
-  if (
-    typeof context.estimatedValueUsd === "number" &&
-    context.estimatedValueUsd > maxDailyTransactionValueUsd
-  ) {
-    decisions.push(
-      makeDecision(
-        ruleId,
-        version,
-        "Max daily transaction value",
-        "daily_limit",
-        Math.round(context.estimatedValueUsd),
-        maxDailyTransactionValueUsd,
-        true,
-        `Estimated value $${Math.round(context.estimatedValueUsd).toLocaleString("en-US")} exceeds daily transaction value limit $${maxDailyTransactionValueUsd.toLocaleString("en-US")}.`,
-      ),
-    );
-  } else if (
-    typeof context.estimatedValueUsd === "number" &&
-    tradeAction
-  ) {
-    decisions.push(
-      makeDecision(
-        ruleId,
-        version,
-        "Max daily transaction value",
-        "daily_limit",
-        Math.round(context.estimatedValueUsd),
-        maxDailyTransactionValueUsd,
-        false,
-        `Estimated value $${Math.round(context.estimatedValueUsd).toLocaleString("en-US")} is within daily limit $${maxDailyTransactionValueUsd.toLocaleString("en-US")}.`,
-      ),
-    );
+  // ---- 5. Max daily transaction value (cumulative, accounting for prior daily activity) ----
+  if (typeof context.estimatedValueUsd === "number") {
+    const priorUsed = context.dailyValueUsed ?? 0;
+    const cumulative = priorUsed + context.estimatedValueUsd;
+
+    if (cumulative > maxDailyTransactionValueUsd) {
+      decisions.push(
+        makeDecision(
+          ruleId,
+          version,
+          "Max daily transaction value",
+          "daily_limit",
+          Math.round(cumulative),
+          maxDailyTransactionValueUsd,
+          true,
+          `Cumulative daily value $${Math.round(cumulative).toLocaleString("en-US")} (prior $${Math.round(priorUsed).toLocaleString("en-US")} + current $${Math.round(context.estimatedValueUsd).toLocaleString("en-US")}) exceeds daily limit $${maxDailyTransactionValueUsd.toLocaleString("en-US")}.`,
+        ),
+      );
+    } else if (tradeAction) {
+      decisions.push(
+        makeDecision(
+          ruleId,
+          version,
+          "Max daily transaction value",
+          "daily_limit",
+          Math.round(cumulative),
+          maxDailyTransactionValueUsd,
+          false,
+          `Cumulative daily value $${Math.round(cumulative).toLocaleString("en-US")} is within daily limit $${maxDailyTransactionValueUsd.toLocaleString("en-US")}.`,
+        ),
+      );
+    }
   }
 
   // ---- 6. Meme token exposure ----
@@ -472,8 +473,12 @@ export function evaluateStrategy(
     );
   }
 
-  // ---- 11c. Blocked categories ----
-  const blockedCategories = (context.blockedCategories ?? []).map((c) => c.trim().toLowerCase()).filter(Boolean);
+  // ---- 11c. Blocked categories (from stored rules, with context fallback) ----
+  const blockedCategories = (
+    safeRules.blockedCategories?.length
+      ? safeRules.blockedCategories
+      : context.blockedCategories ?? []
+  ).map((c) => c.trim().toLowerCase()).filter(Boolean);
   if (blockedCategories.includes("meme") && context.isMemeToken) {
     decisions.push(
       makeDecision(
