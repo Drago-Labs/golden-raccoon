@@ -81,7 +81,7 @@ export const riskReportSchema = z.object({
     symbol: z.string().optional(),
     tokenName: z.string().optional(),
     assetKey: z.string().optional(),
-    assetType: z.enum(["native", "classic", "contract", "issuer_account"]).optional(),
+    assetType: z.enum(["native", "classic", "sac", "sep41", "issuer_account"]).optional(),
     issuer: z.string().optional(),
     source: z.enum(["contract_address", "dexscreener_pair_url", "dexscreener_token_url", "stellar_asset", "stellar_issuer", "unresolved"]),
   }),

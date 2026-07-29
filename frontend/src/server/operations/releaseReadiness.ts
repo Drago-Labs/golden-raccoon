@@ -23,6 +23,10 @@ export const releaseReadinessChecks = [
     title: "First 24 hours",
     detail: "Provider failure rate and manual review rate are monitored after release.",
   },
+  {
+    title: "V2 Execution observability",
+    detail: "Correlation IDs link decision→quote→execution. Structured audit events, provider health checks, and runbooks (RB-001 through RB-006) are operational. Disable switches (DISABLE_EXECUTION_PROVIDERS, RECOMMENDATION_ONLY_MODE, etc.) preserve recommendation-only mode.",
+  },
 ];
 
 export const knownLimitations = [
@@ -37,6 +41,24 @@ export const knownLimitations = [
   "Production health must report no mock fallback usage.",
 ];
 
+/**
+ * Execution provider disable/rollback switches (Issue #18).
+ * When any of these are set, the system falls back to recommendation-only
+ * mode — all agent analysis and risk scoring continues, but execution
+ * provider paths are skipped.
+ */
+export const executionDisableSwitches = [
+  { env: "DISABLE_EXECUTION_PROVIDERS", effect: "Disables ALL execution providers. Full recommendation-only mode." },
+  { env: "RECOMMENDATION_ONLY_MODE", effect: "Full recommendation-only mode. Equivalent to DISABLE_EXECUTION_PROVIDERS." },
+  { env: "DISABLE_QUOTE_PROVIDER", effect: "Skips live quote provider calls. Falls back to planned quotes." },
+  { env: "DISABLE_SIMULATION_PROVIDER", effect: "Skips simulation provider calls. Falls back to pending simulation status." },
+  { env: "DISABLE_EVM_SUBMISSION", effect: "Blocks EVM transaction submission. EVM analysis still runs." },
+  { env: "DISABLE_STELLAR_SUBMISSION", effect: "Blocks Stellar transaction submission. Stellar portfolio still runs." },
+  { env: "DISABLE_CONFIRMATION_POLLING", effect: "Stops polling for transaction confirmations." },
+  { env: "DISABLE_SUPABASE_WRITES", effect: "Skips mirror writes to Supabase. In-memory store only." },
+  { env: "DISABLE_X402_SETTLEMENT", effect: "Returns 402 without attempting settlement. Free-tier features unaffected." },
+];
+
 export function getReleaseReadinessHealth() {
   return {
     gate: "npm run deploy:check",
@@ -45,5 +67,6 @@ export function getReleaseReadinessHealth() {
     firstMonitoringWindowHours: 24,
     checks: releaseReadinessChecks,
     knownLimitations,
+    executionDisableSwitches,
   };
 }

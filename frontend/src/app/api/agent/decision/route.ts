@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import {
+  chainFamilySchema,
+  networkSchema,
+  validateChainScopedWallet,
+} from "@/server/security/inputValidation";
 
 const bodySchema = z.object({
+  chainFamily: chainFamilySchema.optional(),
+  network: networkSchema.optional(),
   walletAddress: z.string().min(1),
   summary: z.string().min(1),
   riskScore: z.number().min(0).max(100),
@@ -14,6 +21,14 @@ const bodySchema = z.object({
     percent: z.number().min(0).max(100),
   }),
   status: z.enum(["pending", "approved", "rejected", "executed"]).default("pending"),
+}).superRefine((value, context) => {
+  if (!validateChainScopedWallet(value)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["walletAddress"],
+      message: "Wallet address does not match chainFamily/network.",
+    });
+  }
 });
 
 export async function POST(request: Request) {

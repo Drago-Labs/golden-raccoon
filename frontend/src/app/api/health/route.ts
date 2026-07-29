@@ -7,28 +7,50 @@ import { getStorageCounts, getStorageHealth, listAgentRunRecords, listAlerts } f
 import { getProductionHealth } from "@/server/observability/health";
 import { getAgentRunMetrics } from "@/server/observability/metrics";
 import { alertThresholds, evaluateAlertThresholds } from "@/server/observability/alerts";
+import { getAuditEventSummary } from "@/server/observability/executionAudit";
+import { getExecutionDisableFlags } from "@/server/observability/providerHealth";
+import { runbookToReadinessCheck, listRunbooks } from "@/server/observability/runbooks";
 
 export const dynamic = "force-dynamic";
 
 export function GET() {
-  const metrics = getAgentRunMetrics(listAgentRunRecords());
+  const records = listAgentRunRecords();
+  const metrics = getAgentRunMetrics(records);
+  const executionMetrics = metrics.execution;
   const triggeredCount = listAlerts(undefined, "triggered").length;
   const recoveredCount = listAlerts(undefined, "recovered").length;
   const acknowledgedCount = listAlerts(undefined, "acknowledged").length;
+  const runbooks = listRunbooks().map(runbookToReadinessCheck);
+  const auditSummary = getAuditEventSummary();
+  const disableFlags = getExecutionDisableFlags();
   return NextResponse.json(
     {
       ok: true,
       service: "golden-raccoon",
       env: getEnvHealth(),
       agentReadiness: getAgentReadiness(),
-      storage: getStorageHealth(),
-      storageCounts: getStorageCounts(),
+      storage: await getStorageHealth(),
+      storageCounts: await getStorageCounts(),
       security: getSecurityHealth(),
       productionHealth: getProductionHealth(),
       metrics,
+      executionAudit: auditSummary,
+      runbooks,
+      disableFlags,
       alerts: {
         thresholds: alertThresholds,
-        status: evaluateAlertThresholds(metrics),
+        status: evaluateAlertThresholds({
+          providerFailureRate: metrics.providerFailureRate,
+          manualReviewRate: metrics.manualReviewRate,
+          executionConfirmFailureRate: executionMetrics?.confirmation?.failureRate,
+          supabaseWriteFailureRate: executionMetrics?.storage?.failureRate,
+          quoteStaleRate: executionMetrics?.providers?.quote?.staleRate,
+          simulationFailureRate: executionMetrics?.providers?.simulation?.failureRate,
+          policyBlockRate: executionMetrics?.policy?.blockRate,
+          walletRejectionRate: executionMetrics?.approval?.rejectionRate,
+          submissionFailureRate: executionMetrics?.submission?.failureRate,
+          confirmationTimeP95Ms: executionMetrics?.confirmation?.confirmationTimeMs?.p95,
+        }),
         engine: {
           triggered: triggeredCount,
           recovered: recoveredCount,
