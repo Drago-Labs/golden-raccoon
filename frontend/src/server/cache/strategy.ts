@@ -120,6 +120,14 @@ export const apiCacheStrategy: Record<ApiCacheKey, ApiCachePolicy> = {
     criticalFreshnessVisible: false,
     detail: "Transactions are wallet-specific audit records and should be fetched fresh.",
   },
+  recovery: {
+    name: "recovery-no-store",
+    seconds: 0,
+    scope: "no-store",
+    ttlClass: "none",
+    criticalFreshnessVisible: true,
+    detail: "Recovery requests are wallet-bound, freshness-sensitive and must never be cached across users.",
+  },
 };
 
 export function getCachePolicyMetadata(key: ApiCacheKey) {

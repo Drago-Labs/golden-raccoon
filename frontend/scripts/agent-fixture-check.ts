@@ -1,5 +1,6 @@
 import { runNewsAgent } from "../src/server/agents/news";
 import { runOnchainAgent } from "../src/server/agents/onchain";
+import { runStellarOnchainAgent, type StellarOnchainProviders } from "../src/server/agents/onchain/stellar";
 import { runDecisionAgent } from "../src/server/agents/decision";
 import { buildExecutionPreview, runExecutionAgent } from "../src/server/agents/execution";
 import { buildAgentResult, scoreToRiskLevel } from "../src/server/agents/shared";
@@ -10,7 +11,9 @@ import { createAgentRunRecord, createX402PaymentReceipt, getStorageHealth, getX4
 import { getCachePolicyMetadata } from "../src/server/cache/strategy";
 import { getProviderTimeoutBudget, resolveProviderConflict, runProviderFallbacks } from "../src/server/providers/adapter";
 import { getRuntimeModeHealth } from "../src/server/env/runtimeMode";
-import { assertExternalFetchAllowed, evaluateUrlSafety } from "../src/server/security/urlSafety";
+import { assertExternalFetchAllowed, assertSep1FetchAllowed, evaluateUrlSafety, isPrivateOrLocalHost } from "../src/server/security/urlSafety";
+import { parseStellarAssetInput, parseSep1Toml, deriveStellarSacContractId, type StellarAssetIdentity } from "../src/server/stellar/assetIdentity";
+import { stellarNetworks } from "../src/lib/stellar/config";
 import { getPortfolioHardeningReport } from "../src/server/portfolio/hardening";
 import { getPortfolioRiskSignals } from "../src/server/portfolio/riskScoring";
 import { createAgentRunId, getRunPartialStatus, markRunCancelled } from "../src/server/agents/orchestrationState";
@@ -18,7 +21,7 @@ import { createAgentLog, redactSecrets } from "../src/server/observability/loggi
 import { evaluateAlertThresholds } from "../src/server/observability/alerts";
 import { getResultMetrics } from "../src/server/observability/metrics";
 import { goldenFixtureSuite, assertGoldenScore } from "../src/server/evaluation/goldenFixtures";
-import { compareReplaySnapshot, createReplaySnapshot } from "../src/server/evaluation/replay";
+import { compareReplaySnapshot, createReplaySnapshot, createStellarReplaySnapshot, stellarReplaySnapshots } from "../src/server/evaluation/replay";
 import { criticalFindingDoesNotLowerRisk, missingDataDoesNotIncreaseConfidence, noAgentResultRequiresManualReview, reliableSourcesDoNotLowerConfidence } from "../src/server/evaluation/properties";
 import { hashSourceSnapshot } from "../src/server/storage";
 import { rateLimitProfiles } from "../src/server/security/rateLimit";
@@ -28,7 +31,39 @@ import { buildAnalysisChecks } from "../src/server/scan/tokenScan";
 import { getX402RouteConfig, getX402RuntimeConfig, validateX402RuntimeConfig } from "../src/server/x402/config";
 import { assertFreshX402Payment, hashPaymentHeader } from "../src/server/x402/guards";
 import type { AgentResult, PortfolioSnapshot, TokenHolding } from "../src/server/types";
+import { NextRequest } from "next/server";
 import { POST as confirmExecution } from "../src/app/api/execute/confirm/route";
+import { POST as submitExecution } from "../src/app/api/execute/submit/route";
+import { POST as prepareExecution } from "../src/app/api/execute/prepare/route";
+import { POST as rejectExecution } from "../src/app/api/execute/reject/route";
+import { GET as getTransactionLifecycle } from "../src/app/api/execute/transactions/[hash]/route";
+import { GET as listTransactionHistory } from "../src/app/api/history/transactions/route";
+import {
+  configureEvmSimulator,
+  clearEvmSimulator,
+} from "../src/server/transactions/adapters/evm";
+import {
+  configureStellarSimulator,
+  clearStellarSimulator,
+} from "../src/server/transactions/adapters/stellar";
+import {
+  submitTransaction,
+  pollTransaction,
+  expireTransactionIfStale,
+  prepareTransaction,
+  recordUserRejection,
+  TransactionLifecycleError,
+} from "../src/server/transactions/lifecycleManager";
+import {
+  appendLifecycleEventByName,
+  createTransactionRecord,
+  getTransactionRecord,
+  getTransactionRecordByIdempotencyKey,
+  isImmutableTerminal,
+  listTransactionLifecycleEvents,
+  updateTransactionRecord,
+} from "../src/server/storage";
+import type { TransactionLifecycleStatus } from "../src/server/types";
 import { runDiscoveryFixtures } from "../src/server/discovery/fixtures";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -820,9 +855,11 @@ async function runExecutionChecks() {
       }),
     }),
   );
-  assert(duplicateConfirmResponse.status === 409, "Confirm must reject duplicate transaction hash.");
+  assert(duplicateConfirmResponse.status === 200, "Confirm must remain idempotent for re-verification of an externally-broadcast hash.");
+  const duplicateConfirmJson = await duplicateConfirmResponse.json();
+  assert(duplicateConfirmJson.pendingVerification === true, "Re-confirming an externally-broadcast hash must report pendingVerification until on-chain verification succeeds.");
 
-  const runRecord = await createAgentRunRecord({
+  const runRecord = createAgentRunRecord({
     walletAddress: "0xabc",
     mode: "token_scan",
     inputSnapshot: { symbol: "MEME", chain: "base" },
@@ -936,7 +973,7 @@ async function runReadinessChecks() {
   assert(hardening.chainReadiness.executionReadiness === "gas_missing", "Portfolio hardening must expose native gas readiness.");
   assert(hardening.riskDriverBreakdown.some((item) => item.key === "chain_readiness"), "Portfolio hardening must expose deterministic risk driver breakdown.");
 
-  const storageHealth = await getStorageHealth();
+  const storageHealth = getStorageHealth();
   for (const table of ["wallets", "agent_runs", "agent_results", "recommendations", "user_rules", "approvals", "transactions", "x402_payment_receipts", "token_identities", "source_snapshots"]) {
     assert(storageHealth.schema?.tables.includes(table), `Storage schema contract must include ${table}.`);
   }
@@ -1055,6 +1092,14 @@ async function runReadinessChecks() {
 
   assert(goldenFixtureSuite.includes("honeypot"), "Golden fixture suite must include honeypot case.");
   assert(assertGoldenScore("honeypot", 88), "Regression snapshot must accept expected honeypot score range.");
+  assert(goldenFixtureSuite.includes("stellar_xlm"), "Golden fixture suite must include stellar XLM case.");
+  assert(goldenFixtureSuite.includes("stellar_known_classic"), "Golden fixture suite must include stellar known classic case.");
+  assert(goldenFixtureSuite.includes("stellar_restricted_asset"), "Golden fixture suite must include stellar restricted asset case.");
+  assert(goldenFixtureSuite.includes("stellar_sac"), "Golden fixture suite must include stellar SAC case.");
+  assert(goldenFixtureSuite.includes("stellar_sep41"), "Golden fixture suite must include stellar SEP-41 case.");
+  assert(goldenFixtureSuite.includes("stellar_invalid_issuer"), "Golden fixture suite must include stellar invalid issuer case.");
+  assert(goldenFixtureSuite.includes("stellar_unknown_contract"), "Golden fixture suite must include stellar unknown contract case.");
+  assert(goldenFixtureSuite.includes("stellar_unavailable_provider"), "Golden fixture suite must include stellar unavailable provider case.");
   assert(noAgentResultRequiresManualReview(), "Property test must enforce no result -> manual_review.");
   assert(criticalFindingDoesNotLowerRisk(blueChipLikeResult(), agentResult({
     agent: "onchain",
@@ -1070,6 +1115,697 @@ async function runReadinessChecks() {
   const snapshotHash = hashSourceSnapshot({ sources: blueChipLikeResult().sources, rawSignals: blueChipLikeResult().rawSignals });
   const replaySnapshot = createReplaySnapshot(blueChipLikeResult(), snapshotHash);
   assert(compareReplaySnapshot(replaySnapshot, blueChipLikeResult()).compatible, "Replay snapshot must compare compatible deterministic results.");
+
+  // Verify Stellar replay snapshot registry has entries for all Stellar golden fixtures
+  const stellarGoldenFixtures = ["stellar_xlm", "stellar_known_classic", "stellar_restricted_asset", "stellar_sac", "stellar_sep41", "stellar_invalid_issuer", "stellar_unknown_contract", "stellar_unavailable_provider"];
+  for (const fixtureName of stellarGoldenFixtures) {
+    assert(stellarReplaySnapshots[fixtureName] !== undefined, `Stellar replay snapshot registry must include ${fixtureName}.`);
+    assert(stellarReplaySnapshots[fixtureName].chainFamily === "stellar", `Stellar replay snapshot ${fixtureName} must have chainFamily stellar.`);
+    assert(stellarReplaySnapshots[fixtureName].agent === "onchain", `Stellar replay snapshot ${fixtureName} must be for onchain agent.`);
+  }
+}
+
+async function runTransactionLifecycleChecks() {
+  clearEvmSimulator();
+  clearStellarSimulator();
+
+  const evmHash = `0x${"1".repeat(64)}`;
+  const stellarHash = `${"a".repeat(64)}`;
+  const stellarWallet = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const evmSubmitted = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle",
+    decisionAction: "reduce_exposure",
+    asset: "MEME",
+    valueUsd: 25,
+    simulationStatus: "passed",
+    policyStatus: { allowed: true, violations: [] },
+    expectedEffects: [{ kind: "swap", fromToken: "MEME", toToken: "USDC" }],
+    userApproved: true,
+    signedPayload: evmHash,
+    idempotencyKey: "idem_evm_success",
+  });
+  assert(evmSubmitted.outcome === "submitted" && evmSubmitted.transaction.lifecycleStatus === "submitted", "EVM submit must persist a submitted lifecycle.");
+  assert(evmSubmitted.transaction.explorerUrl?.includes("tx"), "EVM submit must attach an explorer URL.");
+  assert(evmSubmitted.result.idempotent === false, "Fresh EVM submit must not be flagged as idempotent.");
+  assert(evmSubmitted.transaction.submittedAt !== undefined, "EVM submit must record a submittedAt timestamp.");
+  const evmEvents = listTransactionLifecycleEvents(evmSubmitted.transaction.hash);
+  assert(evmEvents.some((event) => event.event === "prepared") && evmEvents.some((event) => event.event === "submitted"), "EVM submit must append prepared and submitted lifecycle events.");
+
+  const evmPoll = await pollTransaction(evmSubmitted.transaction.hash);
+  assert(evmPoll.transaction.lifecycleStatus === "confirmed" && evmPoll.terminalReached === true, "EVM poll-to-confirmed must mark the transaction confirmed.");
+  assert(listTransactionLifecycleEvents(evmPoll.transaction.hash).some((event) => event.event === "confirmed"), "EVM poll-to-confirmed must append a confirmed event.");
+  assert(evmPoll.transaction.terminalAt !== undefined, "EVM confirmed transactions must record a terminalAt timestamp.");
+
+  assert(isImmutableTerminal("confirmed"), "Confirmed lifecycle must be considered immutable terminal.");
+  assert(isImmutableTerminal("failed") && isImmutableTerminal("replaced") && isImmutableTerminal("expired") && isImmutableTerminal("user_rejected"), "All terminal lifecycle states must be flagged immutable.");
+
+  const evmIdempotent = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle",
+    decisionAction: "reduce_exposure",
+    asset: "MEME",
+    valueUsd: 25,
+    simulationStatus: "passed",
+    policyStatus: { allowed: true, violations: [] },
+    userApproved: true,
+    signedPayload: evmHash,
+    idempotencyKey: "idem_evm_success",
+  });
+  assert(evmIdempotent.outcome === "ignored_duplicate" && evmIdempotent.result.idempotent === true && evmIdempotent.result.reuseReason === "idempotency_key", "Duplicate EVM submit with same idempotency key must short-circuit without overwriting history.");
+
+  const evmDuplicateHash = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle_other",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmHash,
+  });
+  assert(evmDuplicateHash.outcome === "ignored_duplicate" && evmDuplicateHash.result.reuseReason === "duplicate_hash", "Duplicate EVM submit with same hash and different key must reject without overwriting.");
+  assert(listTransactionLifecycleEvents(evmHash).some((event) => event.event === "duplicate_rejected"), "Duplicate hash submit must append a duplicate_rejected lifecycle event.");
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "failed" });
+  const evmFailedHash = `0x${"2".repeat(64)}`;
+  const evmFailed = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle_failed",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmFailedHash,
+    idempotencyKey: "idem_evm_failed",
+  });
+  const evmFailedPoll = await pollTransaction(evmFailed.transaction.hash);
+  assert(evmFailedPoll.transaction.lifecycleStatus === "failed", "EVM poll-to-failed must mark the transaction failed.");
+  assert(evmFailedPoll.transaction.failureReason !== undefined, "Failed EVM transactions must record a failureReason.");
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "replaced" });
+  const evmReplacedHash = `0x${"3".repeat(64)}`;
+  const evmReplaced = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle_replaced",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmReplacedHash,
+    idempotencyKey: "idem_evm_replaced",
+  });
+  const evmReplacedPoll = await pollTransaction(evmReplaced.transaction.hash);
+  assert(evmReplacedPoll.transaction.lifecycleStatus === "replaced", "EVM poll-to-replaced must mark the transaction replaced.");
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "expired" });
+  const evmExpiredHash = `0x${"4".repeat(64)}`;
+  const evmExpired = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle_expired",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmExpiredHash,
+    idempotencyKey: "idem_evm_expired",
+  });
+  const evmExpiredPoll = await pollTransaction(evmExpired.transaction.hash);
+  assert(evmExpiredPoll.transaction.lifecycleStatus === "expired", "EVM poll-to-expired must mark the transaction expired.");
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "pending" });
+  const evmPendingHash = `0x${"5".repeat(64)}`;
+  const evmPending = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle_pending",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmPendingHash,
+    idempotencyKey: "idem_evm_pending",
+  });
+  const evmPendingPoll = await pollTransaction(evmPending.transaction.hash);
+  assert(evmPendingPoll.transaction.lifecycleStatus === "pending" && evmPendingPoll.terminalReached === false, "EVM poll-to-pending must remain non-terminal.");
+  const expiry = await expireTransactionIfStale(evmPendingPoll.transaction.hash, { ttlMs: 1, now: () => new Date(Date.now() + 60_000) });
+  assert(expiry.expired === true && expiry.transaction?.lifecycleStatus === "expired", "Stale pending transactions must transition to expired when TTL elapses.");
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "rejected" });
+  const evmRejected = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: `0x${"6".repeat(64)}`,
+    idempotencyKey: "idem_evm_rejected",
+  });
+  assert(evmRejected.outcome === "terminally_recorded", "EVM rejected submit must be persisted as a terminally_recorded submission_failed.");
+  assert(evmRejected.transaction.lifecycleStatus === "failed", "EVM rejected submit must persist the failed lifecycle, not leave the record at prepared.");
+  assert(evmRejected.transaction.failureReason?.includes("rejected") ?? false, "EVM rejected submit must record the rejected reason on the failed record.");
+  assert(listTransactionLifecycleEvents(evmRejected.transaction.hash).some((event) => event.event === "submission_failed"), "EVM rejected submit must append a submission_failed lifecycle event.");
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
+  // ---- Stellar lifecycle ----
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const stellarSubmitted = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarWallet,
+    sourceAccount: stellarWallet,
+    decisionId: "decision_stellar_success",
+    asset: "GOAT",
+    expectedEffects: [{ kind: "publish_risk", method: "publish_risk", contractAddress: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA" }],
+    userApproved: true,
+    signedPayload: stellarHash,
+    idempotencyKey: "idem_stellar_success",
+  });
+  assert(stellarSubmitted.outcome === "submitted", "Stellar submit must persist submitted lifecycle.");
+  assert(stellarSubmitted.transaction.explorerUrl?.includes("stellar.expert"), "Stellar submit must attach a stellar.expert explorer URL.");
+  const stellarConfirmed = await pollTransaction(stellarSubmitted.transaction.hash);
+  assert(stellarConfirmed.transaction.lifecycleStatus === "confirmed", "Stellar poll-to-confirmed must mark the transaction confirmed.");
+
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "failed" });
+  const stellarFailedHash = `${"b".repeat(64)}`;
+  const stellarFailed = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarWallet,
+    sourceAccount: stellarWallet,
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: stellarFailedHash,
+    idempotencyKey: "idem_stellar_failed",
+  });
+  const stellarFailedPoll = await pollTransaction(stellarFailed.transaction.hash);
+  assert(stellarFailedPoll.transaction.lifecycleStatus === "failed", "Stellar poll-to-failed must mark the transaction failed.");
+
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "replaced" });
+  const stellarReplacedHash = `${"c".repeat(64)}`;
+  const stellarReplaced = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarWallet,
+    sourceAccount: stellarWallet,
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: stellarReplacedHash,
+    idempotencyKey: "idem_stellar_replaced",
+  });
+  const stellarReplacedPoll = await pollTransaction(stellarReplaced.transaction.hash);
+  assert(stellarReplacedPoll.transaction.lifecycleStatus === "replaced", "Stellar poll-to-replaced must mark the transaction replaced.");
+
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "expired" });
+  const stellarExpiredHash = `${"d".repeat(64)}`;
+  const stellarExpired = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarWallet,
+    sourceAccount: stellarWallet,
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: stellarExpiredHash,
+    idempotencyKey: "idem_stellar_expired",
+  });
+  const stellarExpiredPoll = await pollTransaction(stellarExpired.transaction.hash);
+  assert(stellarExpiredPoll.transaction.lifecycleStatus === "expired", "Stellar poll-to-expired must mark the transaction expired.");
+
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "rejected" });
+  const stellarRejected = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarWallet,
+    sourceAccount: stellarWallet,
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: `${"e".repeat(64)}`,
+    idempotencyKey: "idem_stellar_rejected",
+  });
+  assert(stellarRejected.outcome === "terminally_recorded", "Stellar rejected submit must be persisted as a terminally_recorded submission_failed.");
+  assert(stellarRejected.transaction.lifecycleStatus === "failed", "Stellar rejected submit must persist the failed lifecycle, not leave the record at prepared.");
+  assert(stellarRejected.transaction.failureReason?.includes("rejected") ?? false, "Stellar rejected submit must record the rejected reason on the failed record.");
+  assert(listTransactionLifecycleEvents(stellarRejected.transaction.hash).some((event) => event.event === "submission_failed"), "Stellar rejected submit must append a submission_failed lifecycle event.");
+
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  clearStellarSimulator();
+
+  try {
+    await submitTransaction({
+      chainFamily: "evm",
+      network: "stellar-testnet",
+      walletAddress: stellarWallet,
+      sourceAccount: stellarWallet,
+      asset: "GOAT",
+      userApproved: true,
+      signedPayload: stellarWallet,
+    });
+    throw new Error("family/network mismatch should have thrown");
+  } catch (error) {
+    assert(error instanceof TransactionLifecycleError && error.code === "network_chain_family_mismatch", "Submit must reject network/family mismatches.");
+  }
+
+  // ---- submission_failed is a terminal persisted state, not a thrown error ----
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "rejected" });
+  const submissionFailedHash = `0x${"7".repeat(64)}`;
+  const submissionFailed = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: submissionFailedHash,
+    idempotencyKey: "idem_evm_submission_failed",
+  });
+  assert(submissionFailed.outcome === "terminally_recorded", "Rejected RPC submit must persist as terminally_recorded outcome.");
+  assert(submissionFailed.transaction.lifecycleStatus === "failed", "Submission rejection must persist the failed lifecycle, not leave the record at prepared.");
+  assert(submissionFailed.result.status === "failed", "Submission report must surface failed status to callers.");
+  assert(Boolean(submissionFailed.transaction.failureReason), "Failed submission must record a failureReason tied to the RPC rejection.");
+  assert(listTransactionLifecycleEvents(submissionFailed.transaction.hash).some((event) => event.event === "submission_failed"), "Failed submissions must append a submission_failed lifecycle event.");
+  assert(listTransactionLifecycleEvents(submissionFailed.transaction.hash).some((event) => event.event === "prepared"), "Failed submissions must still retain the prepared lifecycle event for audit.");
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
+  // ---- user_rejected is a real lifecycle path, not an orphan event ----
+  const userRejectedHash = `0x${"8".repeat(64)}`;
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const userRejectedPrep = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: userRejectedHash,
+    idempotencyKey: "idem_evm_user_rejected",
+  });
+  assert(userRejectedPrep.transaction.lifecycleStatus === "submitted", "User-rejected fixture requires a fresh submitted record.");
+  const userRejected = await recordUserRejection(userRejectedHash, { walletAddress: "0xabc", reason: "User clicked reject in wallet." });
+  assert(userRejected.lifecycleStatus === "user_rejected", "recordUserRejection must mark the transaction as user_rejected.");
+  assert(isImmutableTerminal(userRejected.lifecycleStatus as TransactionLifecycleStatus), "user_rejected must be flagged as immutable terminal.");
+  assert(Boolean(userRejected.failureReason), "user_rejected must record a human-readable failureReason.");
+  assert(listTransactionLifecycleEvents(userRejectedHash).some((event) => event.event === "user_rejected"), "user_rejected transactions must append a user_rejected lifecycle event.");
+
+  // Re-rejecting an already terminal transaction is a no-op
+  const reRejected = await recordUserRejection(userRejectedHash, { walletAddress: "0xabc" });
+  assert(reRejected.lifecycleStatus === "user_rejected", "Re-rejecting a terminal user_rejected transaction must remain terminal.");
+
+  // ---- prepareTransaction is idempotent across repeated POSTs with the same key ----
+  const prepared = prepareTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    decisionId: "decision_prepare_idempotent",
+    idempotencyKey: "idem_prepare_idempotent",
+  });
+  assert(!prepared.idempotent && prepared.created === true, "First prepare must create a new prepared record.");
+
+  const preparedAgain = prepareTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    decisionId: "decision_prepare_idempotent",
+    idempotencyKey: "idem_prepare_idempotent",
+  });
+  assert(preparedAgain.idempotent && preparedAgain.created === false, "Second prepare with the same idempotency key must be idempotent.");
+  assert(preparedAgain.transaction.hash === prepared.transaction.hash, "Idempotent prepare must return the same transaction record.");
+  assert(prepared.transaction.lifecycleStatus === "prepared", "Prepare must persist the prepared lifecycle.");
+  assert(listTransactionLifecycleEvents(prepared.transaction.hash).some((event) => event.event === "prepared"), "Prepared transactions must append a prepared lifecycle event.");
+
+  const prepareResponse = await prepareExecution(
+    new Request("http://localhost/api/execute/prepare", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: "0xabc",
+        chainFamily: "evm",
+        network: "GOAT Network",
+        decisionId: "decision_prepare_route",
+        asset: "MEME",
+        estimatedValueUsd: 50,
+        simulationStatus: "passed",
+        fromToken: "MEME",
+        toToken: "USDC",
+        percent: 10,
+        riskScore: 40,
+        idemKey: "idem_prepare_route",
+        idempotencyKey: "idem_prepare_route",
+      }),
+    }),
+  );
+  assert(prepareResponse.status === 200, "Prepare API must accept a valid input.");
+  const prepareJson = await prepareResponse.json();
+  assert(prepareJson.prepare?.created === true, "First prepare API call must create a new prepared record.");
+  assert(typeof prepareJson.prepare?.transaction?.hash === "string", "Prepare API must expose the prepared transaction hash.");
+  assert(prepareJson.lifecycle?.status === "prepared", "Prepare API lifecycle status must be prepared.");
+  assert(typeof prepareJson.lifecycle?.idempotencyKey === "string", "Prepare API response must include the idempotency key.");
+
+  const duplicatePrepareResponse = await prepareExecution(
+    new Request("http://localhost/api/execute/prepare", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: "0xabc",
+        chainFamily: "evm",
+        network: "GOAT Network",
+        decisionId: "decision_prepare_route",
+        asset: "MEME",
+        estimatedValueUsd: 50,
+        simulationStatus: "passed",
+        fromToken: "MEME",
+        toToken: "USDC",
+        percent: 10,
+        riskScore: 40,
+        idempotencyKey: "idem_prepare_route",
+      }),
+    }),
+  );
+  const duplicatePrepareJson = await duplicatePrepareResponse.json();
+  assert(duplicatePrepareResponse.status === 200, "Duplicate prepare must respond 200 (idempotent).");
+  assert(duplicatePrepareJson.prepare?.idempotent === true && duplicatePrepareJson.prepare?.created === false, "Duplicate prepare API call must be idempotent.");
+  assert(duplicatePrepareJson.prepare?.transaction?.hash === prepareJson.prepare?.transaction?.hash, "Duplicate prepare API call must reuse the prepared record.");
+
+  // ---- reject API persists user_rejected terminal state ----
+  const rejectHash = `0x${"a".repeat(63)}1`;
+  const rejectCreated = createTransactionRecord({
+    hash: rejectHash,
+    type: "approval",
+    asset: "MEME",
+    valueUsd: 0,
+    status: "submitted",
+    lifecycleStatus: "submitted",
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    userApproved: true,
+  });
+  assert(rejectCreated.lifecycleStatus === "submitted", "Rejected fixture requires an existing submitted record.");
+
+  const rejectResponse = await rejectExecution(
+    new Request("http://localhost/api/execute/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        txHash: rejectHash,
+        walletAddress: "0xabc",
+        reason: "User clicked reject in wallet.",
+        source: "wallet",
+      }),
+    }),
+  );
+  assert(rejectResponse.status === 200, "Reject API must record user_rejected for known hashes.");
+  const rejectJson = await rejectResponse.json();
+  assert(rejectJson.status === "user_rejected", "Reject API must expose user_rejected status.");
+  assert(getTransactionRecord(rejectHash)?.lifecycleStatus === "user_rejected", "Reject API must persist user_rejected terminal state in storage.");
+
+  const unknownRejectResponse = await rejectExecution(
+    new Request("http://localhost/api/execute/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        txHash: `0x${"b".repeat(63)}2`,
+        walletAddress: "0xabc",
+      }),
+    }),
+  );
+  assert(unknownRejectResponse.status === 404, "Reject API must reject unknown transaction hashes.");
+
+  const mismatchedRejectResponse = await rejectExecution(
+    new Request("http://localhost/api/execute/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        txHash: rejectHash,
+        walletAddress: "0xdef",
+        reason: "Mismatched wallet cannot reject.",
+      }),
+    }),
+  );
+  assert(mismatchedRejectResponse.status === 403, "Reject API must reject mismatched wallet addresses.");
+
+  // ---- confirm endpoint route surfaces pending verification when on-chain verifier has no terminal answer ----
+  // Use a fresh network with an explicit pending simulator so the test is deterministic.
+  configureEvmSimulator("evm", "ethereum", { pollOutcome: "pending" });
+  const confirmPendingHash = `0x${"c".repeat(63)}3`;
+  const confirmPending = await confirmExecution(
+    new Request("http://localhost/api/execute/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: "0xabc",
+        txHash: confirmPendingHash,
+        network: "ethereum",
+        userApproved: true,
+        action: "reduce_exposure",
+        asset: "MEME",
+        valueUsd: 25,
+        simulationStatus: "passed",
+        policyAllowed: true,
+      }),
+    }),
+  );
+  assert(confirmPending.status === 200, "Confirm API must record the externally broadcast hash and verify on-chain.");
+  const confirmPendingJson = await confirmPending.json();
+  assert(confirmPendingJson.pendingVerification === true, "Confirm must report pendingVerification when the on-chain verifier cannot confirm yet.");
+  assert(confirmPendingJson.transaction?.lifecycleStatus === "pending" || confirmPendingJson.transaction?.lifecycleStatus === "submitted", "Confirm must record a non-terminal lifecycle when verification is still pending.");
+  clearEvmSimulator();
+
+  // Append a manual user_rejected event and ensure new hash is flagged
+  appendLifecycleEventByName(`0x${"f".repeat(64)}`, "user_rejected", { reason: "User clicked reject in wallet." });
+  assert(listTransactionLifecycleEvents(`0x${"f".repeat(64)}`).some((event) => event.event === "user_rejected"), "Lifecycle event store must keep manual user_rejected events.");
+
+  // ---- EVM signed-payload submit exercises real payload path, not pre-hash shortcut ----
+  const evmSignedPayload = `0x${"f".repeat(300)}`;
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const evmSignedResult = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmSignedPayload,
+    idempotencyKey: "idem_evm_signed_payload",
+  });
+  assert(evmSignedResult.outcome === "submitted", "EVM signed-payload submit must produce a submitted lifecycle.");
+  assert(evmSignedResult.transaction.lifecycleStatus === "submitted", "EVM signed-payload submit must reach submitted status.");
+  const evmSignedHash = evmSignedResult.transaction.hash;
+  assert(listTransactionLifecycleEvents(evmSignedHash).some((event) => event.event === "prepared"), "EVM signed-payload submit must append a prepared lifecycle event.");
+  const evmSignedPoll = await pollTransaction(evmSignedHash);
+  assert(evmSignedPoll.transaction.lifecycleStatus === "confirmed", "EVM signed-payload transaction must confirm via poll.");
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
+  // ---- Stellar signed-payload submit exercises real payload path, not pre-hash shortcut ----
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const stellarSignedPayload = "AAAAAgAAAABh" + `${"a".repeat(100)}`;
+  const stellarSignedResult = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    sourceAccount: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: stellarSignedPayload,
+    idempotencyKey: "idem_stellar_signed_payload",
+  });
+  assert(stellarSignedResult.outcome === "submitted", "Stellar signed-payload submit must produce a submitted lifecycle.");
+  assert(stellarSignedResult.transaction.lifecycleStatus === "submitted", "Stellar signed-payload submit must reach submitted status.");
+  const stellarSignedHash = stellarSignedResult.transaction.hash;
+  const stellarSignedPoll = await pollTransaction(stellarSignedHash);
+  assert(stellarSignedPoll.transaction.lifecycleStatus === "confirmed", "Stellar signed-payload transaction must confirm via poll.");
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
+  // ---- Stellar terminal user_rejected E2E integration coverage ----
+  const stellarRejectedPayload = `${"a".repeat(63)}b`;
+  const stellarRejectedWallet = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const stellarRejectedPrep = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarRejectedWallet,
+    sourceAccount: stellarRejectedWallet,
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: stellarRejectedPayload,
+    idempotencyKey: "idem_stellar_user_rejected_e2e",
+  });
+  assert(stellarRejectedPrep.transaction.lifecycleStatus === "submitted", "Stellar user_rejected fixture requires a fresh submitted record.");
+  const stellarRejectedHash = stellarRejectedPrep.transaction.hash;
+  const stellarRejectedLifecycle = await recordUserRejection(stellarRejectedHash, { walletAddress: stellarRejectedWallet, reason: "User clicked reject in Stellar wallet." });
+  assert(stellarRejectedLifecycle.lifecycleStatus === "user_rejected", "Stellar recordUserRejection must mark the transaction as user_rejected.");
+  assert(isImmutableTerminal(stellarRejectedLifecycle.lifecycleStatus as TransactionLifecycleStatus), "Stellar user_rejected must be flagged as immutable terminal.");
+  assert(listTransactionLifecycleEvents(stellarRejectedHash).some((event) => event.event === "user_rejected"), "Stellar user_rejected transactions must append a user_rejected lifecycle event.");
+
+  const stellarRejectApi = await rejectExecution(
+    new Request("http://localhost/api/execute/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        txHash: stellarRejectedHash,
+        walletAddress: stellarRejectedWallet,
+        reason: "Stellar wallet UI cancelled.",
+        source: "wallet",
+        chainFamily: "stellar",
+        network: "stellar-testnet",
+      }),
+    }),
+  );
+  assert(stellarRejectApi.status === 200, "Reject API must accept Stellar user_rejected for known hashes.");
+  const stellarRejectJson = await stellarRejectApi.json();
+  assert(stellarRejectJson.status === "user_rejected", "Reject API response must surface user_rejected for Stellar hashes.");
+  assert(getTransactionRecord(stellarRejectedHash)?.lifecycleStatus === "user_rejected", "Reject API must persist user_rejected terminal state for Stellar hashes in storage.");
+  clearStellarSimulator();
+
+  const txMissing = (() => {
+    try {
+      const recorded = getTransactionRecord(`0x${"9".repeat(64)}`);
+      return recorded;
+    } catch {
+      return undefined;
+    }
+  })();
+  assert(txMissing === undefined, "Unknown hash must return no transaction record.");
+
+  // ---- API route level coverage ----
+  const submitResponse = await submitExecution(
+    new Request("http://localhost/api/execute/submit", {
+      method: "POST",
+      body: JSON.stringify({
+        chainFamily: "stellar",
+        network: "stellar-testnet",
+        walletAddress: stellarWallet,
+        signedPayload: `${"7".repeat(64)}`,
+        asset: "GOAT",
+        decisionId: "decision_route_stellar",
+        userApproved: true,
+        idempotencyKey: "idem_route_stellar",
+      }),
+    }),
+  );
+  assert(submitResponse.status === 200, "Stellar submit API must accept valid Stellar payloads.");
+  const submitJson = await submitResponse.json();
+  assert(submitJson.transaction.chainFamily === "stellar", "Submit API must persist chain family.");
+
+  const stellarHash2 = `${"7".repeat(64)}`;
+  const stellarHash2Lower = stellarHash2.toLowerCase();
+  const wrongFamilyResponse = await submitExecution(
+    new Request("http://localhost/api/execute/submit", {
+      method: "POST",
+      body: JSON.stringify({
+        chainFamily: "evm",
+        network: "stellar-testnet",
+        walletAddress: stellarWallet,
+        signedPayload: stellarHash2Lower,
+        asset: "GOAT",
+        userApproved: true,
+        idempotencyKey: "idem_route_wrong_family",
+      }),
+    }),
+  );
+  assert(wrongFamilyResponse.status === 400, "Submit must reject when chain family does not match network.");
+
+  const wrongWalletFormat = await submitExecution(
+    new Request("http://localhost/api/execute/submit", {
+      method: "POST",
+      body: JSON.stringify({
+        chainFamily: "evm",
+        network: "GOAT Network",
+        walletAddress: "not-an-address",
+        signedPayload: `0x${"a".repeat(64)}`,
+        asset: "MEME",
+        userApproved: true,
+      }),
+    }),
+  );
+  assert(wrongWalletFormat.status === 400, "Submit must reject invalid wallets.");
+
+  const evmMismatchedSourceWallet = `0x${"a".repeat(40)}`;
+  const evmMismatchedSourceOther = `0x${"d".repeat(40)}`;
+  const evmMismatchedSource = await submitExecution(
+    new Request("http://localhost/api/execute/submit", {
+      method: "POST",
+      body: JSON.stringify({
+        chainFamily: "evm",
+        network: "GOAT Network",
+        walletAddress: evmMismatchedSourceWallet,
+        sourceAccount: evmMismatchedSourceOther,
+        signedPayload: `0x${"b".repeat(64)}`,
+        asset: "MEME",
+        userApproved: true,
+      }),
+    }),
+  );
+  assert(evmMismatchedSource.status === 403, "Submit must reject EVM source/wallet mismatches.");
+
+  // Confirm API chain-family validation
+  const stellarConfirmCollision = await confirmExecution(
+    new Request("http://localhost/api/execute/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: stellarWallet,
+        chainFamily: "stellar",
+        txHash: stellarHash2,
+        userApproved: true,
+      }),
+    }),
+  );
+  assert(stellarConfirmCollision.status === 200, "Confirm must accept a Stellar hash when chainFamily=stellar.");
+
+  const evmConfirmCollision = await confirmExecution(
+    new Request("http://localhost/api/execute/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: stellarWallet,
+        chainFamily: "evm",
+        txHash: stellarHash2,
+        userApproved: true,
+      }),
+    }),
+  );
+  assert(evmConfirmCollision.status === 400, "Confirm must reject a Stellar hash when chainFamily=evm.");
+
+  // Poll endpoint
+  const pollRoute = await getTransactionLifecycle(
+    new NextRequest(`http://localhost/api/execute/transactions/${evmSubmitted.transaction.hash}`, { method: "GET" }),
+    { params: Promise.resolve({ hash: evmSubmitted.transaction.hash }) },
+  );
+  assert(pollRoute.status === 200, "Status endpoint must accept known hashes.");
+  const pollJson = await pollRoute.json();
+  assert(Array.isArray(pollJson.events) && pollJson.events.length > 0, "Status endpoint must include lifecycle events.");
+  assert(pollJson.transaction.lifecycleStatus === "confirmed", "Status endpoint must reflect the latest lifecycle state.");
+
+  const missingRoute = await getTransactionLifecycle(
+    new NextRequest(`http://localhost/api/execute/transactions/${"9".repeat(64)}`, { method: "GET" }),
+    { params: Promise.resolve({ hash: "9".repeat(64) }) },
+  );
+  assert(missingRoute.status === 404, "Status endpoint must return 404 for unknown hashes.");
+
+  const richHistory = await listTransactionHistory(new NextRequest(`http://localhost/api/history/transactions?walletAddress=0xabc`, { method: "GET" }));
+  assert(richHistory.status === 200, "History endpoint must respond 200.");
+  const historyJson = await richHistory.json();
+  assert(Array.isArray(historyJson) && historyJson.length > 0, "History endpoint must return enriched records.");
+  assert(historyJson.every((record: { events?: unknown[] }) => Array.isArray(record.events)), "History records must include their lifecycle events.");
+  assert(historyJson.every((record: { explorerUrl?: string }) => typeof record.explorerUrl === "string"), "History records must include an explorer URL.");
+
+  // Storage invariants
+  const lookupByHash = getTransactionRecord(evmSubmitted.transaction.hash);
+  assert(lookupByHash?.hash === evmSubmitted.transaction.hash, "Storage must retrieve transaction records by hash.");
+  const lookupByKey = getTransactionRecordByIdempotencyKey("0xabc", "idem_evm_success");
+  assert(lookupByKey?.idempotencyKey === "idem_evm_success", "Storage must look up records by idempotency key.");
+  assert(updateTransactionRecord(evmSubmitted.transaction.hash, { valueUsd: 999 })?.valueUsd === 999, "Update should mutate tracking fields without touching status.");
+
+  clearEvmSimulator();
 }
 
 async function runProviderReliabilityChecks() {
@@ -1137,12 +1873,266 @@ function runCachePolicyChecks() {
   assert(execution.scope === "no-store", "Execution planning must not be shared-cacheable.");
 }
 
-async function runX402Checks() {
+function stellarRpcHealthConnected() {
+  return Promise.resolve({
+    healthy: true,
+    status: "healthy",
+    network: "stellar-testnet",
+    passphrase: "Test SDF Network ; September 2015",
+    protocolVersion: 27,
+    latestLedger: 1234567,
+    closeTime: Math.floor(Date.now() / 1000),
+    checkedAt: now.toISOString(),
+    latencyMs: 42,
+    providerUrl: "https://soroban-testnet.stellar.org",
+    fallbackUsed: false,
+    attempts: 1,
+  });
+}
+
+const classicAssetRecordFactory = (overrides: Record<string, unknown> = {}) => ({
+  asset_code: "USDC",
+  asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  contract_id: "CBMT5M7Z7Y4FJ3H7Y5K6L7M8N9O0P1Q2R3S4T5U6V7W8X9Y0Z1A2B3C4D",
+  num_liquidity_pools: 5,
+  liquidity_pools_amount: "1250000",
+  accounts: {
+    authorized: 850,
+    authorized_to_maintain_liabilities: 12,
+    unauthorized: 8,
+  },
+  flags: {
+    auth_required: false,
+    auth_revocable: false,
+    auth_immutable: true,
+    auth_clawback_enabled: false,
+  },
+  ...overrides,
+});
+
+const issuerAccountFactory = (overrides: Record<string, unknown> = {}) => ({
+  id: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  accountId: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  sequence: "123456789",
+  subentryCount: 3,
+  flags: {
+    auth_required: false,
+    auth_revocable: false,
+    auth_immutable: true,
+    auth_clawback_enabled: false,
+  },
+  balances: [],
+  ...overrides,
+});
+
+const sacContractState = {
+  deployed: true,
+  type: "stellar_asset_contract",
+  lastModifiedLedgerSeq: 1234000,
+  liveUntilLedgerSeq: 2234000,
+  latestLedger: 1234567,
+};
+
+const wasmContractState = {
+  deployed: true,
+  type: "wasm_contract",
+  wasmHash: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+  lastModifiedLedgerSeq: 1234000,
+  liveUntilLedgerSeq: 2234000,
+  latestLedger: 1234567,
+};
+
+function assertStellarReplay(fixtureName: string, result: AgentResult) {
+  const expected = stellarReplaySnapshots[fixtureName];
+  assert(expected !== undefined, `Stellar replay snapshot must exist for ${fixtureName}.`);
+  assert(expected.chainFamily === "stellar", `Stellar replay snapshot ${fixtureName} must have chainFamily stellar.`);
+  assert(result.agent === "onchain", `Stellar ${fixtureName} must be an onchain agent result.`);
+  assert(result.agent === expected.agent, `Stellar ${fixtureName} agent mismatch: expected ${expected.agent}, got ${result.agent}.`);
+  assert(result.recommendedAction === expected.recommendedAction, `Stellar ${fixtureName} recommendedAction drift: expected ${expected.recommendedAction}, got ${result.recommendedAction}.${expected.migrationNote ? ` Note: ${expected.migrationNote}` : ""}`);
+  assert(Math.abs(result.riskScore - expected.riskScore) <= 3, `Stellar ${fixtureName} riskScore drift: expected ${expected.riskScore}, got ${result.riskScore}.${expected.migrationNote ? ` Note: ${expected.migrationNote}` : ""}`);
+  // Also verify deterministic snapshot creation
+  const snapshotHash = hashSourceSnapshot({ sources: result.sources, rawSignals: result.rawSignals });
+  const replaySnapshot = createStellarReplaySnapshot(result, snapshotHash, fixtureName);
+  assert(replaySnapshot.chainFamily === "stellar", `Stellar replay snapshot must set chainFamily to stellar for ${fixtureName}.`);
+  const selfComparison = compareReplaySnapshot(replaySnapshot, result);
+  assert(selfComparison.compatible, `Stellar replay snapshot ${fixtureName} self-comparison failed: ${selfComparison.migrationNote}`);
+}
+
+async function runStellarOnchainChecks() {
+  // 1. XLM (native)
+  const xlmResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", assetType: "native", symbol: "XLM" },
+    { fetchRpcHealth: stellarRpcHealthConnected },
+  );
+  assertAgentContract(xlmResult);
+  assert(xlmResult.riskScore < 50, "XLM native fixture must produce low/medium risk.");
+  assert(xlmResult.recommendedAction === "hold" || xlmResult.recommendedAction === "watch", "XLM native fixture must not force manual review.");
+  assert(xlmResult.findings.some((f) => f.label === "Asset identity" && f.detail.includes("Native XLM identity")), "XLM report must reference native identity.");
+  assert(xlmResult.findings.some((f) => f.label === "Issuer controls" && f.detail.includes("XLM has no asset issuer")), "XLM report must state no issuer.");
+  assert(xlmResult.findings.some((f) => f.label === "Clawback capability" && f.detail.includes("cannot be clawed back")), "XLM report must state no clawback possible.");
+  assert(xlmResult.findings.some((f) => f.label === "Trustline state" && f.detail.includes("XLM does not require a trustline")), "XLM report must state no trustline needed.");
+  assert(!xlmResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "XLM report must not contain EVM-only checks.");
+  assert(xlmResult.sources.some((s) => s.label === "Soroban contract state" && s.status === "unavailable"), "XLM report must show contract state as unavailable.");
+  assert(assertGoldenScore("stellar_xlm", xlmResult.riskScore), "XLM fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_xlm", xlmResult);
+
+  // 2. Known classic asset (USDC on Stellar, clean)
+  const classicProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchClassicAssetRecord: async () => classicAssetRecordFactory(),
+    fetchIssuerAccount: async () => issuerAccountFactory(),
+    fetchContractState: async () => sacContractState,
+  };
+  const classicResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", assetType: "classic", symbol: "USDC", issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" },
+    classicProviders,
+  );
+  assertAgentContract(classicResult);
+  assert(classicResult.riskScore < 50, "Known classic fixture must produce low/medium risk.");
+  assert(classicResult.recommendedAction === "hold" || classicResult.recommendedAction === "watch", "Known classic fixture must not force manual review.");
+  assert(classicResult.findings.some((f) => f.label === "Asset identity" && f.detail.includes("USDC")), "Classic report must reference asset code.");
+  assert(classicResult.findings.some((f) => f.label === "Contract interface" && f.detail.includes("Stellar Asset Contract")), "Classic SAC report must mention SAC.");
+  assert(!classicResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Classic report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_known_classic", classicResult.riskScore), "Known classic fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_known_classic", classicResult);
+
+  // 3. Restricted asset (auth_required + auth_revocable + clawback enabled)
+  const restrictedProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchClassicAssetRecord: async () => classicAssetRecordFactory({
+      num_liquidity_pools: 1,
+      liquidity_pools_amount: "25000",
+      accounts: { authorized: 50, authorized_to_maintain_liabilities: 200, unauthorized: 100 },
+      flags: {
+        auth_required: true,
+        auth_revocable: true,
+        auth_immutable: false,
+        auth_clawback_enabled: true,
+      },
+    }),
+    fetchIssuerAccount: async () => issuerAccountFactory({
+      flags: {
+        auth_required: true,
+        auth_revocable: true,
+        auth_immutable: false,
+        auth_clawback_enabled: true,
+      },
+    }),
+    fetchContractState: async () => sacContractState,
+  };
+  const restrictedResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", assetType: "classic", symbol: "REST", issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" },
+    restrictedProviders,
+  );
+  assertAgentContract(restrictedResult);
+  assert(restrictedResult.riskScore >= 25, "Restricted asset fixture must produce at least medium risk.");
+  assert(restrictedResult.findings.some((f) => f.label === "Clawback capability" && f.severity === "high"), "Restricted asset report must flag clawback as high severity.");
+  assert(restrictedResult.findings.some((f) => f.label === "Trustline state" && f.detail.includes("unauthorized")), "Restricted asset report must mention unauthorized accounts.");
+  assert(restrictedResult.findings.some((f) => f.label === "Issuer controls" && f.detail.includes("Authorization required: yes")), "Restricted asset report must show auth_required.");
+  assert(!restrictedResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Restricted asset report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_restricted_asset", restrictedResult.riskScore), "Restricted asset fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_restricted_asset", restrictedResult);
+
+  // 4. SAC (Stellar Asset Contract, via contract address)
+  const sacProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchContractState: async () => sacContractState,
+  };
+  const sacResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", contractAddress: "CBMT5M7Z7Y4FJ3H7Y5K6L7M8N9O0P1Q2R3S4T5U6V7W8X9Y0Z1A2B3C4D", assetType: "contract" },
+    sacProviders,
+  );
+  assertAgentContract(sacResult);
+  assert(sacResult.riskScore < 50, "SAC fixture must produce low/medium risk.");
+  assert(sacResult.findings.some((f) => f.label === "Contract interface" && f.detail.includes("Stellar Asset Contract")), "SAC report must state SAC interface.");
+  assert(sacResult.findings.some((f) => f.label === "Contract storage" && f.detail.includes("live until ledger")), "SAC report must show contract storage TTL.");
+  assert(!sacResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "SAC report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_sac", sacResult.riskScore), "SAC fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_sac", sacResult);
+
+  // 5. SEP-41 (generic Soroban WASM contract)
+  const sep41Providers: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchContractState: async () => wasmContractState,
+  };
+  const sep41Result = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", contractAddress: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", assetType: "contract" },
+    sep41Providers,
+  );
+  assertAgentContract(sep41Result);
+  assert(sep41Result.riskScore >= 25, "SEP-41 WASM fixture must produce at least medium risk (unknown issuer, no classic backing).");
+  assert(sep41Result.findings.some((f) => f.label === "Contract interface" && f.detail.includes("WASM contract")), "SEP-41 report must state WASM contract.");
+  assert(sep41Result.findings.some((f) => f.label === "Contract interface" && f.detail.includes("SEP-41")), "SEP-41 report must mention SEP-41 simulation requirement.");
+  assert(sep41Result.confidence < 0.84, "SEP-41 WASM contract (no issuer) must have reduced confidence.");
+  assert(!sep41Result.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "SEP-41 report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_sep41", sep41Result.riskScore), "SEP-41 fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_sep41", sep41Result);
+
+  // 6. Invalid issuer (CODE:ISSUER where issuer doesn't exist)
+  const invalidIssuerProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchClassicAssetRecord: async () => null,
+    fetchIssuerAccount: async () => null,
+  };
+  const invalidIssuerResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", assetType: "classic", symbol: "FAKE", issuer: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" },
+    invalidIssuerProviders,
+  );
+  assertAgentContract(invalidIssuerResult);
+  assert(invalidIssuerResult.riskScore >= 60, "Invalid issuer fixture must produce high/critical risk.");
+  assert(invalidIssuerResult.recommendedAction === "manual_review" || invalidIssuerResult.recommendedAction === "avoid", "Invalid issuer fixture must not recommend hold.");
+  assert(invalidIssuerResult.findings.some((f) => f.label === "Issuer controls" && f.severity === "critical"), "Invalid issuer report must flag missing issuer as critical.");
+  assert(invalidIssuerResult.findings.some((f) => f.label === "Asset identity" && f.detail.includes("could not be confirmed")), "Invalid issuer report must state identity not confirmed.");
+  assert(!invalidIssuerResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Invalid issuer report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_invalid_issuer", invalidIssuerResult.riskScore), "Invalid issuer fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_invalid_issuer", invalidIssuerResult);
+
+  // 7. Unknown contract (contract address with no deployed code)
+  const unknownContractProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchContractState: async () => null,
+  };
+  const unknownContractResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", contractAddress: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", assetType: "contract" },
+    unknownContractProviders,
+  );
+  assertAgentContract(unknownContractResult);
+  assert(unknownContractResult.riskScore >= 55, "Unknown contract fixture must produce high/critical risk.");
+  assert(unknownContractResult.recommendedAction === "manual_review" || unknownContractResult.recommendedAction === "avoid", "Unknown contract fixture must not recommend hold.");
+  assert(unknownContractResult.findings.some((f) => f.label === "Contract interface" && f.detail.includes("No deployed Soroban contract")), "Unknown contract report must state no contract deployed.");
+  assert(unknownContractResult.findings.some((f) => f.label === "Contract storage" && f.detail.includes("was unavailable")), "Unknown contract report must state storage unavailable.");
+  assert(!unknownContractResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Unknown contract report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_unknown_contract", unknownContractResult.riskScore), "Unknown contract fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_unknown_contract", unknownContractResult);
+
+  // 8. Unavailable provider (all RPC calls fail)
+  const unavailableProviders: StellarOnchainProviders = {
+    fetchRpcHealth: async () => {
+      throw new Error("RPC unavailable");
+    },
+  };
+  const unavailableResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", contractAddress: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", assetType: "contract" },
+    unavailableProviders,
+  );
+  assertAgentContract(unavailableResult);
+  assert(unavailableResult.riskScore >= 60, "Unavailable provider fixture must produce high/critical risk.");
+  assert(unavailableResult.recommendedAction === "manual_review" || unavailableResult.recommendedAction === "avoid", "Unavailable provider fixture must not recommend hold.");
+  assert(unavailableResult.sources.some((s) => s.status === "unavailable"), "Unavailable provider report must show unavailable sources.");
+  assert(unavailableResult.confidence < 0.5, "Unavailable provider fixture must have reduced confidence.");
+  assert(!unavailableResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Unavailable provider report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_unavailable_provider", unavailableResult.riskScore), "Unavailable provider fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_unavailable_provider", unavailableResult);
+}
+
+function runX402Checks() {
   const previous = {
     X402_PAY_TO: process.env.X402_PAY_TO,
     X402_PRICE_USD: process.env.X402_PRICE_USD,
     X402_NETWORK: process.env.X402_NETWORK,
     X402_FACILITATOR_URL: process.env.X402_FACILITATOR_URL,
+    X402_STELLAR_ENABLED: process.env.X402_STELLAR_ENABLED,
+    X402_PAYMENT_EXPIRY_SECONDS: process.env.X402_PAYMENT_EXPIRY_SECONDS,
     CDP_API_KEY_ID: process.env.CDP_API_KEY_ID,
     CDP_API_KEY_SECRET: process.env.CDP_API_KEY_SECRET,
   };
@@ -1151,6 +2141,8 @@ async function runX402Checks() {
   process.env.X402_PRICE_USD = "$0.01";
   process.env.X402_NETWORK = "eip155:84532";
   process.env.X402_FACILITATOR_URL = "https://x402.org/facilitator";
+  delete process.env.X402_STELLAR_ENABLED;
+  delete process.env.X402_PAYMENT_EXPIRY_SECONDS;
 
   const config = getX402RuntimeConfig();
   const validation = validateX402RuntimeConfig(config);
@@ -1158,21 +2150,29 @@ async function runX402Checks() {
 
   assert(validation.ok, `x402 config should validate in fixture: ${validation.issues.join(", ")}`);
   assert(config.protectedResource === "/api/x402/deep-scan", "x402 protected resource must be the premium deep scan endpoint.");
+  assert(config.chainFamily === "evm", "EVM network config must detect evm chain family.");
+  assert(config.paymentExpirySeconds === 300, "Payment expiry must default to 300 seconds.");
+  assert(config.supportedSchemes.includes("exact"), "EVM config must support exact scheme.");
   assert(Array.isArray(routeConfig.accepts), "x402 route config must expose payment requirements.");
   assert(routeConfig.accepts[0]?.payTo === config.payTo, "x402 route config must bind the expected recipient.");
   assert(routeConfig.accepts[0]?.network === config.network, "x402 route config must bind the expected network.");
 
+  // Test: fresh payment passes guard
   const request = new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
     headers: { "PAYMENT-SIGNATURE": "fixture-payment-signature" },
   });
-  const guard = await assertFreshX402Payment({
+  const guard = assertFreshX402Payment({
     request,
     requestBody: { query: "GOAT", chain: "base" },
     config,
   });
 
   assert(guard.ok, "Fresh x402 payment signature must pass idempotency guard.");
-  const receipt = await createX402PaymentReceipt({
+  assert(guard.paymentDetails.chainFamily === "evm", "Payment details must expose evm chain family.");
+  assert(typeof guard.requestBodyHash === "string" && guard.requestBodyHash.length === 64, "Payment must bind to exact request body hash.");
+
+  // Test: receipt with chain family
+  const receipt = createX402PaymentReceipt({
     requestId: guard.requestId,
     paymentHeaderHash: guard.paymentHeaderHash,
     network: config.network,
@@ -1184,12 +2184,15 @@ async function runX402Checks() {
     protectedResource: config.protectedResource,
     requestBodyHash: guard.requestBodyHash,
     verificationStatus: "verified",
+    chainFamily: "evm",
   });
 
   assert(receipt.id.startsWith("x402_"), "x402 payment receipts must use x402 ids.");
-  assert((await getX402PaymentReceiptByHeaderHash(hashPaymentHeader("fixture-payment-signature")))?.id === receipt.id, "x402 receipts must be retrievable by payment header hash.");
+  assert(receipt.chainFamily === "evm", "x402 receipt must store evm chain family.");
+  assert(getX402PaymentReceiptByHeaderHash(hashPaymentHeader("fixture-payment-signature"))?.id === receipt.id, "x402 receipts must be retrievable by payment header hash.");
 
-  const duplicate = await assertFreshX402Payment({
+  // Test: duplicate payment rejected
+  const duplicate = assertFreshX402Payment({
     request,
     requestBody: { query: "GOAT", chain: "base" },
     config,
@@ -1197,10 +2200,76 @@ async function runX402Checks() {
 
   assert(!duplicate.ok && duplicate.status === 409, "Duplicate x402 payment signature must be rejected before premium work runs.");
 
+  // Test: amount mismatch with x402 middleware headers
+  const amountMismatch = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: { "PAYMENT-SIGNATURE": "fixture-amount-mismatch", "X-PAYMENT-AMOUNT": "$0.99" },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!amountMismatch.ok && amountMismatch.error === "payment_amount_mismatch", "Payment amount mismatch must be rejected before premium work runs.");
+
+  // Test: recipient mismatch
+  const recipientMismatch = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: { "PAYMENT-SIGNATURE": "fixture-recipient-mismatch", "X-PAYMENT-RECIPIENT": "0x0000000000000000000000000000000000000099" },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!recipientMismatch.ok && recipientMismatch.error === "payment_recipient_mismatch", "Payment recipient mismatch must be rejected before premium work runs.");
+
+  // Test: network mismatch
+  const networkMismatch = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: { "PAYMENT-SIGNATURE": "fixture-network-mismatch", "X-PAYMENT-NETWORK": "eip155:1" },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!networkMismatch.ok && networkMismatch.error === "payment_network_mismatch", "Payment network mismatch must be rejected before premium work runs.");
+
+  // Test: expired payment
+  const expired = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-expired",
+        "X-PAYMENT-SETTLED-AT": new Date(Date.now() - 600_000).toISOString(),
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!expired.ok && expired.error === "payment_expired", "Expired x402 payment must be rejected before premium work runs.");
+
+  // Test: payment with payer identity on headers
+  const withPayer = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-with-payer",
+        "X-PAYMENT-PAYER": "0x0000000000000000000000000000000000000001",
+        "X-PAYMENT-TX-HASH": "0x" + "a".repeat(64),
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(withPayer.ok, "Valid EVM payer identity must pass payment guard.");
+  assert(withPayer.paymentDetails.payer === "0x0000000000000000000000000000000000000001", "EVM payer must be exposed in payment details.");
+  assert(withPayer.paymentDetails.transactionHash === "0x" + "a".repeat(64), "EVM transaction hash must be exposed in payment details.");
+
+  // Test: price format validation
   process.env.X402_PRICE_USD = "0.01";
   const invalid = validateX402RuntimeConfig(getX402RuntimeConfig());
   assert(!invalid.ok && invalid.issues.some((issue) => issue.includes("X402_PRICE_USD")), "x402 price must keep dollar-prefixed format.");
 
+  // Test: Base mainnet requires CDP facilitator
   process.env.X402_PRICE_USD = "$0.01";
   process.env.X402_NETWORK = "eip155:8453";
   const invalidMainnetFacilitator = validateX402RuntimeConfig(getX402RuntimeConfig());
@@ -1209,11 +2278,82 @@ async function runX402Checks() {
     "Base mainnet must reject the testnet-only facilitator.",
   );
 
+  // Test: CDP facilitator requires credentials
   process.env.X402_FACILITATOR_URL = "https://api.cdp.coinbase.com/platform/v2/x402";
   delete process.env.CDP_API_KEY_ID;
   delete process.env.CDP_API_KEY_SECRET;
   const invalidCdpAuth = validateX402RuntimeConfig(getX402RuntimeConfig());
   assert(!invalidCdpAuth.ok && invalidCdpAuth.issues.some((issue) => issue.includes("CDP_API_KEY_ID")), "CDP facilitator must require both API credentials.");
+
+  // Test: Stellar network config validation
+  process.env.X402_NETWORK = "stellar:testnet";
+  process.env.X402_PAY_TO = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+  process.env.X402_FACILITATOR_URL = "https://x402.org/facilitator";
+  process.env.X402_STELLAR_ENABLED = "1";
+  const stellarConfig = getX402RuntimeConfig();
+  assert(stellarConfig.chainFamily === "stellar", "Stellar network must detect stellar chain family.");
+  assert(stellarConfig.supportedSchemes.includes("exact-stellar"), "Stellar-enabled config must support exact-stellar scheme.");
+  assert(stellarConfig.asset === "USDC:stellar", "Stellar config must default to USDC:stellar asset.");
+
+  // Test: Stellar payment with valid payer
+  const stellarGuard = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=stellar", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-stellar-payer",
+        "X-PAYMENT-PAYER": "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+        "X-PAYMENT-TX-HASH": "a".repeat(64),
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "stellar" },
+    config: stellarConfig,
+  });
+
+  assert(stellarGuard.ok, "Valid Stellar payer identity must pass payment guard.");
+  assert(stellarGuard.paymentDetails.chainFamily === "stellar", "Stellar payment must expose stellar chain family.");
+  assert(stellarGuard.paymentDetails.payer === "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H", "Stellar payer must be exposed in payment details.");
+
+  // Test: invalid payer address format
+  const invalidPayer = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-invalid-payer",
+        "X-PAYMENT-PAYER": "not-a-valid-address",
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!invalidPayer.ok && invalidPayer.error === "invalid_payer_identity", "Invalid payer address format must be rejected.");
+
+  // Test: payer chain family mismatch (Stellar payer on EVM network)
+  const chainMismatch = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-chain-mismatch",
+        "X-PAYMENT-PAYER": "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!chainMismatch.ok && chainMismatch.error === "payer_chain_family_mismatch", "Stellar payer on EVM network must be rejected.");
+
+  // Test: invalid EVM transaction hash format
+  const invalidTxHash = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-invalid-tx",
+        "X-PAYMENT-PAYER": "0x0000000000000000000000000000000000000001",
+        "X-PAYMENT-TX-HASH": "not-a-tx-hash",
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!invalidTxHash.ok && invalidTxHash.error === "invalid_transaction_hash", "Invalid EVM transaction hash format must be rejected.");
 
   for (const [key, value] of Object.entries(previous)) {
     if (value === undefined) {
@@ -1224,17 +2364,172 @@ async function runX402Checks() {
   }
 }
 
+function runStellarAssetIdentityChecks() {
+  const testnetPassphrase = stellarNetworks["stellar-testnet"].networkPassphrase;
+  const networkId = "stellar-testnet";
+
+  // 1. Native XLM resolution
+  const nativeXlm = parseStellarAssetInput("xlm", networkId);
+  assert(nativeXlm !== null, "XLM must resolve.");
+  assert(nativeXlm!.type === "native", "XLM must resolve as native type.");
+  assert(nativeXlm!.assetKey === "native", "XLM asset key must be 'native'.");
+  assert((nativeXlm as { symbol: string }).symbol === "XLM", "XLM symbol must be XLM.");
+  assert((nativeXlm as { contractId: string }).contractId.startsWith("C"), "Native XLM must derive a SAC contract ID.");
+
+  const nativeAlt = parseStellarAssetInput("native", networkId);
+  assert(nativeAlt !== null && nativeAlt.type === "native", "'native' string must resolve as native.");
+
+  const nativeStellarPrefix = parseStellarAssetInput("stellar:xlm", networkId);
+  assert(nativeStellarPrefix !== null && nativeStellarPrefix.type === "native", "'stellar:xlm' must resolve as native.");
+
+  // 2. Classic asset (CODE:ISSUER) resolution and deterministic SAC
+  const fakeIssuer = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+  const classicInput = `USDC:${fakeIssuer}`;
+  const classic = parseStellarAssetInput(classicInput, networkId);
+  assert(classic !== null, "Classic CODE:ISSUER must resolve.");
+  assert(classic!.type === "classic", "CODE:ISSUER must resolve as classic type.");
+  assert((classic as { symbol: string }).symbol === "USDC", "Classic symbol must be USDC.");
+  assert((classic as { issuer: string }).issuer === fakeIssuer, "Classic issuer must match.");
+  assert((classic as { contractId: string }).contractId.startsWith("C"), "Classic must derive a deterministic SAC contract ID.");
+
+  // Verify deterministic SAC derivation helper matches
+  const sacIdFromHelper = deriveStellarSacContractId({ code: "USDC", issuer: fakeIssuer }, testnetPassphrase);
+  assert(sacIdFromHelper === (classic as { contractId: string }).contractId, "deriveStellarSacContractId must match parseStellarAssetInput SAC.");
+
+  // Native SAC derivation
+  const nativeSacId = deriveStellarSacContractId("native", testnetPassphrase);
+  assert(nativeSacId === (nativeXlm as { contractId: string }).contractId, "Native SAC derivation must match XLM identity contractId.");
+
+  // 3. Symbol-only identity is NEVER accepted for classic assets
+  const symbolOnly = parseStellarAssetInput("USDC", networkId);
+  assert(symbolOnly === null, "Symbol-only identity must NEVER be accepted for classic assets.");
+
+  const symbolOnlyLower = parseStellarAssetInput("usdc", networkId);
+  assert(symbolOnlyLower === null, "Symbol-only identity (lowercase) must not resolve.");
+
+  // 4. Contract (C...) address resolution
+  const fakeContract = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+  const contractIdentity = parseStellarAssetInput(fakeContract, networkId);
+  assert(contractIdentity !== null, "C-contract must resolve.");
+  assert(contractIdentity!.type === "contract" || contractIdentity!.type === "deterministic_sac", "C-contract must resolve as contract or deterministic_sac.");
+  assert((contractIdentity as { contractId: string }).contractId === fakeContract, "Contract identity must have matching contractId.");
+
+  // If a C-address matches the native SAC, it should resolve as deterministic_sac
+  const nativeSac = parseStellarAssetInput(nativeSacId, networkId);
+  assert(nativeSac !== null, "Native SAC contract ID must resolve.");
+  assert(nativeSac!.type === "deterministic_sac", "Native SAC contract ID must resolve as deterministic_sac.");
+  assert((nativeSac as { underlyingType: string }).underlyingType === "native", "Native SAC must have underlyingType 'native'.");
+  assert((nativeSac as { symbol: string }).symbol === "XLM", "Native SAC must have symbol XLM.");
+
+  // 5. Issuer account (G...) resolution
+  const issuerIdentity = parseStellarAssetInput(fakeIssuer, networkId);
+  assert(issuerIdentity !== null, "G-account must resolve.");
+  assert(issuerIdentity!.type === "issuer_account", "G-account must resolve as issuer_account.");
+  assert((issuerIdentity as { issuer: string }).issuer === fakeIssuer, "Issuer must match.");
+
+  // 6. Explorer URL parsing
+  const expertUrl = `https://stellar.expert/explorer/testnet/asset/USDC-${fakeIssuer}`;
+  const expertParsed = parseStellarAssetInput(expertUrl, networkId);
+  assert(expertParsed !== null, "Stellar Expert asset URL must resolve.");
+  assert(expertParsed!.type === "classic", "Stellar Expert asset URL must resolve as classic.");
+  assert((expertParsed as { symbol: string }).symbol === "USDC", "Stellar Expert URL symbol must be USDC.");
+  assert((expertParsed as { source?: string }).source === "explorer_url", "Explorer URL must have source 'explorer_url'.");
+
+  const expertContractUrl = `https://stellar.expert/explorer/testnet/contract/${fakeContract}`;
+  const expertContractParsed = parseStellarAssetInput(expertContractUrl, networkId);
+  assert(expertContractParsed !== null, "Stellar Expert contract URL must resolve.");
+  assert((expertContractParsed as { contractId: string }).contractId === fakeContract, "Stellar Expert contract URL contractId must match.");
+
+  const expertAccountUrl = `https://stellar.expert/explorer/testnet/account/${fakeIssuer}`;
+  const expertAccountParsed = parseStellarAssetInput(expertAccountUrl, networkId);
+  assert(expertAccountParsed !== null, "Stellar Expert account URL must resolve.");
+  assert(expertAccountParsed!.type === "issuer_account", "Stellar Expert account URL must resolve as issuer_account.");
+
+  const lumenscanUrl = `https://lumenscan.io/assets/USDC-${fakeIssuer}`;
+  const lumenscanParsed = parseStellarAssetInput(lumenscanUrl, networkId);
+  assert(lumenscanParsed !== null, "Lumenscan asset URL must resolve.");
+  assert(lumenscanParsed!.type === "classic", "Lumenscan URL must resolve as classic.");
+
+  // DexScreener stellar URL with contract
+  const dexUrl = `https://dexscreener.com/stellar/${fakeContract}`;
+  const dexParsed = parseStellarAssetInput(dexUrl, networkId);
+  assert(dexParsed !== null, "DexScreener Stellar URL must resolve.");
+  assert((dexParsed as { contractId: string }).contractId === fakeContract, "DexScreener Stellar URL contract must match.");
+
+  // 7. SSRF / private network metadata URL blocking
+  assert(isPrivateOrLocalHost("localhost"), "isPrivateOrLocalHost must block localhost.");
+  assert(isPrivateOrLocalHost("127.0.0.1"), "isPrivateOrLocalHost must block 127.0.0.1.");
+  assert(isPrivateOrLocalHost("10.0.0.1"), "isPrivateOrLocalHost must block 10.x.x.x.");
+  assert(isPrivateOrLocalHost("192.168.1.1"), "isPrivateOrLocalHost must block 192.168.x.x.");
+  assert(isPrivateOrLocalHost("169.254.1.1"), "isPrivateOrLocalHost must block 169.254.x.x (link-local).");
+  assert(isPrivateOrLocalHost("0.0.0.0"), "isPrivateOrLocalHost must block 0.0.0.0.");
+  assert(isPrivateOrLocalHost("::1"), "isPrivateOrLocalHost must block ::1.");
+  assert(!isPrivateOrLocalHost("example.com"), "isPrivateOrLocalHost must not block public hostnames.");
+
+  const sep1Blocked = assertSep1FetchAllowed("http://localhost/.well-known/stellar.toml");
+  assert(!sep1Blocked.allowed, "SEP-1 fetch must block localhost.");
+  assert(sep1Blocked.issues.some((i: string) => i.includes("private or localhost")), "SEP-1 fetch block must mention private target.");
+  assert(sep1Blocked.issues.some((i: string) => i.includes("HTTPS")), "SEP-1 fetch must require HTTPS.");
+
+  const sep1PrivateIp = assertSep1FetchAllowed("https://10.0.0.1/.well-known/stellar.toml");
+  assert(!sep1PrivateIp.allowed, "SEP-1 fetch must block private IP addresses.");
+
+  const sep1ValidHttps = assertSep1FetchAllowed("https://example.com/.well-known/stellar.toml");
+  assert(sep1ValidHttps.allowed, "SEP-1 fetch must allow valid HTTPS URLs.");
+
+  const sep1OversizedContent = assertSep1FetchAllowed("https://example.com/.well-known/stellar.toml", "text/plain", 300_000);
+  assert(!sep1OversizedContent.allowed, "SEP-1 fetch must block oversized responses.");
+
+  // 8. SEP-1 TOML parsing and issuer conflict detection
+  const sampleToml = [
+    "[DOCUMENTATION]",
+    'ORG_NAME = "Test Org"',
+    'ORG_URL = "https://example.com"',
+    'ORG_TWITTER = "test_org"',
+    "",
+    "[[CURRENCIES]]",
+    'code = "USDC"',
+    `issuer = "${fakeIssuer}"`,
+    'name = "Test USDC"',
+    "display_decimals = 7",
+  ].join("\n");
+
+  const parsed = parseSep1Toml(sampleToml);
+  assert(parsed.documentation?.orgName === "Test Org", "SEP-1 TOML must parse ORG_NAME.");
+  assert(parsed.documentation?.orgUrl === "https://example.com", "SEP-1 TOML must parse ORG_URL.");
+  assert(parsed.documentation?.orgTwitter === "test_org", "SEP-1 TOML must parse ORG_TWITTER.");
+  assert(parsed.currencies?.length === 1, "SEP-1 TOML must parse one currency.");
+  assert(parsed.currencies?.[0]?.code === "USDC", "SEP-1 currency code must be USDC.");
+  assert(parsed.currencies?.[0]?.issuer === fakeIssuer, "SEP-1 currency issuer must match.");
+  assert(parsed.currencies?.[0]?.displayDecimals === 7, "SEP-1 currency display_decimals must be 7.");
+
+  // Empty/comment-only TOML
+  const emptyToml = parseSep1Toml("# just a comment\n");
+  assert(emptyToml.documentation === undefined, "Empty TOML must have no documentation.");
+  assert(emptyToml.currencies === undefined, "Empty TOML must have no currencies.");
+
+  // 9. Invalid inputs return null
+  assert(parseStellarAssetInput("", networkId) === null, "Empty string must not resolve.");
+  assert(parseStellarAssetInput("not-a-valid-input", networkId) === null, "Random text must not resolve.");
+  assert(parseStellarAssetInput("0x3333333333333333333333333333333333333333", networkId) === null, "EVM address must not resolve as Stellar.");
+
+  console.log("  Stellar asset identity checks passed.");
+}
+
 async function main() {
   await runDiscoveryFixtures();
   await runOnchainChecks();
+  await runStellarOnchainChecks();
   await runNewsChecks();
   await runSocialChecks();
   await runDecisionChecks();
   await runExecutionChecks();
+  await runTransactionLifecycleChecks();
   await runReadinessChecks();
   await runProviderReliabilityChecks();
   runCachePolicyChecks();
   runX402Checks();
+  runStellarAssetIdentityChecks();
 
   const discoveryFixtureResults = await runDiscoveryFixtures();
   for (const fixture of discoveryFixtureResults) {

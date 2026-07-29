@@ -23,6 +23,13 @@ const bodySchema = z.object({
   expectedOutputAmount: z.number().min(0).optional(),
   simulationStatus: z.enum(["not_required", "pending", "passed", "failed", "unavailable"]).optional(),
   simulationRevertReason: z.string().optional(),
+  // Stellar-specific execution fields
+  stellarAssetCode: z.string().optional(),
+  stellarIssuer: z.string().optional(),
+  stellarFromIssuer: z.string().optional(),
+  stellarToIssuer: z.string().optional(),
+  stellarSwapAmount: z.number().min(0).optional(),
+  stellarQuoteStatus: z.enum(["fresh", "stale", "unavailable", "simulated"]).optional(),
 });
 
 export async function POST(request: Request) {

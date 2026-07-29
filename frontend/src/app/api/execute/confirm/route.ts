@@ -3,9 +3,17 @@ import { z } from "zod";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { assertApprovalOnly } from "@/server/security/policy";
 import { checkRateLimit } from "@/server/security/rateLimit";
-import { createApprovalRecord, createTransactionRecord, getTransactionRecord } from "@/server/storage";
-import { getChainFamily, isTransactionHashForChain } from "@/lib/chainIdentity";
+import {
+  createApprovalRecord,
+  createTransactionRecord,
+  getTransactionRecord,
+} from "@/server/storage";
+import { isTransactionHashForChain, getChainFamily } from "@/lib/chainIdentity";
+import { attachExplorerUrl } from "@/server/transactions/explorer";
+import { confirmTransaction } from "@/server/transactions/lifecycleManager";
 import { createStellarRpcServer } from "@/server/stellar/client";
+import { checkSimulationFreshness, checkCalldataMatch, checkParamsMatch, isHighRiskExecution, hashCalldata } from "@/server/simulation/freshness";
+import type { SimulationResultDetail } from "@/server/types";
 
 /**
  * Confirm a Stellar transaction exists on-chain via RPC before persisting.
@@ -43,6 +51,7 @@ const bodySchema = z.object({
   decisionId: z.string().optional(),
   walletAddress: z.string().min(1),
   decisionWalletAddress: z.string().optional(),
+  chainFamily: z.enum(["evm", "stellar"]).optional(),
   txHash: z.string().min(1),
   userApproved: z.literal(true),
   network: z.string().optional(),
@@ -50,10 +59,22 @@ const bodySchema = z.object({
   asset: z.string().optional(),
   valueUsd: z.number().min(0).optional(),
   riskScore: z.number().min(0).max(100).optional(),
+  sourceAccount: z.string().optional(),
   simulationStatus: z.enum(["not_required", "pending", "passed", "failed", "unavailable"]).optional(),
   policyAllowed: z.boolean().optional(),
   policyViolations: z.array(z.string()).optional(),
-  // Stellar-specific confirmation fields
+  expectedEffects: z.array(z.object({
+    kind: z.enum(["transfer", "swap", "approval", "contract_call", "publish_risk"]),
+    fromToken: z.string().optional(),
+    toToken: z.string().optional(),
+    fromAddress: z.string().optional(),
+    toAddress: z.string().optional(),
+    amount: z.string().optional(),
+    contractAddress: z.string().optional(),
+    method: z.string().optional(),
+    assetKey: z.string().optional(),
+  })).optional(),
+  idempotencyKey: z.string().optional(),
   stellarSequenceNumber: z.string().optional(),
   stellarFeeCharged: z.number().optional(),
   stellarOperationCount: z.number().optional(),
@@ -61,6 +82,77 @@ const bodySchema = z.object({
   stellarEnvelopeXdr: z.string().optional(),
   stellarResultXdr: z.string().optional(),
   stellarTrustlineAsset: z.string().optional(),
+  simulation: z
+    .object({
+      simulatedTxHash: z.string(),
+      simulatedAt: z.string().optional(),
+      blockNumber: z.number().optional(),
+      ledgerSeq: z.number().optional(),
+      quoteExpiry: z.string().optional(),
+      calldataHash: z.string().optional(),
+      fromAmount: z.string().optional(),
+      route: z.array(z.string()).optional(),
+      slippageBps: z.number().optional(),
+      sequenceNumber: z.union([z.number(), z.string()]).optional(),
+      fee: z.string().optional(),
+      simulatedXdrHash: z.string().optional(),
+      resourceUsage: z
+        .object({
+          gasUnits: z.string().optional(),
+          gasPrice: z.string().optional(),
+          networkFee: z.string().optional(),
+          operationsCount: z.number().optional(),
+          ledgerFee: z.string().optional(),
+        })
+        .optional(),
+      balanceChanges: z
+        .array(
+          z.object({
+            token: z.string(),
+            symbol: z.string(),
+            currentBalance: z.string(),
+            expectedChange: z.string(),
+            direction: z.enum(["inflow", "outflow"]),
+          }),
+        )
+        .optional(),
+      allowanceRisk: z
+        .array(
+          z.object({
+            spender: z.string(),
+            spenderShort: z.string(),
+            token: z.string(),
+            currentAllowance: z.string(),
+            newAllowance: z.string(),
+            isInfinite: z.boolean(),
+          }),
+        )
+        .optional(),
+      trustlineRisk: z
+        .array(
+          z.object({
+            asset: z.string(),
+            assetShort: z.string(),
+            issuer: z.string(),
+            issuerShort: z.string(),
+            action: z.enum(["add", "remove", "update", "authorize", "deauthorize"]),
+            detail: z.string(),
+          }),
+        )
+        .optional(),
+      chainFamily: z.enum(["evm", "stellar"]).optional(),
+    })
+    .optional(),
+
+  currentBlockNumber: z.number().optional(),
+  currentLedgerSeq: z.number().optional(),
+
+  currentCalldata: z.string().optional(),
+  currentFromAmount: z.string().optional(),
+  currentRoute: z.array(z.string()).optional(),
+  currentSlippageBps: z.number().optional(),
+  currentSequenceNumber: z.union([z.number(), z.string()]).optional(),
+  currentFee: z.string().optional(),
 });
 
 export async function POST(request: Request) {
@@ -77,13 +169,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  // Validate transaction hash format based on network chain family
-  const chainFamily = getChainFamily(parsed.data.network);
-
-  if (!isTransactionHashForChain(parsed.data.txHash, chainFamily)) {
+  if (!isTransactionHashForChain(parsed.data.txHash, getChainFamily(parsed.data.network))) {
     return NextResponse.json({
       error: "invalid_tx_hash",
-      detail: `Transaction hash does not match expected format for ${chainFamily} chain. Stellar hashes are 64 hex chars; EVM hashes are 0x-prefixed 64 hex chars.`,
+      detail: `Transaction hash does not match expected format for ${getChainFamily(parsed.data.network)} chain. Stellar hashes are 64 hex chars; EVM hashes are 0x-prefixed 64 hex chars.`,
     }, { status: 400 });
   }
 
@@ -95,6 +184,10 @@ export async function POST(request: Request) {
 
   if (parsed.data.simulationStatus === "failed") {
     return NextResponse.json({ error: "simulation_failed", detail: "Simulation failed. Confirmation is blocked." }, { status: 403 });
+  }
+
+  if (parsed.data.simulationStatus === "unsupported") {
+    return NextResponse.json({ error: "simulation_unsupported", detail: "Simulation is not supported for this transaction type or chain. Approval is blocked." }, { status: 403 });
   }
 
   if (parsed.data.policyAllowed === false) {
@@ -111,21 +204,98 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "wallet_mismatch", detail: "Connected wallet does not match the decision wallet." }, { status: 403 });
   }
 
-  const highRiskTrade = (parsed.data.action === "reduce_exposure" || parsed.data.action === "swap_to_stable" || parsed.data.action === "prepare_transaction") && (parsed.data.riskScore ?? 0) >= 50;
+  const highRiskTrade = isHighRiskExecution(parsed.data.action, parsed.data.riskScore);
 
   if (highRiskTrade && parsed.data.simulationStatus !== "passed") {
     return NextResponse.json({ error: "simulation_required", detail: "High-risk execution confirmation requires a fresh passed simulation." }, { status: 403 });
   }
 
-  if (await getTransactionRecord(parsed.data.txHash)) {
-    return NextResponse.json({ error: "duplicate_tx_hash", detail: "This transaction hash is already recorded." }, { status: 409 });
+  const chainFamily = parsed.data.chainFamily ?? (parsed.data.network ? getChainFamily(parsed.data.network) : "evm");
+  const network = parsed.data.network ?? "Connected wallet";
+
+  if (!isTransactionHashForChain(parsed.data.txHash, chainFamily)) {
+    return NextResponse.json({
+      error: "hash_chain_family_mismatch",
+      detail: `txHash does not match chain family ${chainFamily} for network ${network}.`,
+    }, { status: 400 });
+  }
+
+  // First, record the externally-broadcast hash so a duplicate confirm is rejected.
+  // The previous behaviour marked the record as confirmed without verification; we now
+  // persist at most a submitted record and rely on confirmTransaction() below to verify
+  // on-chain before transitioning to confirmed.
+  const policyStatus = {
+    allowed: parsed.data.policyAllowed ?? true,
+    violations: parsed.data.policyViolations ?? [],
+  };
+  const existing = getTransactionRecord(parsed.data.txHash);
+  if (existing) {
+    if (parsed.data.walletAddress.toLowerCase() !== (existing.walletAddress ?? "").toLowerCase()) {
+      return NextResponse.json({
+        error: "wallet_mismatch",
+        detail: "Connected wallet does not own the recorded transaction.",
+      }, { status: 403 });
+    }
+    if (parsed.data.sourceAccount && chainFamily === "evm" && parsed.data.sourceAccount.toLowerCase() !== parsed.data.walletAddress.toLowerCase()) {
+      return NextResponse.json({ error: "source_wallet_mismatch", detail: "EVM source account must equal the connected wallet." }, { status: 403 });
+    }
+    if (existing.lifecycleStatus === "confirmed") {
+      return NextResponse.json({ error: "duplicate_tx_hash", detail: "This transaction hash is already confirmed." }, { status: 409 });
+    }
+  } else {
+    createTransactionRecord({
+      hash: parsed.data.txHash,
+      type: "approval",
+      decisionAction: parsed.data.action,
+      asset: parsed.data.asset ?? "Wallet approval",
+      valueUsd: parsed.data.valueUsd ?? 0,
+      status: "submitted",
+      lifecycleStatus: "submitted",
+      chainFamily,
+      network,
+      walletAddress: parsed.data.walletAddress,
+      sourceAccount: parsed.data.sourceAccount,
+      userApproved: true,
+      decisionId: parsed.data.decisionId,
+      simulationStatus: parsed.data.simulationStatus,
+      policyStatus,
+      expectedEffects: parsed.data.expectedEffects,
+      idempotencyKey: parsed.data.idempotencyKey,
+      submittedAt: new Date().toISOString(),
+    });
+  }
+
+  let transaction;
+  try {
+    transaction = await confirmTransaction(parsed.data.txHash, {
+      walletAddress: parsed.data.walletAddress,
+      decisionWalletAddress: parsed.data.decisionWalletAddress,
+      sourceAccount: parsed.data.sourceAccount,
+      expectedEffects: parsed.data.expectedEffects ?? existing?.expectedEffects,
+    });
+  } catch (error) {
+    const code = (error as { code?: string }).code ?? "confirm_failed";
+    return NextResponse.json({
+      error: code,
+      detail: error instanceof Error ? error.message : "Could not confirm transaction.",
+    }, { status: code === "transaction_not_found" ? 404 : 502 });
+  }
+
+  if (transaction.lifecycleStatus === "failed" || transaction.lifecycleStatus === "replaced") {
+    return NextResponse.json({
+      error: "verification_failed",
+      detail: transaction.failureReason ?? `On-chain verification returned ${transaction.lifecycleStatus}.`,
+      transaction,
+    }, { status: 422 });
   }
 
   // Confirm through RPC before persistence (Stellar)
+  // NOT_FOUND means the transaction exists on the network but hasn't
+  // been included in a ledger yet — treat it as pending, not fatal.
   if (isStellar && parsed.data.network) {
     const onChainConfirmation = await confirmStellarTransactionOnChain(parsed.data.txHash, parsed.data.network);
 
-    if (!onChainConfirmation.ok) {
+    if (!onChainConfirmation.ok && onChainConfirmation.detail !== "Transaction not found on Stellar network." && onChainConfirmation.detail !== "Transaction has not yet been included in a Stellar ledger.") {
       return NextResponse.json({
         error: "stellar_rpc_confirmation_failed",
         detail: onChainConfirmation.detail,
@@ -136,51 +306,25 @@ export async function POST(request: Request) {
   const approval = createApprovalRecord({
     walletAddress: parsed.data.walletAddress,
     decisionId: parsed.data.decisionId,
-    txHash: parsed.data.txHash,
-    network: parsed.data.network ?? "Connected wallet",
+    txHash: transaction.hash,
+    network: transaction.network,
     action: parsed.data.action,
     asset: parsed.data.asset ?? "Wallet approval",
     valueUsd: parsed.data.valueUsd ?? 0,
   });
-  const txType = parsed.data.action === "create_trustline"
-    ? "trustline_create"
-    : parsed.data.action === "reduce_exposure" || parsed.data.action === "swap_to_stable" || parsed.data.action === "prepare_transaction"
-      ? "swap"
-      : "approval";
-
-  const transaction = createTransactionRecord({
-    hash: parsed.data.txHash,
-    type: txType,
-    decisionAction: parsed.data.action,
-    asset: parsed.data.asset ?? "Wallet approval",
-    valueUsd: parsed.data.valueUsd ?? 0,
-    status: "confirmed",
-    network: parsed.data.network ?? "Connected wallet",
-    walletAddress: parsed.data.walletAddress,
-    userApproved: true,
-    decisionId: parsed.data.decisionId,
-    simulationStatus: parsed.data.simulationStatus,
-    policyStatus: {
-      allowed: parsed.data.policyAllowed ?? true,
-      violations: parsed.data.policyViolations ?? [],
-    },
-    stellarDetails: isStellar ? {
-      sequence: parsed.data.stellarSequenceNumber,
-      feeCharged: parsed.data.stellarFeeCharged,
-      operationCount: parsed.data.stellarOperationCount,
-      ledger: parsed.data.stellarLedger,
-      envelopeXdr: parsed.data.stellarEnvelopeXdr,
-      resultXdr: parsed.data.stellarResultXdr,
-      trustlineAsset: parsed.data.stellarTrustlineAsset,
-    } : undefined,
-  });
+  // Override the hard-coded "confirmed" status with the actual lifecycle
+  approval.status = transaction.lifecycleStatus === "confirmed" ? "confirmed" : "pending";
 
   return withCacheHeaders(NextResponse.json({
     ...parsed.data,
-    status: "confirmed",
+    status: transaction.lifecycleStatus === "confirmed" ? "confirmed" : "submitted",
     autoExecuted: false,
     approval,
-    transaction,
-    confirmedAt: new Date().toISOString(),
+    transaction: {
+      ...transaction,
+      explorerUrl: transaction.explorerUrl ?? attachExplorerUrl({ hash: transaction.hash, network: transaction.network, chainFamily: transaction.chainFamily }),
+    },
+    confirmedAt: transaction.lifecycleStatus === "confirmed" ? (transaction.terminalAt ?? new Date().toISOString()) : undefined,
+    pendingVerification: transaction.lifecycleStatus !== "confirmed",
   }), "execution");
 }
