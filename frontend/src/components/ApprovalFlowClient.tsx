@@ -267,8 +267,9 @@ export function ApprovalFlowClient({
       // Best-effort
     }
 
+    // Keep the rejection panel visible so the user sees the terminal state.
+    // The user must click Close in the StatusPanel to dismiss.
     setState({ phase: "rejected", reason: "User rejected in the frontend UI." });
-    onDismiss?.();
   }, [idempotencyKey, walletAddress, onDismiss]);
 
   return (

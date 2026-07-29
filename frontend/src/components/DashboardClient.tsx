@@ -845,8 +845,9 @@ export function DashboardClient() {
                     const toAddress = family === "stellar" ? "USDC" : undefined;
                     const estimatedValue = holding?.valueUsd;
 
-                    // Build basic expected effects from the decision so the
-                    // prepared transaction is not empty
+                    // Build expected effects from the decision data so the
+                    // prepared transaction has meaningful metadata. The server
+                    // cross-validates these against its own execution preview.
                     const expectedEffects = riskyToken
                       ? [
                           {
@@ -854,11 +855,13 @@ export function DashboardClient() {
                             fromToken: riskyToken.tokenAddress,
                             toToken: toAddress ?? "USDC",
                             fromAddress: address ?? undefined,
-                            toAddress: undefined,
+                            toAddress: toAddress ?? undefined,
                             amount: estimatedValue ? `${(estimatedValue * 0.3).toFixed(2)}` : undefined,
                             contractAddress: fromAddress,
-                            // method omitted — the actual ABI signature is unknown
-                            // at this stage; selector validation will skip gracefully.
+                            // Generic method placeholder — the server validates
+                            // effects against its own preview data, not against
+                            // calldata selectors. A null/missing method causes
+                            // the selector check to skip gracefully.
                             assetKey: riskyToken.symbol,
                           },
                         ]

@@ -211,6 +211,40 @@ export async function validateApproval(
     };
   }
 
+  // 9. Metadata-only guard — block swap / reduce_exposure actions when there is
+  //    no real calldata/XDR to sign. Metadata-only payloads (empty calldata/XDR)
+  //    are acceptable for trustline or no-op actions where the wallet prompt is
+  //    not expected to contain executable blockchain calldata. For swap actions,
+  //    allowing a metadata-only payload through would show the user an empty
+  //    wallet prompt (data: "0x") rather than the actual recommended swap.
+  const isMetadataOnly = record.chainFamily === "evm"
+    ? !record.calldata || record.calldata === "0x"
+    : !record.stellarDetails?.envelopeXdr || record.stellarDetails.envelopeXdr.trim() === "";
+
+  if (isMetadataOnly) {
+    // Only "create_trustline" can proceed without calldata/XDR; "hold" and
+    // "watch" are already blocked at step 6 by UNSAFE_ACTIONS, and swap
+    // actions must have real calldata to avoid empty wallet prompts.
+    const signableActions = new Set(["create_trustline"]);
+    const action = record.decisionAction;
+
+    // Explicitly block undefined actions too — being conservative avoids
+    // sending an empty-calldata payload to the wallet for untyped records.
+    if (action === undefined || !signableActions.has(action)) {
+      const reason = action
+        ? `This is a metadata-only transaction. Action "${action}" requires a real transaction payload built from a swap quote and simulation. A quote provider must be connected before wallet signing.`
+        : "This is a metadata-only transaction without a recognized action type. Real transaction calldata is required before wallet signing.";
+      return {
+        allowed: false,
+        blockedReason: reason,
+        walletOk: true,
+        networkOk: true,
+        expired: false,
+        actionSafe: false,
+      };
+    }
+  }
+
   return {
     allowed: true,
     payload,
@@ -375,6 +409,90 @@ function validatePayloadAgainstEffects(
       const stP = payload as StellarPreparedTransactionPayload;
       if (!stP.xdr || stP.xdr.trim() === "") {
         return { valid: false, reason: "Stellar payload is empty: no XDR envelope provided." };
+      }
+    }
+    return { valid: true };
+  }
+
+  // ── Metadata-only payloads ────────────────────────────────────────────────
+  // When the transaction record was prepared without a real payload (no swap
+  // quote or simulation that produces calldata/XDR), the stored 'calldata' and
+  // 'stellarDetails.envelopeXdr' fields will be empty. This is the normal case
+  // for dashboard-initiated generic prepares where the server only has metadata
+  // (expected effects, amounts, addresses) from the agent decision, not actual
+  // blockchain-calldata.
+  //
+  // For metadata-only payloads:
+  //   - Validate the *effects* (contract addresses, amounts, operation types)
+  //     against the record's expected effects — this ensures the metadata that
+  //     WAS stored is internally consistent.
+  //   - Do NOT fail on missing calldata/XDR because there simply isn't any to
+  //     validate — the server rebuilt what it could from its own trusted data.
+  //
+  // When a real payload IS present (full swap integration), calldata and XDR
+  // will be present and the cross-checks below run strictly.
+
+  const isMetadataOnly = family === "evm"
+    ? !(payload as EvmPreparedTransactionPayload).data ||
+      (payload as EvmPreparedTransactionPayload).data === "0x"
+    : !(payload as StellarPreparedTransactionPayload).xdr ||
+      (payload as StellarPreparedTransactionPayload).xdr.trim() === "";
+
+  if (isMetadataOnly) {
+    // For metadata-only payloads, validate what we have: effect metadata must
+    // be consistent. Skip calldata/XDR-specific checks.
+    if (family === "evm") {
+      const evmP = payload as EvmPreparedTransactionPayload;
+      // Verify the to address matches the first effect's contract address
+      const contractEffect = effects.find((e) => e.contractAddress);
+      if (contractEffect?.contractAddress) {
+        const expectedTo = contractEffect.contractAddress.startsWith("0x")
+          ? contractEffect.contractAddress.toLowerCase()
+          : `0x${contractEffect.contractAddress.toLowerCase()}`;
+        const actualTo = evmP.to.toLowerCase();
+        if (actualTo !== expectedTo) {
+          return {
+            valid: false,
+            reason: `EVM payload target contract ${actualTo} does not match expected contract ${expectedTo}.`,
+          };
+        }
+      }
+    } else {
+      // Stellar: validate that operation types from effects match the built payload
+      const stP = payload as StellarPreparedTransactionPayload;
+      if (stP.operations.length > 0 && stP.operations.length !== effects.length) {
+        return {
+          valid: false,
+          reason: `Stellar payload operation count (${stP.operations.length}) does not match expected effects (${effects.length}).`,
+        };
+      }
+      // Validate operation type consistency
+      for (let i = 0; i < Math.min(effects.length, stP.operations.length); i++) {
+        const effectKind = effects[i].kind;
+        const opType = stP.operations[i]?.type;
+        if (effectKind === "contract_call" && opType !== "invokeHostFunction") {
+          return {
+            valid: false,
+            reason: `Stellar effect #${i} is "contract_call" but operation type is "${opType}".`,
+          };
+        }
+        if (effectKind === "transfer" && opType !== "payment") {
+          return {
+            valid: false,
+            reason: `Stellar effect #${i} is "transfer" but operation type is "${opType}".`,
+          };
+        }
+      }
+      // Validate source account if available
+      if (record.sourceAccount && stP.sourceAccount) {
+        const expectedSrc = record.sourceAccount.trim().toUpperCase();
+        const actualSrc = stP.sourceAccount.trim().toUpperCase();
+        if (actualSrc !== expectedSrc) {
+          return {
+            valid: false,
+            reason: `Stellar payload source account ${actualSrc} does not match expected ${expectedSrc}.`,
+          };
+        }
       }
     }
     return { valid: true };

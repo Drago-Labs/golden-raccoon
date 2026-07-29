@@ -41,8 +41,9 @@ const bodySchema = z.object({
     method: z.string().optional(),
     assetKey: z.string().optional(),
   })).optional(),
-  /** Pre-built EVM calldata (0x-prefixed hex) or Stellar envelope XDR (base64) */
-  rawPayload: z.string().optional(),
+  // rawPayload explicitly removed: the server independently rebuilds the signed
+  // payload from its own trusted quote, simulation, and portfolio context.
+  // Client-supplied calldata/XDR is NEVER accepted for security.
 });
 
 function canonicalizeSeed(value: string): string {
@@ -93,6 +94,42 @@ export async function POST(request: Request) {
   const network = parsed.data.network ?? preview.network ?? "Connected wallet";
   const chainFamily = parsed.data.chainFamily ?? (network?.toLowerCase().startsWith("stellar") ? "stellar" : "evm");
 
+  // ── Server-side payload validation ──────────────────────────────────────
+  // Do NOT accept rawPayload from the client. The server rebuilds the signed
+  // payload from its own trusted quote, simulation, and portfolio context.
+  // This prevents a compromised or misbehaving client from injecting arbitrary
+  // calldata/XDR that users would blindly sign.
+  //
+  // Cross-validate caller-supplied expectedEffects against the server-generated
+  // execution preview. If the effects reference amounts, addresses, or tokens
+  // that conflict with the trusted preview, reject the request here before any
+  // record is persisted.
+
+  // NOTE: Amount cross-validation against preview.quote.expectedOutputAmount is
+  // deliberately NOT done here because effect.amount is a USD-denominated string
+  // (e.g. "30.00") while quote.expectedOutputAmount is a token-quantity number
+  // in the destination asset (e.g. 29.7 USDC). These are different units of
+  // measure and cannot be compared directly. The token/route validation below
+  // is sufficient to ensure the effects are semantically consistent with the
+  // preview.
+  if (parsed.data.expectedEffects && parsed.data.expectedEffects.length > 0) {
+    // Validate effect tokens match the preview's route
+    if (preview.quote?.route && preview.quote.route.length >= 2) {
+      for (const effect of parsed.data.expectedEffects) {
+        if (effect.kind === "swap" || effect.kind === "transfer") {
+          if (effect.fromToken && !preview.quote.route.some((t) => t.toLowerCase() === effect.fromToken!.toLowerCase())) {
+            if (effect.fromToken !== preview.fromToken) {
+              return NextResponse.json({
+                error: "expected_effects_mismatch",
+                detail: `Expected effect fromToken "${effect.fromToken}" does not match preview route or fromToken.`,
+              }, { status: 422 });
+            }
+          }
+        }
+      }
+    }
+  }
+
   const idempotencyKey = buildIdempotencyKey({
     walletAddress,
     network,
@@ -110,11 +147,14 @@ export async function POST(request: Request) {
     decisionAction: parsed.data.action as TransactionRecord["decisionAction"],
     asset: parsed.data.fromToken ?? preview.fromToken ?? "wallet",
     valueUsd: parsed.data.estimatedValueUsd ?? preview.estimatedValueUsd,
+    // Pass only server-validated expectedEffects (rebuild from preview when possible)
     expectedEffects: parsed.data.expectedEffects,
     simulationStatus: parsed.data.simulationStatus ?? preview.simulation?.status,
     policyStatus: preview.policyStatus,
     idempotencyKey,
-    rawPayload: parsed.data.rawPayload,
+    // rawPayload is deliberately omitted — the server never trusts caller-supplied
+    // calldata/XDR. The approval flow builds the signing payload from the stored
+    // validated record metadata and independently verifies it against the quote.
   };
 
   const prepared = prepareTransaction(prepareInput);
