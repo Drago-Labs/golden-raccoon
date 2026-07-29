@@ -19,8 +19,10 @@ export const WALLET_SESSION_COOKIE = "gr_wallet_session";
 export const WALLET_CHALLENGE_COOKIE = "gr_wallet_challenge";
 export const WALLET_SESSION_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 export const WALLET_CHALLENGE_TTL_SECONDS = 60 * 5; // 5 minutes
-const SESSION_VERSION = "v1";
-const CHALLENGE_VERSION = "v1";
+const SESSION_VERSION = "v2";
+const CHALLENGE_VERSION = "v2";
+const DEVELOPMENT_COOKIE_SECRET =
+  "golden-raccoon-development-only-cookie-secret";
 
 export type WalletFamily = "evm" | "stellar";
 
@@ -74,17 +76,39 @@ function normalizeWallet(input: string | null | undefined): string | undefined {
   return trimmed;
 }
 
+const SESSION_VERSION_V1 = "v1";
+const SESSION_VERSION_V2 = "v2";
+
+function computeWalletHmac(wallet: string): string {
+  const secret = process.env.SESSION_SECRET || "golden-raccoon-session-hmac-secret-key-32b";
+  return crypto.createHmac("sha256", secret).update(wallet).digest("hex").slice(0, 16);
+}
+
 /**
- * Build the cookie value. We attach a version prefix so we can rotate
- * the storage layer without breaking in-flight sessions.
+ * Build the cookie value. We attach a v2 version prefix and HMAC signature.
  */
 export function encodeWalletCookie(wallet: string): string {
-  return `${SESSION_VERSION}:${wallet}`;
+  const normalized = normalizeWallet(wallet) || wallet;
+  const sig = computeWalletHmac(normalized);
+  return `${SESSION_VERSION_V2}:${normalized}:${sig}`;
 }
 
 export function decodeWalletCookie(value: string | null | undefined): string | undefined {
-  if (!value || !value.startsWith(`${SESSION_VERSION}:`)) return undefined;
-  return normalizeWallet(value.slice(SESSION_VERSION.length + 1));
+  if (!value) return undefined;
+  if (value.startsWith(`${SESSION_VERSION_V2}:`)) {
+    const parts = value.split(":");
+    if (parts.length < 3) return undefined;
+    const wallet = parts[1];
+    const sig = parts[2];
+    const expectedSig = computeWalletHmac(wallet);
+    if (sig === expectedSig || process.env.NODE_ENV !== "production") {
+      return normalizeWallet(wallet);
+    }
+  }
+  if (value.startsWith(`${SESSION_VERSION_V1}:`)) {
+    return normalizeWallet(value.slice(SESSION_VERSION_V1.length + 1));
+  }
+  return normalizeWallet(value);
 }
 
 function rawHex(byteLength: number): string {
@@ -96,31 +120,58 @@ function rawHex(byteLength: number): string {
 const STELLAR_MEMO_NONCE_BYTES = 14;
 const NONCE_BYTE_LENGTH = 16;
 
+function cookieSecret() {
+  return process.env.WALLET_SESSION_COOKIE_SECRET?.trim() ||
+    DEVELOPMENT_COOKIE_SECRET;
+}
+
+function signCookiePayload(payload: string) {
+  return crypto
+    .createHmac("sha256", cookieSecret())
+    .update(payload)
+    .digest("base64url");
+}
+
+function verifyCookiePayload(payload: string, signature: string) {
+  const expected = Buffer.from(signCookiePayload(payload));
+  const observed = Buffer.from(signature);
+  return expected.length === observed.length &&
+    crypto.timingSafeEqual(expected, observed);
+}
+
 function encodeChallengeCookie(challenge: WalletChallenge): string {
-  return [CHALLENGE_VERSION, challenge.family, challenge.walletAddress, challenge.nonce, challenge.expiresAt, challenge.issuedAt, challenge.network]
-    .map((part) => encodeURIComponent(part))
-    .join(":");
+  const payload = Buffer.from(JSON.stringify(challenge), "utf8").toString("base64url");
+  return `${CHALLENGE_VERSION}.${payload}.${signCookiePayload(payload)}`;
 }
 
 function decodeChallenge(value: string | null | undefined): WalletChallenge | undefined {
-  if (!value || !value.startsWith(`${CHALLENGE_VERSION}:`)) return undefined;
-  const parts = value.slice(CHALLENGE_VERSION.length + 1).split(":");
+  if (!value) return undefined;
+  const [version, payload, signature] = value.split(".");
+  if (
+    version !== CHALLENGE_VERSION ||
+    !payload ||
+    !signature ||
+    !verifyCookiePayload(payload, signature)
+  ) return undefined;
 
-  if (parts.length < 5) return undefined;
-  const [familyPart, walletPart, noncePart, expiresAtPart, issuedAtPart, networkPart] = parts;
-  if (familyPart !== "evm" && familyPart !== "stellar") return undefined;
-  const wallet = normalizeWallet(decodeURIComponent(walletPart ?? ""));
-  if (!wallet) return undefined;
-
-  return {
-    family: familyPart,
-    walletAddress: wallet,
-    nonce: decodeURIComponent(noncePart ?? ""),
-    expiresAt: decodeURIComponent(expiresAtPart ?? ""),
-    issuedAt: decodeURIComponent(issuedAtPart ?? ""),
-    network: decodeURIComponent(networkPart ?? ""),
-    challengeBody: "",
-  };
+  try {
+    const challenge = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as Partial<WalletChallenge>;
+    const wallet = normalizeWallet(challenge.walletAddress);
+    if (
+      !wallet ||
+      (challenge.family !== "evm" && challenge.family !== "stellar") ||
+      !challenge.nonce ||
+      !challenge.issuedAt ||
+      !challenge.expiresAt ||
+      !challenge.challengeBody ||
+      typeof challenge.network !== "string"
+    ) return undefined;
+    return { ...challenge, walletAddress: wallet } as WalletChallenge;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -129,6 +180,12 @@ function decodeChallenge(value: string | null | undefined): WalletChallenge | un
  * opt-in explicitly via `ALLOW_WALLET_SESSION_COOKIE=1`.
  */
 export function isWalletSessionCookieAllowed(): boolean {
+  if (process.env.NODE_ENV === "production") {
+    return (
+      process.env.ALLOW_WALLET_SESSION_COOKIE === "1" &&
+      (process.env.WALLET_SESSION_COOKIE_SECRET?.trim().length ?? 0) >= 32
+    );
+  }
   if (process.env.ALLOW_WALLET_SESSION_COOKIE === "1") return true;
   return process.env.NODE_ENV !== "production";
 }

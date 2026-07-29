@@ -36,6 +36,52 @@ export type AddWatchlistEntryResult =
   | { ok: false; error: string };
 
 export function deriveCanonicalChainIdentity(input: WatchlistEntryInput & { resolved?: ResolvedTokenIdentity }) {
+  // For Stellar chains, derive the identity key server-side from structured
+  // fields rather than relying on the client-supplied assetKey string.
+  // This prevents identity collisions (same code, different issuer) and
+  // ensures SAC/SEP-41 contract IDs produce a canonical key.
+  if (input.chain?.startsWith("stellar")) {
+    const chain = input.chain.trim().toLowerCase();
+
+    let identityKey: string;
+
+    if (input.assetType === "native") {
+      identityKey = `${chain}:native`;
+    } else if (input.assetType === "classic" && input.issuer && input.symbol) {
+      identityKey = `${chain}:${input.symbol.trim().toUpperCase()}:${input.issuer.trim().toUpperCase()}`;
+    } else if ((input.assetType === "sac" || input.assetType === "sep41") && input.contractAddress) {
+      identityKey = `${chain}:contract:${input.contractAddress.trim().toUpperCase()}`;
+    } else if (input.issuer && input.symbol) {
+      // Classic-style input without explicit assetType
+      identityKey = `${chain}:${input.symbol.trim().toUpperCase()}:${input.issuer.trim().toUpperCase()}`;
+    } else if (input.contractAddress) {
+      identityKey = `${chain}:contract:${input.contractAddress.trim().toUpperCase()}`;
+    } else if (input.assetKey) {
+      // Fall back to client-supplied assetKey only as last resort
+      identityKey = `${chain}:${input.assetKey}`;
+    } else {
+      identityKey = `${chain}:unknown`;
+    }
+
+    const identity = input.resolved ?? resolveTokenIdentity({
+      chain: input.chain,
+      contractAddress: input.contractAddress,
+      symbol: input.symbol,
+      tokenName: input.tokenName,
+      issuer: input.issuer,
+      assetKey: input.assetKey,
+      pairAddress: input.pairAddress,
+      assetType: input.assetType,
+    } as DiscoveryAgentInputIdentity);
+
+    return {
+      resolved: identity,
+      identityKey,
+    };
+  }
+
+  // EVM chains: resolve through tokenIdentity, which uses contract address
+  // identity key derivation when available.
   const identity = input.resolved ?? resolveTokenIdentity({
     chain: input.chain,
     contractAddress: input.contractAddress,
@@ -54,6 +100,23 @@ export function deriveCanonicalChainIdentity(input: WatchlistEntryInput & { reso
 }
 
 export async function addToWatchlist(input: WatchlistEntryInput): Promise<AddWatchlistEntryResult> {
+  // Reject symbol-only Stellar identities: classic assets must include a full
+  // CODE:ISSUER (e.g. USDC:GA5ZSE...). A bare "USDC" without an issuer or
+  // contract address cannot be scanned and is explicitly out of scope.
+  if (
+    input.chain?.startsWith("stellar") &&
+    input.assetType === "classic" &&
+    !input.issuer &&
+    !input.contractAddress
+  ) {
+    return {
+      ok: false,
+      error:
+        "Stellar classic assets require a full CODE:ISSUER (e.g. USDC:GA5ZSE...). " +
+        "Symbol-only values are not accepted.",
+    };
+  }
+
   const { resolved, identityKey } = deriveCanonicalChainIdentity(input);
 
   if (!resolved.identityKey || resolved.identityKey === "unknown-token") {

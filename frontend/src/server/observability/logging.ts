@@ -6,6 +6,11 @@ const secretPatterns = [
   /cqt_[A-Za-z0-9._-]+/g,
   /(api[_-]?key=)[^&\s]+/gi,
   /(authorization["']?\s*:\s*["'])[^"']+(["'])/gi,
+  // Execution-specific: signed XDR, calldata, payment headers, Stellar secrets
+  /(AAAAA[gG].{20,})/g,
+  /(0x02[fF][0-9a-fA-F]{20,})/g,
+  /(x-payment-header:\s*)([^,\n]+)/gi,
+  /(S[A-Z0-9]{55})/g,
 ];
 
 export type StructuredAgentLog = {
