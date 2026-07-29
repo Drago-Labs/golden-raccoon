@@ -123,7 +123,7 @@ export type AgentInputIdentity = {
   tokenName?: string;
   issuer?: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   websiteUrl?: string;
   twitterUrl?: string;
   telegramUrl?: string;
@@ -391,10 +391,12 @@ export type TransactionPreview = {
     blockedTokens?: string[];
     allowedActions?: AgentRecommendedAction[];
     autoExecute: false;
-  };
-  policyStatus?: {
+  };    policyStatus?: {
     allowed: boolean;
     violations: string[];
+    decisions?: StrategyPolicyDecision[];
+    ruleVersion?: number;
+    ruleWalletAddress?: string;
   };
   quote?: {
     provider: "planned_dex_aggregator" | "soroswap" | "stellar_aggregator";
@@ -424,6 +426,57 @@ export type TransactionPreview = {
   };
 };
 
+export type StrategyPolicyRuleCategory =
+  | "risk_threshold"
+  | "trade_size"
+  | "daily_limit"
+  | "liquidity"
+  | "exposure"
+  | "stable_reserve"
+  | "allowed_chain"
+  | "blocked_token"
+  | "blocked_category"
+  | "slippage"
+  | "allowed_action"
+  | "stellar_issuer"
+  | "stellar_trustline"
+  | "auto_execute";
+
+/**
+ * Structured policy decision returned by the shared strategy enforcer.
+ * Each decision records the specific rule, observed value, threshold,
+ * and a human-readable reason so the UI and audit log can show which
+ * user rule changed or blocked the recommendation.
+ */
+export type StrategyPolicyDecision = {
+  ruleId: string;
+  ruleVersion: number;
+  ruleLabel: string;
+  ruleCategory: StrategyPolicyRuleCategory;
+  /** The value observed from the agent input / portfolio context */
+  observedValue: number | string;
+  /** The threshold defined in the user rule */
+  threshold: number | string;
+  violated: boolean;
+  reason: string;
+  action: "blocked" | "warned" | "passed";
+};
+
+/**
+ * Full strategy enforcement result combining legacy violations
+ * with structured policy decisions for audit and UI.
+ */
+export type StrategyPolicyResult = {
+  allowed: boolean;
+  violations: StrategyPolicyDecision[];
+  passed: StrategyPolicyDecision[];
+  warnings: StrategyPolicyDecision[];
+  ruleVersion: number;
+  ruleWalletAddress: string;
+  /** Legacy string[] for backward-compatible API responses */
+  violationMessages: string[];
+};
+
 export type UserRule = {
   walletAddress: string;
   maxRiskScore: number;
@@ -431,10 +484,14 @@ export type UserRule = {
   maxMemeExposurePercent: number;
   maxDailyTransactionValueUsd?: number;
   maxSlippageBps?: number;
+  minStableReservePercent?: number;
   allowedChains?: string[];
   blockedTokens?: string[];
+  blockedIssuers?: string[];
+  blockedCategories?: string[];
   allowedActions?: AgentRecommendedAction[];
   autoExecute: boolean;
+  version?: number;
   createdAt: string;
 };
 
@@ -522,7 +579,7 @@ export type RiskReportInput = {
   symbol?: string;
   tokenName?: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   issuer?: string;
   source: "contract_address" | "dexscreener_pair_url" | "dexscreener_token_url" | "stellar_asset" | "stellar_issuer" | "unresolved";
 };
@@ -539,7 +596,7 @@ export type DiscoveryCandidate = {
   tokenName?: string;
   assetKey?: string;
   issuer?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   source: DiscoverySourceKind;
   sourceUrl?: string;
   discoveredAt: string;
@@ -573,13 +630,14 @@ export type DiscoveryScanResult = {
 export type WatchlistEntryInput = {
   walletAddress: string;
   chain: string;
+  network?: string;
   contractAddress?: string;
   pairAddress?: string;
   symbol?: string;
   tokenName?: string;
   assetKey?: string;
   issuer?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   source: DiscoveryCandidate["source"] | "manual_watchlist";
   note?: string;
 };
@@ -589,13 +647,14 @@ export type WatchlistEntry = {
   walletAddress: string;
   identityKey: string;
   chain: string;
+  network?: string;
   contractAddress?: string;
   pairAddress?: string;
   symbol?: string;
   tokenName?: string;
   assetKey?: string;
   issuer?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   source: WatchlistEntryInput["source"];
   note?: string;
   createdAt: string;
@@ -704,20 +763,78 @@ export type TokenScanResult = {
   scannedAt: string;
 };
 
+export type TransactionLifecycleStatus =
+  | "prepared"
+  | "user_rejected"
+  | "submitted"
+  | "confirmed"
+  | "failed"
+  | "replaced"
+  | "expired"
+  | "pending";
+
+export type TransactionLifecycleEventName =
+  | "prepared"
+  | "submitted"
+  | "submission_failed"
+  | "user_rejected"
+  | "polled"
+  | "confirmed"
+  | "failed"
+  | "replaced"
+  | "expired"
+  | "duplicate_rejected";
+
+export type TransactionLifecycleEvent = {
+  id: string;
+  hash: string;
+  event: TransactionLifecycleEventName;
+  detail?: Record<string, unknown>;
+  occurredAt: string;
+  provider?: string;
+  providerUrl?: string;
+};
+
+export type ChainFamily = "evm" | "stellar";
+
+export type TransactionExpectedEffect = {
+  kind: "transfer" | "swap" | "approval" | "contract_call" | "publish_risk";
+  fromToken?: string;
+  toToken?: string;
+  fromAddress?: string;
+  toAddress?: string;
+  amount?: string;
+  amountBaseUnits?: string;
+  contractAddress?: string;
+  method?: string;
+  assetKey?: string;
+  decimals?: number;
+};
+
 export type TransactionRecord = {
   hash: string;
   type: "swap" | "approval" | "agent_log" | "transfer" | "trustline_create" | "trustline_change";
   decisionAction?: AgentRecommendedAction;
   asset: string;
   valueUsd: number;
-  status: "prepared" | "user_rejected" | "submitted" | "confirmed" | "failed" | "replaced" | "expired" | "pending";
+  status: TransactionLifecycleStatus;
+  lifecycleStatus: TransactionLifecycleStatus;
+  chainFamily: ChainFamily;
   createdAt: string;
+  submittedAt?: string;
+  terminalAt?: string;
+  lastPolledAt?: string;
   network: string;
   walletAddress?: string;
+  sourceAccount?: string;
   userApproved?: boolean;
   decisionId?: string;
   simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
   policyStatus?: TransactionPreview["policyStatus"];
+  expectedEffects?: TransactionExpectedEffect[];
+  idempotencyKey?: string;
+  explorerUrl?: string;
+  failureReason?: string;
   stellarDetails?: {
     sequence?: string;
     feeCharged?: number;
@@ -727,6 +844,42 @@ export type TransactionRecord = {
     resultXdr?: string;
     trustlineAsset?: string;
   };
+};
+
+export type SubmitTransactionInput = {
+  chainFamily: ChainFamily;
+  network: string;
+  walletAddress: string;
+  sourceAccount?: string;
+  decisionId?: string;
+  decisionAction?: AgentRecommendedAction;
+  asset: string;
+  valueUsd?: number;
+  simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
+  policyStatus?: TransactionPreview["policyStatus"];
+  expectedEffects?: TransactionExpectedEffect[];
+  userApproved: true;
+  signedPayload: string;
+  idempotencyKey?: string;
+};
+
+export type SubmitTransactionResult = {
+  hash: string;
+  chainFamily: ChainFamily;
+  network: string;
+  submittedAt: string;
+  status: TransactionLifecycleStatus;
+  explorerUrl?: string;
+  idempotent: boolean;
+  reuseReason?: "idempotency_key" | "duplicate_hash";
+  lifecycle: TransactionLifecycleEvent[];
+};
+
+export type PollTransactionResult = {
+  transaction: TransactionRecord;
+  polled: boolean;
+  terminalReached: boolean;
+  events: TransactionLifecycleEvent[];
 };
 
 export type AgentRunRecord = {
@@ -811,7 +964,7 @@ export type UserApprovalRecord = {
   action?: AgentRecommendedAction;
   asset?: string;
   valueUsd?: number;
-  status: "confirmed";
+  status: "confirmed" | "pending";
   autoExecuted: false;
   createdAt: string;
 };

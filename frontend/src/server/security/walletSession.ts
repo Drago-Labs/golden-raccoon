@@ -19,8 +19,10 @@ export const WALLET_SESSION_COOKIE = "gr_wallet_session";
 export const WALLET_CHALLENGE_COOKIE = "gr_wallet_challenge";
 export const WALLET_SESSION_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 export const WALLET_CHALLENGE_TTL_SECONDS = 60 * 5; // 5 minutes
-const SESSION_VERSION = "v1";
-const CHALLENGE_VERSION = "v1";
+const SESSION_VERSION = "v2";
+const CHALLENGE_VERSION = "v2";
+const DEVELOPMENT_COOKIE_SECRET =
+  "golden-raccoon-development-only-cookie-secret";
 
 export type WalletFamily = "evm" | "stellar";
 
@@ -118,31 +120,58 @@ function rawHex(byteLength: number): string {
 const STELLAR_MEMO_NONCE_BYTES = 14;
 const NONCE_BYTE_LENGTH = 16;
 
+function cookieSecret() {
+  return process.env.WALLET_SESSION_COOKIE_SECRET?.trim() ||
+    DEVELOPMENT_COOKIE_SECRET;
+}
+
+function signCookiePayload(payload: string) {
+  return crypto
+    .createHmac("sha256", cookieSecret())
+    .update(payload)
+    .digest("base64url");
+}
+
+function verifyCookiePayload(payload: string, signature: string) {
+  const expected = Buffer.from(signCookiePayload(payload));
+  const observed = Buffer.from(signature);
+  return expected.length === observed.length &&
+    crypto.timingSafeEqual(expected, observed);
+}
+
 function encodeChallengeCookie(challenge: WalletChallenge): string {
-  return [CHALLENGE_VERSION, challenge.family, challenge.walletAddress, challenge.nonce, challenge.expiresAt, challenge.issuedAt, challenge.network]
-    .map((part) => encodeURIComponent(part))
-    .join(":");
+  const payload = Buffer.from(JSON.stringify(challenge), "utf8").toString("base64url");
+  return `${CHALLENGE_VERSION}.${payload}.${signCookiePayload(payload)}`;
 }
 
 function decodeChallenge(value: string | null | undefined): WalletChallenge | undefined {
-  if (!value || !value.startsWith(`${CHALLENGE_VERSION}:`)) return undefined;
-  const parts = value.slice(CHALLENGE_VERSION.length + 1).split(":");
+  if (!value) return undefined;
+  const [version, payload, signature] = value.split(".");
+  if (
+    version !== CHALLENGE_VERSION ||
+    !payload ||
+    !signature ||
+    !verifyCookiePayload(payload, signature)
+  ) return undefined;
 
-  if (parts.length < 5) return undefined;
-  const [familyPart, walletPart, noncePart, expiresAtPart, issuedAtPart, networkPart] = parts;
-  if (familyPart !== "evm" && familyPart !== "stellar") return undefined;
-  const wallet = normalizeWallet(decodeURIComponent(walletPart ?? ""));
-  if (!wallet) return undefined;
-
-  return {
-    family: familyPart,
-    walletAddress: wallet,
-    nonce: decodeURIComponent(noncePart ?? ""),
-    expiresAt: decodeURIComponent(expiresAtPart ?? ""),
-    issuedAt: decodeURIComponent(issuedAtPart ?? ""),
-    network: decodeURIComponent(networkPart ?? ""),
-    challengeBody: "",
-  };
+  try {
+    const challenge = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as Partial<WalletChallenge>;
+    const wallet = normalizeWallet(challenge.walletAddress);
+    if (
+      !wallet ||
+      (challenge.family !== "evm" && challenge.family !== "stellar") ||
+      !challenge.nonce ||
+      !challenge.issuedAt ||
+      !challenge.expiresAt ||
+      !challenge.challengeBody ||
+      typeof challenge.network !== "string"
+    ) return undefined;
+    return { ...challenge, walletAddress: wallet } as WalletChallenge;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -151,6 +180,12 @@ function decodeChallenge(value: string | null | undefined): WalletChallenge | un
  * opt-in explicitly via `ALLOW_WALLET_SESSION_COOKIE=1`.
  */
 export function isWalletSessionCookieAllowed(): boolean {
+  if (process.env.NODE_ENV === "production") {
+    return (
+      process.env.ALLOW_WALLET_SESSION_COOKIE === "1" &&
+      (process.env.WALLET_SESSION_COOKIE_SECRET?.trim().length ?? 0) >= 32
+    );
+  }
   if (process.env.ALLOW_WALLET_SESSION_COOKIE === "1") return true;
   return process.env.NODE_ENV !== "production";
 }

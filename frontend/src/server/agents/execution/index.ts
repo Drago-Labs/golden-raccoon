@@ -186,8 +186,11 @@ export async function buildExecutionPreview(input: ExecutionAgentInput): Promise
       estimatedValueUsd,
       slippageBps,
       simulationStatus: simulation.status,
+      stellarIssuer: input.stellarIssuer,
+      stellarQuoteStatus: input.stellarQuoteStatus,
     },
     executionPolicy,
+    input.rules,
   );
   const quote = getQuotePlan({
     requiresTrade: plan.requiresTrade,
@@ -243,7 +246,7 @@ export async function buildExecutionPreview(input: ExecutionAgentInput): Promise
   }
 
   const quoteMissing = !trustlineAction && plan.requiresTrade && quote?.status !== "planned" && quote?.status !== "fresh";
-  const blockedReason = policyStatus.violations[0] ?? (
+  const blockedReason = policyStatus.violationMessages[0] ?? (
     (input.stellarQuoteStatus === "unavailable" && !stellarSwapQuote && !trustlineAction)
       ? "Live Stellar swap quote is required before preparing an executable transaction."
       : quoteMissing
@@ -284,7 +287,13 @@ export async function buildExecutionPreview(input: ExecutionAgentInput): Promise
       allowedActions: Array.from(executionPolicy.allowedActions),
       autoExecute: false,
     },
-    policyStatus,
+    policyStatus: {
+      allowed: policyStatus.allowed,
+      violations: policyStatus.violationMessages,
+      decisions: [...policyStatus.violations, ...policyStatus.warnings, ...policyStatus.passed],
+      ruleVersion: policyStatus.ruleVersion,
+      ruleWalletAddress: policyStatus.ruleWalletAddress,
+    },
     quote,
     simulation,
     stellarTrustline: stellarTrustlinePreview,
