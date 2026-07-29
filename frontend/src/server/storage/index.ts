@@ -39,6 +39,10 @@ import {
   mirrorAlertWrite,
   mirrorTransactionLifecycleEvent,
   mirrorTransactionRecord,
+  mirrorWatchlistEntryDeletion,
+  mirrorWatchlistEntryLatestScanUpdate,
+  mirrorWatchlistEntryWrite,
+  mirrorWatchlistScanRunWrite,
 } from "@/server/storage/postgresAdapter";
 export {
   authorizeAutoMode,
@@ -96,7 +100,7 @@ export function ensureStorageReady(): Promise<{ tried: boolean; hydrated: number
     }
 
     try {
-      const [alertHydrate, txHydrate] = await Promise.all([
+      const [alertHydrate, txHydrate, watchlistHydrate] = await Promise.all([
         adapter.hydrateAlertTables({
           rules: getAlertRulesStore(),
           observations: getAlertObservationsStore(),
@@ -107,9 +111,13 @@ export function ensureStorageReady(): Promise<{ tried: boolean; hydrated: number
           transactions: getTransactions(),
           events: getTransactionEvents(),
         }),
+        adapter.hydrateWatchlistTables({
+          entries: getWatchlistEntries(),
+          scanRuns: getWatchlistScanRuns(),
+        }),
       ]);
-      const totalHydrated = alertHydrate.hydrated + txHydrate.hydrated;
-      const totalSkipped = alertHydrate.skipped + txHydrate.skipped;
+      const totalHydrated = alertHydrate.hydrated + txHydrate.hydrated + watchlistHydrate.hydrated;
+      const totalSkipped = alertHydrate.skipped + txHydrate.skipped + watchlistHydrate.skipped;
       const result = { tried: true, hydrated: totalHydrated, skipped: totalSkipped, detail: "ok" };
       store.__goldenRaccoonLastHydration = { ...result, at: new Date().toISOString() };
 
@@ -960,6 +968,7 @@ export function addWatchlistEntry(input: CreateWatchlistInput): AddWatchlistEntr
     walletAddress: normalizedWallet,
     identityKey: input.identityKey,
     chain: input.chain,
+    network: input.network,
     contractAddress: input.contractAddress,
     pairAddress: input.pairAddress,
     symbol: input.symbol,
@@ -973,6 +982,7 @@ export function addWatchlistEntry(input: CreateWatchlistInput): AddWatchlistEntr
   };
 
   getWatchlistEntries().unshift(entry);
+  mirrorWatchlistEntryWrite(entry);
 
   return { entry, alreadyExisted: false };
 }
@@ -989,6 +999,10 @@ export function removeWatchlistEntry(id: string) {
 
   const alerts = getDiscoveryAlerts().filter((alert) => alert.entryId !== id);
   memoryStore.__goldenRaccoonDiscoveryAlerts = alerts;
+
+  if (removed > 0) {
+    mirrorWatchlistEntryDeletion(id);
+  }
 
   return removed > 0;
 }
@@ -1032,6 +1046,7 @@ export function addWatchlistScanRun(input: AddWatchlistScanRunInput): WatchlistS
   };
 
   getWatchlistScanRuns().unshift(run);
+  mirrorWatchlistScanRunWrite(run);
   updateWatchlistEntryLatestScan(input.entryId, {
     scanRunId: run.id,
     classification: run.classification,
@@ -1074,6 +1089,22 @@ export function updateWatchlistEntryLatestScan(
     entry.latestScore = update.score;
     entry.successfulScanRunIds = [update.scanRunId, ...(entry.successfulScanRunIds ?? [])].slice(0, 50);
   }
+
+  // When the scan failed, preserve the prior visible classification/score and mark
+  // status as "stale" instead of "failed" — the same semantics the in-memory store
+  // enforces above. Without this guard the Postgres mirror would overwrite the last
+  // successful scan's evidence with the failed run's placeholder values.
+  const mirrorClassification = update.status === "failed" ? (entry.latestClassification ?? update.classification) : update.classification;
+  const mirrorScore = update.status === "failed" ? (entry.latestScore ?? update.score) : update.score;
+  const mirrorStatus = update.status === "failed" ? "stale" : update.status;
+
+  mirrorWatchlistEntryLatestScanUpdate(id, {
+    classification: mirrorClassification,
+    score: mirrorScore,
+    scannedAt: update.scannedAt,
+    status: mirrorStatus,
+    scanRunId: update.scanRunId,
+  });
 
   return entry;
 }

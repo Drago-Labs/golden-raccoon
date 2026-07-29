@@ -123,7 +123,7 @@ export type AgentInputIdentity = {
   tokenName?: string;
   issuer?: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   websiteUrl?: string;
   twitterUrl?: string;
   telegramUrl?: string;
@@ -579,7 +579,7 @@ export type RiskReportInput = {
   symbol?: string;
   tokenName?: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   issuer?: string;
   source: "contract_address" | "dexscreener_pair_url" | "dexscreener_token_url" | "stellar_asset" | "stellar_issuer" | "unresolved";
 };
@@ -596,7 +596,7 @@ export type DiscoveryCandidate = {
   tokenName?: string;
   assetKey?: string;
   issuer?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   source: DiscoverySourceKind;
   sourceUrl?: string;
   discoveredAt: string;
