@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { checkRateLimit } from "@/server/security/rateLimit";
-import { rescanWatchlistEntry } from "@/server/discovery/watchlist";
-import { listWatchlistHistory } from "@/server/discovery/watchlist";
+import { rescanWatchlistEntry, listWatchlistHistory } from "@/server/discovery/watchlist";
+import { getWatchlistEntry } from "@/server/storage";
+import { ensureStorageReady } from "@/server/storage";
+import { resolveWalletSession } from "@/server/security/walletSession";
 
 const bodySchema = z.object({
+  walletAddress: z.string().min(1).max(80).optional(),
+});
+
+const historyQuerySchema = z.object({
   walletAddress: z.string().min(1).max(80).optional(),
 });
 
@@ -15,6 +21,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return rateLimited;
   }
 
+  await ensureStorageReady();
+
   const body = await request.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);
 
@@ -22,9 +30,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
+  // Wallet isolation: the session cookie is authoritative
+  const session = resolveWalletSession(request, { suppliedWallet: parsed.data.walletAddress });
+  if (session.response) return session.response;
+
   try {
     const { id } = await params;
-    const result = await rescanWatchlistEntry(id, { walletAddress: parsed.data.walletAddress });
+    const result = await rescanWatchlistEntry(id, { walletAddress: session.wallet! });
 
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 404 });
@@ -54,7 +66,25 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return rateLimited;
   }
 
+  await ensureStorageReady();
+
   const { id } = await params;
+  const url = new URL(request.url);
+  const parsed = historyQuerySchema.safeParse({ walletAddress: url.searchParams.get("walletAddress") ?? undefined });
+
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  // Wallet isolation: the session cookie is authoritative
+  const session = resolveWalletSession(request, { suppliedWallet: parsed.data.walletAddress });
+  if (session.response) return session.response;
+
+  // Ownership check: entry must belong to the session wallet
+  const entry = getWatchlistEntry(id);
+  if (!entry || entry.walletAddress.toLowerCase() !== session.wallet!.toLowerCase()) {
+    return NextResponse.json({ error: "Entry not found or does not belong to this wallet." }, { status: 404 });
+  }
 
   return NextResponse.json({ runs: listWatchlistHistory(id) });
 }
