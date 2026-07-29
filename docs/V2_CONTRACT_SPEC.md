@@ -175,7 +175,7 @@ error Expired();
 error Replay();
 error InvalidFormat(string reason);
 error StaleIntent(uint64 expiry);
-error StalePolicy();                                // §5.3 logDecision step 2 triggers: caller-supplied policyHash != getPolicyHash(msg.sender)
+error PolicyMismatch();                            // §5.3 logDecision step 2 triggers: caller-supplied policyHash != getPolicyHash(msg.sender)
 error InvalidRiskScore(uint16 actual);
 
 function version() external view returns (uint16 major, uint16 minor, uint16 patch, bytes32 buildHash);
@@ -189,7 +189,7 @@ function getPolicyHash(address wallet) external view returns (bytes32 policyHash
 function logDecision(bytes32 decisionHash, bytes32 policyHash, uint16 riskScore, string calldata planId) external; // onlyAgent
 //   flow:
 //     1. onlyAgent check (`agentExpiries[msg.sender] > block.timestamp`).
-//     2. policyHash must equal `getPolicyHash(msg.sender)` (revert `StalePolicy` if not); this is the V2-062 linkage.
+//     2. policyHash must equal `getPolicyHash(msg.sender)` (revert `PolicyMismatch` if not); this is the V2-062 linkage.
 //     3. decisionHash must NOT be bytes32(0) (revert `ZeroHash` if so).
 //     4. riskScore must be `<= 100` (revert `InvalidRiskScore(riskScore)` if not).
 //     5. planId must be `1..160` utf-8 chars and must not contain `\u0000` (revert `InvalidFormat("plan_id ...")` otherwise).
@@ -229,7 +229,7 @@ function executeUpgrade() external;                                             
 | `InvalidRiskScore` | `riskScore > 100` | score schema |
 | `Replay` | `usedIntents[intentHash]` | replay guard |
 | `StaleIntent` | `block.timestamp > expiry` | stale intent |
-| `StalePolicy` | `logDecision` caller-supplied `policyHash != getPolicyHash(msg.sender)` | stale policy hash (introduced by §5.3 logDecision step 2 \u2014 the V2-062 on-chain linkage requires the caller to have called `setPolicy` immediately before `logDecision`) |
+| `PolicyMismatch` | `logDecision` caller-supplied `policyHash != getPolicyHash(msg.sender)` | policy hash mismatch at call time. Introduced by §5.3 logDecision step 2 \u2014 the V2-062 on-chain linkage requires the caller's `policyHash` arg to equal `getPolicyHash(msg.sender)` at the moment of call. (The policy may have been set hours earlier; `PolicyMismatch` only checks current equality.) |
 | `InvalidFormat` | `policy` encoding is incorrect; `planId` exceeds 160 UTF-8 chars or contains `\u0000` | format validation. `decision_id` is NOT caller-supplied; it is contract-computed (§5.3 / §8). The validation rule that previously read "decisionId is not UTF-8" has been removed because the contract no longer accepts a caller-supplied decisionId. |
 
 ### 5.5 Replay, stale intent, zero-address, invalid hash, pause
@@ -410,7 +410,7 @@ pub fn is_paused(env: Env) -> bool;
 
 ### 6.5 Replay, stale, zero-address, invalid hash, pause
 
-- **Replay**: `publish_risk` checks `updated_at > existing.updated_at`. The V2-066 prerequisite adds a per-publisher monotonic nonce key (`PublisherNonce(publisher)`) that complements `updated_at`. The nonce is checked against `report_hash` in `publish_risk` so a duplicated (publisher, nonce) pair reverts `ReplayProtection`.
+- **Replay**: `publish_risk` checks `updated_at > existing.updated_at`. The V2-066 prerequisite adds a per-publisher monotonic nonce key (`PublisherNonce(publisher)`) that complements `updated_at`. The nonce is checked against `report_hash` in `publish_risk` so a duplicated (publisher, nonce) pair reverts `ReplayProtection`. **Disambiguation**: `PublisherNonce(publisher)` (V2-066 future replay protection) is a separate `DataKey` from `PublisherCounter(Address)` (§6.6, this PR's §8 decision_id derivation). Both are per-publisher and both bump on `publish_risk` only; their purposes are different (replay protection vs decision_id fan-out) and an implementation MUST NOT collapse them.
 - **Stale**: `StaleReport` is already enforced for `publish_risk`. The new `revoke_risk` adds a `revoked_at` and rejects re-revocation with `StaleReport`.
 - **Zero address / zero hash**: `ZeroAddress` / `ZeroHash` for the publisher parameter and the `asset_id` / `report_hash` parameters. `revoke_risk` reverts `ZeroHash` on the asset_id.
 - **Invalid hash**: `asset_id` and `report_hash` are `BytesN<32>`; zero is rejected. `report_hash` must additionally be `!= sha256(canonicalReportJson) == 0` (effectively a non-zero digit check).
@@ -424,7 +424,7 @@ pub fn is_paused(env: Env) -> bool;
 | `Publisher(addr)` | `PUBLISHER_TTL_THRESHOLD` (60 days) → `PUBLISHER_TTL_EXTEND_TO` (365 days) | bumped on `set_publisher` and `publish_risk` |
 | `PublisherTier(addr)` | same as `Publisher(addr)` | same |
 | `PublisherExpiry(addr)` | same as `Publisher(addr)` | same |
-| `PublisherCounter(addr)` | same as `Publisher(addr)` (`PUBLISHER_TTL_THRESHOLD` 60d → `PUBLISHER_TTL_EXTEND_TO` 365d) | bumped on `publish_risk` only. Drives §8 Soroban `decision_id` derivation; same TTL bucket as `Publisher(addr)` because eviction of the publisher bucket is the only thing that would invalidate the chain, so the counter cannot outlive the publisher. |
+| `PublisherCounter(addr)` | same as `Publisher(addr)` (`PUBLISHER_TTL_THRESHOLD` 60d → `PUBLISHER_TTL_EXTEND_TO` 365d) | bumped on `publish_risk` only. Drives §8 Soroban `decision_id` derivation. See §6.5 for the disambiguation with `PublisherNonce(publisher)` (V2-066 retry protection) \u2014 they are separate `DataKey`s. |
 | `Record(asset_id, network)` | `RECORD_TTL_THRESHOLD` (60 days) → `RECORD_TTL_EXTEND_TO` (365 days) | bumped on `publish_risk` and `get_risk` |
 
 `MAX_FUTURE_SECONDS` stays at 300. The new `UpgradePending` key uses `UPGRADE_TTL_THRESHOLD` (7 days) → `UPGRADE_TTL_EXTEND_TO` (60 days) so a pending upgrade can survive a temporary outage but cannot linger indefinitely.
