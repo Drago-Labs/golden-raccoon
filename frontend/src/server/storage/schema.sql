@@ -140,17 +140,6 @@ create table if not exists transactions (
   created_at timestamptz not null default now()
 );
 
--- Backfill (idempotent): for rows that pre-date the V2 columns, lift the legacy status into
--- the lifecycle_status column. Existing rows that already carry a curated lifecycle_status
--- value are left untouched.
-update transactions
-   set lifecycle_status = status
- where lifecycle_status not in ('prepared', 'user_rejected', 'submitted', 'confirmed', 'failed', 'replaced', 'expired', 'pending');
-
-create unique index if not exists transactions_idempotency_wallet_idx
-  on transactions(wallet_address, idempotency_key)
-  where idempotency_key is not null;
-
 -- Migrate existing transactions table: add lifecycle columns that may not exist
 alter table transactions add column if not exists lifecycle_status text;
 alter table transactions add column if not exists chain_family text not null default 'evm';
@@ -173,6 +162,16 @@ alter table transactions drop constraint if exists transactions_lifecycle_status
 alter table transactions add constraint transactions_lifecycle_status_check
   check (lifecycle_status in ('prepared', 'user_rejected', 'submitted', 'confirmed', 'failed', 'replaced', 'expired', 'pending'));
 
+-- Backfill (idempotent): for rows that pre-date the V2 columns, lift the legacy status into
+-- the lifecycle_status column. Existing rows that already carry a curated lifecycle_status
+-- value are left untouched.
+update transactions
+   set lifecycle_status = status
+ where lifecycle_status not in ('prepared', 'user_rejected', 'submitted', 'confirmed', 'failed', 'replaced', 'expired', 'pending');
+
+create unique index if not exists transactions_idempotency_wallet_idx
+  on transactions(wallet_address, idempotency_key)
+  where idempotency_key is not null;
 create table if not exists transaction_lifecycle_events (
   id uuid primary key default gen_random_uuid(),
   transaction_hash text not null references transactions(tx_hash) on delete cascade,
