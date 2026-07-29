@@ -1,6 +1,7 @@
 import type { AgentRecommendedAction, UserRule } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { getChainFamily } from "@/lib/chainIdentity";
+import { resolveChainId } from "@/server/rules/strategyProfile";
 
 export type StellarPolicyOverrides = {
   allowedIssuers?: string[];
@@ -84,6 +85,31 @@ function isStellarChain(chain?: string) {
   return getChainFamily(chain) === "stellar";
 }
 
+/**
+ * Compare a chain the way a user means it.
+ *
+ * Stored profiles hold canonical scan-network ids ("goat"), while callers pass
+ * whatever they have to hand — a display name ("GOAT Network"), an alias, or
+ * the id itself. Resolving both sides to an id before comparing means the same
+ * chain matches regardless of spelling; a value that resolves to nothing falls
+ * back to a plain string compare so an unrecognized custom entry still behaves
+ * as it did before.
+ */
+function sameChain(left?: string, right?: string) {
+  if (!left || !right) {
+    return false;
+  }
+
+  const leftId = resolveChainId(left);
+  const rightId = resolveChainId(right);
+
+  if (leftId && rightId) {
+    return leftId === rightId;
+  }
+
+  return normalized(left) === normalized(right);
+}
+
 export function evaluateExecutionPolicy(input: ExecutionPolicyInput, policy: ExecutionPolicy) {
   const violations: string[] = [];
   const tradeAction = input.action === "swap_to_stable" || input.action === "reduce_exposure" || input.action === "prepare_transaction";
@@ -116,7 +142,7 @@ export function evaluateExecutionPolicy(input: ExecutionPolicyInput, policy: Exe
     violations.push(`Slippage ${input.slippageBps} bps exceeds max slippage ${policy.maxSlippageBps} bps.`);
   }
 
-  if (input.network && policy.allowedChains.length > 0 && !policy.allowedChains.map(normalized).includes(normalized(input.network))) {
+  if (input.network && policy.allowedChains.length > 0 && !policy.allowedChains.some((chain) => sameChain(chain, input.network))) {
     violations.push(`Network ${input.network} is not in allowed chains.`);
   }
 

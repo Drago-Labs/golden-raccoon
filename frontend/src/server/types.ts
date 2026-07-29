@@ -424,18 +424,45 @@ export type TransactionPreview = {
   };
 };
 
+/**
+ * A wallet's persisted strategy profile.
+ *
+ * `maxRiskScore` predates the strategy work and is kept as a mirror of
+ * `maxBuyRisk` so existing decision and execution consumers keep working. The
+ * rule pipeline always writes both to the same value; treat `maxBuyRisk` as
+ * canonical.
+ */
 export type UserRule = {
   walletAddress: string;
+  /** Preset the profile is based on, or "custom" once limits diverge. */
+  profileId: "conservative" | "balanced" | "aggressive" | "custom";
+  /** Preset version the profile was seeded from. */
+  presetVersion: number;
+  /** Canonical max Buy Risk, 0-100. */
+  maxBuyRisk: number;
+  /** Legacy mirror of `maxBuyRisk`. */
   maxRiskScore: number;
   maxTradePercent: number;
+  maxTradeValueUsd: number;
+  maxDailyValueUsd: number;
+  minLiquidityUsd: number;
+  maxSingleTokenExposurePercent: number;
+  minStableReservePercent: number;
   maxMemeExposurePercent: number;
+  maxSlippageBps: number;
+  /** Legacy mirror of `maxDailyValueUsd`. */
   maxDailyTransactionValueUsd?: number;
-  maxSlippageBps?: number;
-  allowedChains?: string[];
+  allowedChains: string[];
+  /** Canonical, chain-aware blocked asset keys. */
+  blockedAssets: string[];
+  /** Legacy mirror of `blockedAssets`. */
   blockedTokens?: string[];
-  allowedActions?: AgentRecommendedAction[];
+  blockedCategories: string[];
+  allowedActions: AgentRecommendedAction[];
+  /** Always false. Wallet approval is mandatory for every transaction. */
   autoExecute: boolean;
   createdAt: string;
+  updatedAt: string;
 };
 
 export type RiskBreakdownItem = {

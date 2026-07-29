@@ -23,6 +23,7 @@ import type {
   RiskLevel,
 } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
+import { migrateLegacyRule } from "@/server/rules/strategyProfile";
 import { validateAgentResult } from "@/server/agents/schema";
 import {
   getPostgresStorageAdapter,
@@ -710,34 +711,66 @@ export function createApprovalRecord(input: Omit<UserApprovalRecord, "id" | "cre
   return record;
 }
 
-export function getUserRuleRecord(walletAddress = "0xDemoWallet") {
-  const existing = getUserRules().find((rule) => rule.walletAddress.toLowerCase() === walletAddress.toLowerCase());
-
-  return {
-    ...getDefaultRules(walletAddress),
-    ...existing,
-    autoExecute: false,
-  };
+/**
+ * Raised when the rule store cannot serve or accept a write.
+ *
+ * Callers must surface this rather than swallowing it — a save that failed must
+ * never be reported to the user as saved.
+ */
+export class RuleStorageError extends Error {
+  constructor(message: string, readonly cause?: unknown) {
+    super(message);
+    this.name = "RuleStorageError";
+  }
 }
 
-export function upsertUserRuleRecord(input: UserRule) {
-  const createdAt = input.createdAt ?? new Date().toISOString();
-  const defaults = getDefaultRules(input.walletAddress);
-  const record: UserRule = {
-    ...defaults,
-    ...input,
-    autoExecute: false,
-    createdAt,
-  };
-  const existingIndex = getUserRules().findIndex((rule) => rule.walletAddress.toLowerCase() === input.walletAddress.toLowerCase());
+/**
+ * Load a wallet's profile, migrating any record written before the strategy
+ * fields existed. A wallet with no record gets the default profile.
+ */
+export function getUserRuleRecord(walletAddress = "0xDemoWallet"): UserRule {
+  try {
+    const existing = getUserRules().find((rule) => rule.walletAddress.toLowerCase() === walletAddress.toLowerCase());
 
-  if (existingIndex >= 0) {
-    getUserRules()[existingIndex] = record;
-  } else {
-    getUserRules().unshift(record);
+    if (!existing) {
+      return getDefaultRules(walletAddress);
+    }
+
+    return migrateLegacyRule({ ...existing, walletAddress });
+  } catch (error) {
+    throw new RuleStorageError("Unable to load the strategy profile", error);
   }
+}
 
-  return record;
+/**
+ * Write a wallet's profile.
+ *
+ * The record is re-normalized on the way in so a caller that bypassed the API
+ * schema still cannot persist an out-of-range or non-canonical value, and
+ * `autoExecute` stays false.
+ */
+export function upsertUserRuleRecord(input: UserRule): UserRule {
+  try {
+    const existing = getUserRules().find((rule) => rule.walletAddress.toLowerCase() === input.walletAddress.toLowerCase());
+    const record = migrateLegacyRule({
+      ...input,
+      createdAt: input.createdAt ?? existing?.createdAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    const existingIndex = getUserRules().findIndex(
+      (rule) => rule.walletAddress.toLowerCase() === input.walletAddress.toLowerCase(),
+    );
+
+    if (existingIndex >= 0) {
+      getUserRules()[existingIndex] = record;
+    } else {
+      getUserRules().unshift(record);
+    }
+
+    return record;
+  } catch (error) {
+    throw new RuleStorageError("Unable to save the strategy profile", error);
+  }
 }
 
 export function listX402PaymentReceipts() {

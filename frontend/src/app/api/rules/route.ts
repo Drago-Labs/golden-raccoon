@@ -1,26 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { assertApprovalOnly } from "@/server/security/policy";
 import { checkRateLimit } from "@/server/security/rateLimit";
-import { getUserRuleRecord, upsertUserRuleRecord } from "@/server/storage";
+import { RuleStorageError, getUserRuleRecord, upsertUserRuleRecord } from "@/server/storage";
+import { validateStrategyProfile } from "@/server/rules/strategyProfile";
+import { STRATEGY_PRESET_VERSION, listStrategyPresets } from "@/server/rules/presets";
 
-const ruleSchema = z.object({
-  walletAddress: z.string().min(1),
-  maxRiskScore: z.number().min(0).max(100),
-  maxTradePercent: z.number().min(0).max(100),
-  maxMemeExposurePercent: z.number().min(0).max(100),
-  maxDailyTransactionValueUsd: z.number().min(0).optional(),
-  maxSlippageBps: z.number().min(0).max(10_000).optional(),
-  allowedChains: z.array(z.string().min(1)).optional(),
-  blockedTokens: z.array(z.string().min(1)).optional(),
-  allowedActions: z
-    .array(z.enum(["hold", "watch", "reduce_exposure", "swap_to_stable", "avoid", "manual_review", "prepare_transaction", "no_action"]))
-    .optional(),
-  autoExecute: z.boolean(),
-  createdAt: z.string().optional(),
-});
-
+/**
+ * GET /api/rules?walletAddress=…
+ *
+ * Returns the wallet's stored profile plus the preset catalogue the editor
+ * renders, so the client needs one request to draw the whole form.
+ */
 export function GET(request: NextRequest) {
   const rateLimited = checkRateLimit(request, { namespace: "rules", limit: 60, windowMs: 60_000 });
 
@@ -29,9 +20,32 @@ export function GET(request: NextRequest) {
   }
 
   const walletAddress = request.nextUrl.searchParams.get("walletAddress") ?? undefined;
-  return withCacheHeaders(NextResponse.json(getUserRuleRecord(walletAddress)), "rules");
+
+  try {
+    return withCacheHeaders(
+      NextResponse.json({
+        rule: getUserRuleRecord(walletAddress),
+        presets: listStrategyPresets(),
+        presetVersion: STRATEGY_PRESET_VERSION,
+      }),
+      "rules",
+    );
+  } catch (error) {
+    if (error instanceof RuleStorageError) {
+      return NextResponse.json({ error: error.message, code: "storage_unavailable" }, { status: 503 });
+    }
+
+    throw error;
+  }
 }
 
+/**
+ * POST /api/rules
+ *
+ * Validates and stores a profile. A failure is always reported as a failure:
+ * the route never returns a success body for a write it did not complete, so
+ * the editor cannot show a false "Saved" state.
+ */
 export async function POST(request: Request) {
   const rateLimited = checkRateLimit(request, { namespace: "rules:update", limit: 20, windowMs: 60_000 });
 
@@ -40,21 +54,32 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => ({}));
-  const parsed = ruleSchema.safeParse(body);
+  const validation = validateStrategyProfile(body);
 
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  if (!validation.ok) {
+    return NextResponse.json({ error: "Invalid strategy profile", issues: validation.issues }, { status: 400 });
   }
 
   try {
-    assertApprovalOnly({ autoExecute: parsed.data.autoExecute });
+    // Defence in depth: the rule pipeline forces autoExecute off, and this
+    // asserts the invariant held before anything is written.
+    assertApprovalOnly({ autoExecute: validation.rule.autoExecute });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Execution policy failed" }, { status: 403 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Execution policy failed" },
+      { status: 403 },
+    );
   }
 
-  return withCacheHeaders(NextResponse.json(upsertUserRuleRecord({
-    ...parsed.data,
-    autoExecute: false,
-    createdAt: parsed.data.createdAt ?? new Date().toISOString(),
-  })), "rules");
+  try {
+    const rule = upsertUserRuleRecord(validation.rule);
+
+    return withCacheHeaders(NextResponse.json({ rule, warnings: validation.warnings }), "rules");
+  } catch (error) {
+    if (error instanceof RuleStorageError) {
+      return NextResponse.json({ error: error.message, code: "storage_unavailable" }, { status: 503 });
+    }
+
+    throw error;
+  }
 }

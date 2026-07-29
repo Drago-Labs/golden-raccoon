@@ -199,6 +199,51 @@ create table if not exists user_rules (
   created_at timestamptz not null default now()
 );
 
+-- Strategy profile columns.
+--
+-- Added with defaults so an existing row keeps working: max_buy_risk mirrors
+-- max_risk_score, max_daily_value_usd mirrors max_daily_transaction_value_usd,
+-- and blocked_assets mirrors blocked_tokens. The application writes both sides
+-- of each pair, so a reader on either name sees the same value.
+alter table user_rules add column if not exists profile_id text not null default 'custom';
+alter table user_rules add column if not exists preset_version integer not null default 1;
+alter table user_rules add column if not exists max_buy_risk integer;
+alter table user_rules add column if not exists max_trade_value_usd numeric not null default 1000;
+alter table user_rules add column if not exists max_daily_value_usd numeric;
+alter table user_rules add column if not exists min_liquidity_usd numeric not null default 100000;
+alter table user_rules add column if not exists max_single_token_exposure_percent numeric not null default 25;
+alter table user_rules add column if not exists min_stable_reserve_percent numeric not null default 25;
+alter table user_rules add column if not exists blocked_assets jsonb not null default '[]'::jsonb;
+alter table user_rules add column if not exists blocked_categories jsonb not null default '[]'::jsonb;
+alter table user_rules add column if not exists updated_at timestamptz not null default now();
+
+update user_rules set max_buy_risk = max_risk_score where max_buy_risk is null;
+update user_rules set max_daily_value_usd = max_daily_transaction_value_usd where max_daily_value_usd is null;
+update user_rules set blocked_assets = blocked_tokens where blocked_assets = '[]'::jsonb and blocked_tokens <> '[]'::jsonb;
+
+alter table user_rules alter column max_buy_risk set not null;
+alter table user_rules alter column max_daily_value_usd set not null;
+
+alter table user_rules drop constraint if exists user_rules_profile_id_check;
+alter table user_rules add constraint user_rules_profile_id_check
+  check (profile_id in ('conservative', 'balanced', 'aggressive', 'custom'));
+
+alter table user_rules drop constraint if exists user_rules_percent_bounds_check;
+alter table user_rules add constraint user_rules_percent_bounds_check
+  check (
+    max_buy_risk between 0 and 100
+    and max_trade_percent between 0 and 100
+    and max_meme_exposure_percent between 0 and 100
+    and max_single_token_exposure_percent between 0 and 100
+    and min_stable_reserve_percent between 0 and 100
+    and max_slippage_bps between 0 and 10000
+  );
+
+-- Automatic execution is not a supported state. The column stays for schema
+-- compatibility, but the database refuses to hold a true value.
+alter table user_rules drop constraint if exists user_rules_auto_execute_check;
+alter table user_rules add constraint user_rules_auto_execute_check check (auto_execute = false);
+
 create index if not exists agent_runs_wallet_created_idx on agent_runs(wallet_address, created_at desc);
 create index if not exists agent_results_run_agent_idx on agent_results(run_id, agent);
 create index if not exists source_snapshots_run_agent_idx on source_snapshots(run_id, agent);

@@ -1,17 +1,13 @@
 import type { UserRule } from "../types";
+import { buildProfileFromPreset } from "./strategyProfile";
 
+/**
+ * The profile a wallet starts on before it has saved anything.
+ *
+ * Balanced is the seed because it is the middle preset: it does not impose the
+ * strictest stance on a user who has expressed no preference, and it does not
+ * imply a risk appetite they never chose.
+ */
 export function getDefaultRules(walletAddress = "0xDemoWallet"): UserRule {
-  return {
-    walletAddress,
-    maxRiskScore: 80,
-    maxTradePercent: 20,
-    maxMemeExposurePercent: 10,
-    maxDailyTransactionValueUsd: 1_000,
-    maxSlippageBps: 100,
-    allowedChains: ["GOAT Network", "Base", "Ethereum", "Arbitrum", "Optimism", "Polygon", "BSC", "Stellar Testnet", "Stellar Pubnet"],
-    blockedTokens: [],
-    allowedActions: ["hold", "watch", "reduce_exposure", "swap_to_stable", "prepare_transaction", "no_action"],
-    autoExecute: false,
-    createdAt: new Date().toISOString(),
-  };
+  return buildProfileFromPreset(walletAddress, "balanced");
 }
