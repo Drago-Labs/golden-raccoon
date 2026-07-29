@@ -11,15 +11,18 @@ than no report — it converts an unknown into a false claim.
 
 | | |
 |---|---|
-| Automated cases passed | 6 of 7 |
-| Automated cases failed | 1 (A5, production build) |
+| Automated cases passed | 3 of 7 |
+| Automated cases failed | 4 (A1, A3, A5, A6) |
 | Cases not run | 18 of 25 |
 | Blocking issues open | #1, #2, #3, #4 |
 
 The matrix cannot be completed until #1 through #4 land, because most of the
-remaining cases test behaviour those issues implement. This report is therefore
-a **baseline**: it establishes what already passes, so a later run has something
-to compare against.
+remaining cases test behaviour those issues implement.
+
+It also cannot be completed while `main` is red. Four automated cases fail on
+`main` as it stands, three of them from merged code rather than from the
+environment, and between them they leave the Agent, Execution and Test sections
+of the Definition of Done with **no** verified coverage at all.
 
 ## Run environment
 
@@ -45,13 +48,56 @@ output tail: `docs/acceptance/evidence.json`.
 
 | Id | Case | Result |
 |---|---|---|
-| A1 | Deploy readiness and secret scan | **pass** |
+| A1 | Deploy readiness and secret scan | **fail** |
 | A2 | Stellar configuration check | **pass** |
-| A3 | Agent fixture and property suite | **pass** |
+| A3 | Agent fixture and property suite | **fail** |
 | A4 | Lint | **pass** |
 | A5 | Production build | **fail** |
-| A6 | Soroban contract tests | **pass** |
+| A6 | Soroban contract tests | **fail** |
 | A7 | EVM contract compile | **pass** |
+
+Four of the seven fail. Every one of them fails on `main` itself, with this
+branch's changes limited to two documentation files and a script — so these are
+findings about the release candidate, not about the branch that reported them.
+
+### A1 — secret scan trips on merged code
+
+```
+deploy-readiness: possible secret-like value found in
+  frontend/src/server/observability/observations.ts: sk-c
+  frontend/src/server/transactions/adapters/evm.ts: 0x0000…0001
+  frontend/src/server/types.ts: sk-c
+```
+
+These read as false positives: `sk-c` appears to be a redaction fixture and the
+hex value a placeholder constant. That does not make the failure benign — the
+secret scan is a release gate, and a gate nobody can pass is a gate that gets
+ignored. Either the values or the pattern in `scripts/check-deploy-readiness.mjs`
+need adjusting so a real leak would still be caught.
+
+### A3 — server-only module reaches a client path
+
+```
+Error: This module cannot be imported from a Client Component module.
+It should only be used from a Server Component.
+  at frontend/src/server/stellar/trustline.ts:173
+```
+
+A `server-only` import is being pulled in through a client module path. This
+blocks the entire agent fixture suite, which is the automated proxy for the
+Agent DoD — so **no agent behaviour is currently verified on `main`**.
+
+### A6 — Soroban contract tests do not compile
+
+```
+error: could not compile `golden-raccoon-risk-registry` (lib test)
+       due to 16 previous errors
+```
+
+Sixteen type errors in the risk-registry test module: `no method named is_ok
+found for unit type ()`, `this method takes 2 arguments but 3 were supplied`,
+and similar. The test file and the library have drifted apart — the signatures
+the tests call no longer exist in the shapes they expect.
 
 ### A5 — production build failure
 
@@ -135,10 +181,10 @@ Against the V1 Definition of Done in `PROJECT_ROADMAP.md`:
 | Section | Covered by this run |
 |---|---|
 | Product DoD | none — every item needs the UI on a deployed build |
-| Agent DoD | structurally, via A3; not against live provider data |
-| Execution DoD | structurally, via A3 (auto-execute off, no quote means no executable trade, duplicate tx hash and wallet mismatch rejected); not end to end through a wallet |
+| Agent DoD | **none** — A3 does not run, so nothing is verified |
+| Execution DoD | **none** — these assertions live in A3, which does not run |
 | Storage DoD | none — the production adapter is #1 |
-| Test DoD | partially: unit/fixture tests, lint and contract compile pass; build fails (A5); smoke not run; migration not applied |
+| Test DoD | **not met**: agent fixture tests fail (A3), Soroban tests do not compile (A6), build fails (A5), secret scan fails (A1). Lint and EVM compile pass. Smoke not run; migration not applied |
 | Release DoD | none — no production environment, no provider keys, no deployment |
 
 ## Known limitations
@@ -183,6 +229,14 @@ Signed: _______________  Date: _______________
 
 ## What has to happen next
 
+`main` itself must go green before acceptance can proceed. In priority order:
+
+0. **Repair `main`.** A3, A6 and A1 are all regressions in merged code, not
+   environment problems, and they block the Agent, Execution and Test DoD
+   sections outright:
+   - fix the `server-only` import path reaching a client module (A3),
+   - reconcile the risk-registry test module with its library (A6),
+   - resolve the secret-scan hits, in the fixtures or in the pattern (A1).
 1. Land #1, #2, #3 and #4.
 2. Resolve A5 on a supported platform or in CI.
 3. Deploy a release candidate and record its URL and commit SHA.
