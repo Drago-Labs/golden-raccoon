@@ -672,7 +672,7 @@ async function runDecisionChecks() {
 }
 
 async function runExecutionChecks() {
-  const defaultPreview = buildExecutionPreview({
+  const defaultPreview = await buildExecutionPreview({
     action: "reduce_exposure",
     fromToken: "MEME",
     toToken: "USDC",
@@ -688,7 +688,7 @@ async function runExecutionChecks() {
   assert(defaultPreview.blockedReason?.includes("Live quote provider"), "Quote-missing trade action must expose blocked reason.");
   assert(defaultPreview.audit?.serverCanSign === false, "Server signing must remain disabled.");
 
-  const quotedPreview = buildExecutionPreview({
+  const quotedPreview = await buildExecutionPreview({
     action: "reduce_exposure",
     fromToken: "MEME",
     toToken: "USDC",
@@ -704,7 +704,7 @@ async function runExecutionChecks() {
   assert(quotedPreview.approvalRisk?.existingAllowanceCheck === "required", "Approval risk analysis must require allowance check for trade actions.");
   assert(quotedPreview.lifecycle?.status === "prepared", "Execution preview must expose prepared lifecycle status.");
 
-  const policyBlocked = buildExecutionPreview({
+  const policyBlocked = await buildExecutionPreview({
     action: "reduce_exposure",
     fromToken: "MEME",
     toToken: "USDC",
@@ -716,7 +716,7 @@ async function runExecutionChecks() {
   assert(policyBlocked.requiresApproval === false, "Policy violation must not prepare a wallet approval.");
   assert(Boolean(policyBlocked.blockedReason), "Policy violation must expose blocked reason.");
 
-  const manualReview = buildExecutionPreview({
+  const manualReview = await buildExecutionPreview({
     action: "manual_review",
     fromToken: "MEME",
     toToken: "USDC",
@@ -725,7 +725,7 @@ async function runExecutionChecks() {
   });
   assert(manualReview.requiresApproval === false && manualReview.action === "no_action", "Manual review action must not prepare a transaction.");
 
-  const executionResult = runExecutionAgent({
+  const executionResult = await runExecutionAgent({
     action: "swap_to_stable",
     fromToken: "MEME",
     toToken: "USDC",

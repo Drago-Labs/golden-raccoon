@@ -195,7 +195,7 @@ async function safeSendTransaction(payload: string, networkPassphrase: string): 
     if (!response || typeof response !== "object") {
       return { broadcastAt: new Date().toISOString() };
     }
-    const record = response as Record<string, unknown>;
+  const record = response as unknown as Record<string, unknown>;
     if (typeof record.hash === "string") {
       return { broadcastAt: new Date().toISOString() };
     }
@@ -220,7 +220,7 @@ async function safeGetTransaction(hash: string): Promise<StellarRpcGetResponse |
 
 function mapStellarPollResponse(response: StellarRpcGetResponse, hash: string, family: ChainFamily, network: StellarNetworkId, providerUrl: string, polledAt: string): StellarPollResult {
   const status = response.status;
-  const record = response as Record<string, unknown>;
+  const record = response as unknown as Record<string, unknown>;
   const ledger = toLedgerNumber(record.ledger);
   const createdAt = typeof record.createdAt === "string" ? record.createdAt : undefined;
   const resultXdr = typeof record.resultXdr === "string" ? record.resultXdr : undefined;

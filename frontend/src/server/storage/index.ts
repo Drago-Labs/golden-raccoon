@@ -10,6 +10,7 @@ import type {
   RecommendationRecord,
   StorageCounts,
   StorageHealth,
+  TransactionLifecycleEvent,
   TransactionRecord,
   UserApprovalRecord,
   UserRule,
@@ -22,6 +23,7 @@ import type {
   DiscoveryClassification,
   RiskLevel,
 } from "@/server/types";
+import type { Hash } from "viem";
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { validateAgentResult } from "@/server/agents/schema";
 import {
@@ -58,6 +60,7 @@ import {
   __goldenRaccoonWatchlistEntries?: WatchlistEntry[];
   __goldenRaccoonWatchlistScanRuns?: WatchlistScanRun[];
   __goldenRaccoonDiscoveryAlerts?: DiscoveryAlert[];
+  __goldenRaccoonLifecycleEvents?: Map<string, TransactionLifecycleEvent[]>;
   __goldenRaccoonHydrationStarted?: boolean;
   __goldenRaccoonHydrationPromise?: Promise<{ tried: boolean; hydrated: number; skipped: number; detail: string }>;
   __goldenRaccoonLastHydration?: { tried: boolean; hydrated: number; skipped: number; detail: string; at: string };
@@ -670,6 +673,62 @@ export function listTransactionRecords(walletAddress?: string) {
 
 export function getTransactionRecord(hash: string) {
   return getTransactions().find((record) => record.hash.toLowerCase() === hash.toLowerCase());
+}
+
+// Transaction lifecycle event store
+function getLifecycleEvents(): Map<string, TransactionLifecycleEvent[]> {
+  memoryStore.__goldenRaccoonLifecycleEvents ??= new Map();
+
+  return memoryStore.__goldenRaccoonLifecycleEvents as Map<string, TransactionLifecycleEvent[]>;
+}
+
+export function canonicalizeTransactionHash(hash: string, chainFamily?: string): string {
+  if (chainFamily === "stellar") return hash.toUpperCase();
+  return hash.toLowerCase() as Hash;
+}
+
+export function getTransactionRecordByIdempotencyKey(walletAddress: string, key: string): TransactionRecord | undefined {
+  return getTransactions().find((record) => record.walletAddress === walletAddress && record.idempotencyKey === key);
+}
+
+export function isImmutableTerminal(status?: string): boolean {
+  return status === "confirmed" || status === "failed" || status === "replaced" || status === "expired";
+}
+
+export function appendLifecycleEventByName(
+  hash: string,
+  eventName: string,
+  detail?: Record<string, unknown>,
+  meta?: { label?: string; url?: string },
+): TransactionLifecycleEvent {
+  const events = getLifecycleEvents();
+  const existing = events.get(hash) ?? [];
+  const event: TransactionLifecycleEvent = {
+    event: eventName,
+    occurredAt: new Date().toISOString(),
+    detail,
+    meta,
+  };
+
+  existing.push(event);
+  events.set(hash, existing);
+
+  return event;
+}
+
+export function listTransactionLifecycleEvents(hash: string): TransactionLifecycleEvent[] {
+  return getLifecycleEvents().get(hash) ?? [];
+}
+
+export function updateTransactionRecord(hash: string, patch: Partial<TransactionRecord>): TransactionRecord | undefined {
+  const store = getTransactions();
+  const index = store.findIndex((record) => record.hash.toLowerCase() === hash.toLowerCase());
+
+  if (index < 0) return undefined;
+
+  store[index] = { ...store[index], ...patch };
+
+  return store[index];
 }
 
 export function createTransactionRecord(input: Omit<TransactionRecord, "createdAt"> & { createdAt?: string }) {

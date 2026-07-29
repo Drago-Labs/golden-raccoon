@@ -145,14 +145,14 @@ async function findClassicPath(
 
       const best = intermediatePaths.records[0];
       return {
-        path: best.path.map((p) => `${p.getCode()}:${p.getIssuer()}`),
+        path: best.path.map((p) => `${p.asset_code}:${p.asset_issuer}`),
         rate: Number(best.destination_amount) / amount,
       };
     }
 
     const best = pathResult.records[0];
     return {
-      path: best.path.map((p) => `${p.getCode()}:${p.getIssuer()}`),
+      path: best.path.map((p) => `${p.asset_code}:${p.asset_issuer}`),
       rate: Number(best.destination_amount) / amount,
     };
   } catch {
@@ -160,8 +160,16 @@ async function findClassicPath(
   }
 }
 
+function assetToStr(asset: StellarAssetIdentity): string {
+  if (asset.type === "native") return "native";
+  if (asset.type === "classic") return `${asset.symbol}:${asset.issuer}`;
+  if (asset.type === "contract") return `contract:${asset.contractId}`;
+  if (asset.type === "issuer_account") return `issuer:${asset.issuer}`;
+  return (asset as StellarAssetIdentity & { assetKey: string }).assetKey;
+}
+
 /**
- * Build the swap operations for a classic path payment
+ * Build the classic path payment operation for Stellar swap.
  */
 function buildClassicPathPayment(
   from: StellarAssetIdentity,
@@ -175,8 +183,8 @@ function buildClassicPathPayment(
   const sendAmount = amount.toFixed(7);
   const destMinStr = destMin.toFixed(7);
 
-  const fromStr = from.type === "native" ? "native" : `${from.symbol}:${from.issuer}`;
-  const toStr = to.type === "native" ? "native" : `${to.symbol}:${to.issuer}`;
+  const fromStr = assetToStr(from);
+  const toStr = assetToStr(to);
 
   return {
     type: "path_payment_strict_send",
@@ -218,8 +226,8 @@ async function buildSorobanSwapRoute(
       method: "swap_exact_tokens_for_tokens",
       args: [
         walletAddress,
-        from.contractId ?? from.assetKey,
-        to.contractId ?? to.assetKey,
+        from.type === "contract" ? from.contractId : (from as StellarAssetIdentity & { contractId?: string }).contractId ?? from.assetKey,
+        to.type === "contract" ? to.contractId : (to as StellarAssetIdentity & { contractId?: string }).contractId ?? to.assetKey,
         String(amount),
         "0",
       ],
@@ -410,7 +418,7 @@ export async function getStellarSwapQuote(input: StellarSwapInput): Promise<Stel
         priceImpactBps: Math.round((1 - pathResult.rate) * 10_000),
         slippageBps,
         minReceiveAmount: expectedOutput * (1 - slippageBps / 10_000),
-        pathPaymentOps: [operation],
+        pathPaymentOps: [{ ...operation, destAmount: operation.destMin }],
         status: "fresh",
         fetchedAt,
         expiresAt,

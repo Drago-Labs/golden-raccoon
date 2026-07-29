@@ -704,20 +704,100 @@ export type TokenScanResult = {
   scannedAt: string;
 };
 
+import type { ChainFamily } from "@/lib/chainIdentity";
+
+export type TransactionExpectedEffect = {
+  kind: "transfer" | "swap" | "approval" | "contract_call" | "publish_risk";
+  fromToken?: string;
+  toToken?: string;
+  fromAddress?: string;
+  toAddress?: string;
+  amount?: string;
+  contractAddress?: string;
+  method?: string;
+  assetKey?: string;
+};
+
+export type PollTransactionResult = {
+  transaction: TransactionRecord;
+  polled: boolean;
+  terminalReached: boolean;
+  events: TransactionLifecycleEvent[];
+};
+
+export type SubmitTransactionInput = {
+  chainFamily: ChainFamily;
+  signedPayload: string;
+  network: string;
+  asset: string;
+  valueUsd?: number;
+  walletAddress: string;
+  sourceAccount?: string;
+  decisionId?: string;
+  decisionAction?: AgentRecommendedAction;
+  userApproved?: boolean;
+  simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
+  policyStatus?: TransactionPreview["policyStatus"];
+  expectedEffects?: TransactionExpectedEffect[];
+  idempotencyKey?: string;
+};
+
+export type SubmitTransactionResult = {
+  hash: string;
+  chainFamily?: ChainFamily;
+  network: string;
+  status: string;
+  submittedAt?: string;
+  explorerUrl?: string;
+  providerUrl?: string;
+  revertReason?: string;
+  idempotent?: boolean;
+  reuseReason?: string;
+  lifecycle?: TransactionLifecycleEvent[];
+};
+
+export type TransactionLifecycleStatus =
+  | "prepared"
+  | "user_rejected"
+  | "submitted"
+  | "confirmed"
+  | "failed"
+  | "replaced"
+  | "expired"
+  | "pending";
+
+export type TransactionLifecycleEvent = {
+  event: string;
+  occurredAt: string;
+  detail?: Record<string, unknown>;
+  meta?: { label?: string; url?: string };
+};
+
 export type TransactionRecord = {
   hash: string;
   type: "swap" | "approval" | "agent_log" | "transfer" | "trustline_create" | "trustline_change";
   decisionAction?: AgentRecommendedAction;
   asset: string;
   valueUsd: number;
-  status: "prepared" | "user_rejected" | "submitted" | "confirmed" | "failed" | "replaced" | "expired" | "pending";
+  status: TransactionLifecycleStatus;
+  lifecycleStatus?: TransactionLifecycleStatus;
   createdAt: string;
   network: string;
+  chainFamily?: ChainFamily;
   walletAddress?: string;
+  sourceAccount?: string;
   userApproved?: boolean;
   decisionId?: string;
   simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
   policyStatus?: TransactionPreview["policyStatus"];
+  expectedEffects?: TransactionExpectedEffect[];
+  submittedAt?: string;
+  explorerUrl?: string;
+  lastPolledAt?: string;
+  terminalAt?: string;
+  failureReason?: string;
+  idempotencyKey?: string;
+  lifecycleEvents?: TransactionLifecycleEvent[];
   stellarDetails?: {
     sequence?: string;
     feeCharged?: number;
