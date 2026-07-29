@@ -40,11 +40,17 @@ async function deepScanHandler(request: NextRequest): Promise<NextResponse<unkno
     return NextResponse.json({ error: guard.error, detail: guard.detail, receiptId: guard.receiptId }, { status: guard.status });
   }
 
+  // Resolve the payment network for Stellar: use the chain parameter when the
+  // payment was made via Stellar, otherwise fall back to the default EVM network.
+  const paymentNetwork = guard.isStellar
+    ? (parsed.data.chain?.startsWith("stellar") ? `stellar:${parsed.data.chain.includes("pubnet") ? "pubnet" : "testnet"}` : "stellar:testnet")
+    : config.network;
+
   const receipt = createX402PaymentReceipt({
     requestId: guard.requestId,
     paymentHeaderHash: guard.paymentHeaderHash,
     walletAddress: parsed.data.walletAddress,
-    network: config.network,
+    network: paymentNetwork,
     asset: config.asset,
     amount: config.priceUsd,
     priceUsd: config.priceUsd,
@@ -52,6 +58,7 @@ async function deepScanHandler(request: NextRequest): Promise<NextResponse<unkno
     facilitatorUrl: config.facilitatorUrl,
     protectedResource: config.protectedResource,
     requestBodyHash: guard.requestBodyHash,
+    payer: guard.payer,
     verificationStatus: "verified",
   });
   const scan = await runTokenScan(parsed.data.query, parsed.data.chain, parsed.data.walletAddress);

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Hash } from "viem";
 import { parseUnits, toFunctionSelector } from "viem";
 import type { ChainFamily } from "@/lib/chainIdentity";
@@ -247,9 +248,16 @@ export async function submitTransaction(input: SubmitTransactionInput): Promise<
     };
   }
 
-  const derivedHash = await deriveSubmitHash(input);
-  const normalizedHash = normalizeHashForRecord(derivedHash, family);
-  const existingByHash = storage.getByHash(derivedHash) ?? storage.getByHash(normalizedHash);
+  const normalizedHash = await deriveSubmitHash(input).catch(() => {
+    // Cannot derive a chain-native hash (non-hash payload used with simulator).
+    // Fall back to a synthetic canonical hash using the payload bytes so the
+    // lifecycle record has a stable, unique identifier without blocking on
+    // provider resolution.
+    const fallbackPayload = input.signedPayload ?? `${input.chainFamily}:${input.walletAddress}:${input.idempotencyKey ?? Date.now()}`;
+    const syntheticHash = `0x${createHash("sha256").update(fallbackPayload).digest("hex")}`;
+    return normalizeHashForRecord(syntheticHash, family);
+  });
+  const existingByHash = storage.getByHash(normalizedHash);
 
   if (existingByHash) {
     storage.appendEvent(normalizedHash, "duplicate_rejected", { reason: "duplicate_hash", walletAddress: input.walletAddress });

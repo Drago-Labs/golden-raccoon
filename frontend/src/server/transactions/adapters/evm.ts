@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createPublicClient, decodeEventLog, http, keccak256, parseAbiItem, recoverTransactionAddress, toFunctionSelector, type Hash, type PublicClient } from "viem";
 import type { ChainFamily } from "@/lib/chainIdentity";
 import { isTransactionHashForChain } from "@/lib/chainIdentity";
@@ -297,23 +298,29 @@ export function getEvmChainAdapter(options: EvmAdapterOptions): {
       const isPreHash = isTransactionHashForChain(trimmed, "evm");
       let hash: Hash;
 
-      if (isPreHash) {
-        hash = trimmed as Hash;
-      } else if (!simulator && !outcome) {
-        await assertChainIdMatches(options);
-        const client = createEvmPublicClient(options);
-        if (!client) {
-          throw new Error("EVM RPC client could not be created for broadcast.");
-        }
-        try {
-          const txHash = await client.sendRawTransaction({ serializedTransaction: trimmed as never });
-          hash = txHash;
-        } catch (error) {
-          throw new Error(error instanceof Error ? `EVM RPC broadcast failed: ${error.message}` : "EVM RPC broadcast failed.");
-        }
-      } else {
-        hash = await deriveEvmTransactionHash(payload);
+    if (isPreHash) {
+      hash = trimmed as Hash;
+    } else if (!simulator && !outcome) {
+      await assertChainIdMatches(options);
+      const client = createEvmPublicClient(options);
+      if (!client) {
+        throw new Error("EVM RPC client could not be created for broadcast.");
       }
+      try {
+        const txHash = await client.sendRawTransaction({ serializedTransaction: trimmed as never });
+        hash = txHash;
+      } catch (error) {
+        throw new Error(error instanceof Error ? `EVM RPC broadcast failed: ${error.message}` : "EVM RPC broadcast failed.");
+      }
+    } else if (isTransactionHashForChain(trimmed, "evm")) {
+      hash = trimmed as Hash;
+    } else {
+      // Simulator is active and payload is not a pre-hash. Derive a
+      // stable synthetic hash from the payload bytes so the lifecycle
+      // record has a consistent identifier without needing to parse
+      // a non-standard serialized transaction.
+      hash = `0x${createHash("sha256").update(trimmed).digest("hex")}` as Hash;
+    }
 
       return {
         hash,

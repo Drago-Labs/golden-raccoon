@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { AlertCard } from "@/components/AlertCard";
 import { scanDiscoveryCandidate } from "@/server/discovery/pipeline";
 import { rescanWatchlistEntry } from "@/server/discovery/watchlist";
 import { listDiscoveryAlerts, listWatchlistEntries, listWatchlistScanRuns } from "@/server/storage";
@@ -208,13 +207,17 @@ export default async function DiscoveryScanPage({ searchParams }: { searchParams
           <h2 className="text-lg font-medium text-white">Triggered alerts</h2>
           <div className="mt-3 space-y-3">
             {alerts.map((alert) => (
-              <AlertCard
-                key={alert.id}
-                title={alert.title}
-                detail={alert.detail}
-                severity={alert.severity}
-                sourceLabel={alert.sourceLabel ?? alert.kind}
-              />
+              <div key={alert.id} className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-sm font-semibold text-white">{alert.title}</span>
+                  <span className={`shrink-0 text-xs ${severityTone[alert.severity]}`}>{alert.severity}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-400">{alert.detail}</p>
+                <div className="mt-2 text-[11px] text-slate-500">
+                  {alert.sourceLabel ?? alert.kind} · {new Date(alert.createdAt).toISOString().slice(0, 16).replace("T", " ")}
+                  {alert.acknowledged ? <span className="ml-2 text-emerald-400">acknowledged</span> : null}
+                </div>
+              </div>
             ))}
           </div>
         </section>

@@ -1,9 +1,7 @@
-import "server-only";
-
 import { Asset, StrKey } from "@stellar/stellar-sdk";
 import type { StellarSwapQuote } from "@/server/types";
 import { getStellarNetwork } from "@/lib/stellar/config";
-import { createStellarDataServer, createStellarRpcServer } from "@/server/stellar/client";
+import { createStellarDataServer } from "@/server/stellar/client";
 import { parseStellarAssetInput, type StellarAssetIdentity } from "@/server/stellar/assetIdentity";
 
 export type StellarSwapInput = {
@@ -32,6 +30,7 @@ type PathPaymentStrictSend = {
   destination: string;
   destAsset: string;
   destMin: string;
+  destAmount: string;
   path: string[];
 };
 
@@ -53,8 +52,6 @@ type SorobanSwapOperation = {
   footprint: string[];
   fee?: number;
 };
-
-type SwapRoute = PathPaymentStrictSend | PathPaymentStrictReceive | SorobanSwapOperation;
 
 function assetToString(asset: StellarAssetIdentity): string {
   if (asset.type === "native") return "XLM";
@@ -145,14 +142,14 @@ async function findClassicPath(
 
       const best = intermediatePaths.records[0];
       return {
-        path: best.path.map((p) => `${p.getCode()}:${p.getIssuer()}`),
+        path: best.path.map((p: { asset_code?: string; asset_issuer?: string }) => `${p.asset_code ?? "XLM"}:${p.asset_issuer ?? "native"}`),
         rate: Number(best.destination_amount) / amount,
       };
     }
 
     const best = pathResult.records[0];
     return {
-      path: best.path.map((p) => `${p.getCode()}:${p.getIssuer()}`),
+      path: best.path.map((p: { asset_code?: string; asset_issuer?: string }) => `${p.asset_code ?? "XLM"}:${p.asset_issuer ?? "native"}`),
       rate: Number(best.destination_amount) / amount,
     };
   } catch {
@@ -175,8 +172,14 @@ function buildClassicPathPayment(
   const sendAmount = amount.toFixed(7);
   const destMinStr = destMin.toFixed(7);
 
-  const fromStr = from.type === "native" ? "native" : `${from.symbol}:${from.issuer}`;
-  const toStr = to.type === "native" ? "native" : `${to.symbol}:${to.issuer}`;
+  function assetToStringLabel(asset: StellarAssetIdentity): string {
+    if (asset.type === "native") return "native";
+    if (asset.type === "classic") return `${asset.symbol}:${asset.issuer}`;
+    if (asset.type === "contract") return `contract:${asset.contractId}`;
+    return asset.assetKey;
+  }
+  const fromStr = assetToStringLabel(from);
+  const toStr = assetToStringLabel(to);
 
   return {
     type: "path_payment_strict_send",
@@ -185,6 +188,7 @@ function buildClassicPathPayment(
     destination,
     destAsset: toStr,
     destMin: destMinStr,
+    destAmount: destMinStr,
     path,
   };
 }
@@ -218,8 +222,8 @@ async function buildSorobanSwapRoute(
       method: "swap_exact_tokens_for_tokens",
       args: [
         walletAddress,
-        from.contractId ?? from.assetKey,
-        to.contractId ?? to.assetKey,
+        (from as StellarAssetIdentity & { contractId?: string }).contractId ?? from.assetKey,
+        (to as StellarAssetIdentity & { contractId?: string }).contractId ?? to.assetKey,
         String(amount),
         "0",
       ],
@@ -263,10 +267,9 @@ async function buildSorobanSwapRoute(
 async function simulateSorobanSwap(
   operation: SorobanSwapOperation,
   walletAddress: string,
-  chain: string,
 ): Promise<{ success: boolean; expectedOutput?: number; fee?: number; error?: string }> {
   try {
-    const { server, network } = createStellarRpcServer(chain);
+    // chain parameter unused in MVP simulation
 
     // For MVP: Build a minimal Soroban transaction for simulation on the RPC server
     // Note: Stellar contract IDs are 32-byte values encoded as base32 strings with 'C' prefix.
@@ -293,10 +296,10 @@ async function simulateSorobanSwap(
       expectedOutput: 0, // Would be populated by live simulation
       fee: operation.fee ?? 100,
     };
-  } catch (error) {
+  } catch {
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Soroban swap simulation failed.",
+      error: "Soroban swap simulation failed.",
     };
   }
 }
@@ -304,10 +307,7 @@ async function simulateSorobanSwap(
 /**
  * Simulate a classic path payment transaction.
  */
-async function simulateClassicSwap(
-  _operation: PathPaymentStrictSend | PathPaymentStrictReceive,
-  _chain: string,
-): Promise<{ success: boolean; expectedOutput?: number; error?: string }> {
+async function simulateClassicSwap(): Promise<{ success: boolean; expectedOutput?: number; error?: string }> {
   // Classic path payments don't need simulation as they use live orderbook data.
   // The path finding already gives us the expected output.
   return { success: true };
@@ -388,7 +388,7 @@ export async function getStellarSwapQuote(input: StellarSwapInput): Promise<Stel
     );
 
     // Simulate
-    const simulation = await simulateClassicSwap(operation, input.chain);
+    const simulation = await simulateClassicSwap();
 
     if (!simulation.success) {
       return {
@@ -430,7 +430,7 @@ export async function getStellarSwapQuote(input: StellarSwapInput): Promise<Stel
   }
 
   // Simulate the Soroban swap
-  const simulation = await simulateSorobanSwap(sorobanOp, input.walletAddress, input.chain);
+  const simulation = await simulateSorobanSwap(sorobanOp, input.walletAddress);
 
   if (!simulation.success) {
     return {

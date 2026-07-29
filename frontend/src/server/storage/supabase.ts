@@ -6,6 +6,9 @@ import type {
   TransactionRecord,
 } from "@/server/types";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SupabaseQuery = any;
+
 function mapDbTransaction(row: Record<string, unknown>): TransactionRecord {
   return {
     hash: row.tx_hash as string,
@@ -26,7 +29,7 @@ function mapDbTransaction(row: Record<string, unknown>): TransactionRecord {
     decisionId: row.decision_id as string | undefined,
     decisionAction: row.decision_action as TransactionRecord["decisionAction"],
     simulationStatus: row.simulation_status as TransactionRecord["simulationStatus"],
-    policyStatus: row.policy_status ? (row.policy_status as any) : undefined,
+    policyStatus: row.policy_status ? (row.policy_status as unknown as TransactionRecord["policyStatus"]) : undefined,
     expectedEffects: row.expected_effects ? (row.expected_effects as TransactionRecord["expectedEffects"]) : undefined,
     idempotencyKey: row.idempotency_key as string | undefined,
     explorerUrl: row.explorer_url as string | undefined,
@@ -51,7 +54,7 @@ export async function listTransactionRecords(walletAddress?: string): Promise<Tr
   if (!supabase) return [];
 
   const db = supabase.from("transactions") as never;
-  let query = (db as any).select("*").order("created_at", { ascending: false });
+  let query = (db as SupabaseQuery).select("*").order("created_at", { ascending: false });
   if (walletAddress) {
     query = query.eq("wallet_address", walletAddress.toLowerCase());
   }
@@ -66,7 +69,7 @@ export async function getTransactionRecord(hash: string): Promise<TransactionRec
 
   const db = supabase.from("transactions") as never;
   const normalized = hash.trim().toLowerCase();
-  const { data, error } = await (db as any).select("*").eq("tx_hash", normalized).maybeSingle();
+  const { data, error } = await (db as SupabaseQuery).select("*").eq("tx_hash", normalized).maybeSingle();
   if (error) throw new Error(`Supabase getTransactionRecord failed: ${error.message}`);
   return data ? mapDbTransaction(data) : undefined;
 }
@@ -77,7 +80,7 @@ export async function getTransactionRecordByIdempotencyKey(walletAddress: string
 
   const db = supabase.from("transactions") as never;
   const normalizedWallet = walletAddress.trim().toLowerCase();
-  const { data, error } = await (db as any).select("*").eq("wallet_address", normalizedWallet).eq("idempotency_key", idempotencyKey).maybeSingle();
+  const { data, error } = await (db as SupabaseQuery).select("*").eq("wallet_address", normalizedWallet).eq("idempotency_key", idempotencyKey).maybeSingle();
   if (error) throw new Error(`Supabase getTransactionRecordByIdempotencyKey failed: ${error.message}`);
   return data ? mapDbTransaction(data) : undefined;
 }
@@ -90,7 +93,7 @@ export async function createTransactionRecord(input: TransactionRecord): Promise
   if (existing) return existing;
 
   const db = supabase.from("transactions") as never;
-  const { error } = await (db as any).insert({
+  const { error } = await (db as SupabaseQuery).insert({
     tx_hash: input.hash,
     wallet_address: input.walletAddress?.toLowerCase(),
     decision_id: input.decisionId,
@@ -135,7 +138,7 @@ export async function updateTransactionRecord(hash: string, updates: Partial<Tra
   if (updates.status !== undefined) dbUpdates.status = updates.status;
 
   const db = supabase.from("transactions") as never;
-  const { error } = await (db as any).update(dbUpdates).eq("tx_hash", normalized);
+  const { error } = await (db as SupabaseQuery).update(dbUpdates).eq("tx_hash", normalized);
   if (error) throw new Error(`Supabase updateTransactionRecord failed: ${error.message}`);
 
   return getTransactionRecord(normalized);
@@ -147,7 +150,7 @@ export async function listTransactionLifecycleEvents(hash: string): Promise<Tran
 
   const normalized = hash.trim().toLowerCase();
   const db = supabase.from("transaction_lifecycle_events") as never;
-  const { data, error } = await (db as any).select("*").eq("transaction_hash", normalized).order("occurred_at", { ascending: false });
+  const { data, error } = await (db as SupabaseQuery).select("*").eq("transaction_hash", normalized).order("occurred_at", { ascending: false });
   if (error) throw new Error(`Supabase listTransactionLifecycleEvents failed: ${error.message}`);
   return (data ?? []).map(mapDbEvent);
 }
@@ -157,7 +160,7 @@ export async function createTransactionLifecycleEvent(input: TransactionLifecycl
   if (!supabase) return input;
 
   const db = supabase.from("transaction_lifecycle_events") as never;
-  const { error } = await (db as any).insert({
+  const { error } = await (db as SupabaseQuery).insert({
     transaction_hash: input.hash,
     event: input.event,
     detail: input.detail ?? {},

@@ -1,5 +1,3 @@
-import "server-only";
-
 import { Horizon, rpc } from "@stellar/stellar-sdk";
 import {
   assertStellarNetworkConfig,

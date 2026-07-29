@@ -121,21 +121,6 @@ export function getStellarChainAdapter(options: StellarAdapterOptions): {
     return config;
   }
 
-  function deriveLiveHash(payload: string, config: StellarNetworkConfig): string | undefined {
-    if (isPreHashInput(payload)) {
-      return computeSimulatedHash(payload, options.network);
-    }
-    try {
-      const transaction = TransactionBuilder.fromXDR(payload, config.networkPassphrase);
-      if ("innerTransaction" in transaction) {
-        throw new Error("Fee-bump transactions are not accepted by the transaction lifecycle.");
-      }
-      return transaction.hash().toString("hex");
-    } catch {
-      return undefined;
-    }
-  }
-
   function performPreSubmitChecks(payload: string, config: StellarNetworkConfig, expectation: StellarVerificationExpectation | undefined) {
     const transaction = TransactionBuilder.fromXDR(payload, config.networkPassphrase);
     if ("innerTransaction" in transaction) {

@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { AlertCard } from "@/components/AlertCard";
 import { listDiscoveryCandidates } from "@/server/discovery/pipeline";
-import { fetchLiveDiscoveryCandidates, isOfflineSnapshot } from "@/server/discovery/sources";
+import { isOfflineSnapshot } from "@/server/discovery/sources";
 import { listWatchlist } from "@/server/discovery/watchlist";
 import { listDiscoveryAlerts, listWatchlistScanRuns } from "@/server/storage";
 import type { DiscoveryAlert, DiscoveryClassification, DiscoveryCandidate, RiskLevel, WatchlistEntry, WatchlistScanRun } from "@/server/types";
@@ -281,13 +280,24 @@ export default async function DiscoveryPage({
           ) : (
             <div className="mt-3 space-y-3">
               {alerts.map((alert) => (
-                <AlertCard
-                  key={alert.id}
-                  title={alert.title}
-                  detail={alert.detail}
-                  severity={alert.severity}
-                  sourceLabel={alert.sourceLabel ?? alert.kind}
-                />
+                <div key={alert.id} className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-sm font-semibold text-white">{alert.title}</span>
+                    <span className={`shrink-0 text-xs ${severityTone[alert.severity]}`}>{alert.severity}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-400">{alert.detail}</p>
+                  <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
+                    <span>{alert.sourceLabel ?? alert.kind}</span>
+                    <span>·</span>
+                    <span>{new Date(alert.createdAt).toISOString().slice(0, 16).replace("T", " ")}</span>
+                    {alert.acknowledged ? (
+                      <>
+                        <span>·</span>
+                        <span className="text-emerald-400">acknowledged</span>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
               ))}
             </div>
           )}

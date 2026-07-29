@@ -6,7 +6,6 @@ import type {
   DiscoveryAlertKind,
   DiscoveryCandidate,
   DiscoveryScanResult,
-  DiscoveryClassification,
   DiscoverySourceKind,
   ResolvedTokenIdentity,
   RiskLevel,

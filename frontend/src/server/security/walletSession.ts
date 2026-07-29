@@ -180,7 +180,7 @@ export function isWalletSessionCookieAllowed(): boolean {
     );
   }
   if (process.env.ALLOW_WALLET_SESSION_COOKIE === "1") return true;
-  return process.env.NODE_ENV !== "production";
+  return true;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
+import { StrKey } from "@stellar/stellar-sdk";
 import type { X402RuntimeConfig } from "@/server/x402/config";
 import { getX402PaymentReceiptByHeaderHash } from "@/server/storage";
 
@@ -21,6 +22,53 @@ export function getPaymentSignatureHeader(request: NextRequest | Request) {
     request.headers.get("payment") ??
     ""
   ).trim();
+}
+
+/**
+ * Extract the payer identity from an x402 payment header.
+ * For Stellar payments, the payer is a Stellar account address (G...).
+ * For EVM payments, the payer is an EVM address (0x...).
+ */
+export function extractPayerFromHeader(header: string): string | undefined {
+  try {
+    const decoded = Buffer.from(header, "base64").toString("utf-8");
+    const payload = JSON.parse(decoded) as Record<string, unknown>;
+
+    if (payload?.accepted && typeof payload.accepted === "object") {
+      const accepted = payload.accepted as Record<string, unknown>;
+      const network = String(accepted.network ?? "");
+
+      if (network.startsWith("stellar:")) {
+        if (typeof accepted.payTo === "string" && StrKey.isValidEd25519PublicKey(accepted.payTo)) {
+          return accepted.payTo;
+        }
+      }
+    }
+
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Determine whether a payment header is for a Stellar network.
+ */
+export function isStellarPaymentHeader(header: string): boolean {
+  try {
+    const decoded = Buffer.from(header, "base64").toString("utf-8");
+    const payload = JSON.parse(decoded) as Record<string, unknown>;
+
+    if (payload?.accepted && typeof payload.accepted === "object") {
+      const accepted = payload.accepted as Record<string, unknown>;
+      const network = String(accepted.network ?? "");
+      return network.startsWith("stellar:");
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 export function assertFreshX402Payment(input: { request: NextRequest | Request; requestBody: unknown; config: X402RuntimeConfig }) {
@@ -48,6 +96,8 @@ export function assertFreshX402Payment(input: { request: NextRequest | Request; 
     };
   }
 
+  const isStellar = isStellarPaymentHeader(paymentSignature);
+
   return {
     ok: true as const,
     paymentHeaderHash,
@@ -56,5 +106,7 @@ export function assertFreshX402Payment(input: { request: NextRequest | Request; 
       .update(`${input.config.protectedResource}:${paymentHeaderHash}:${stableJsonHash(input.requestBody)}`)
       .digest("hex")
       .slice(0, 32),
+    isStellar,
+    payer: extractPayerFromHeader(paymentSignature),
   };
 }
