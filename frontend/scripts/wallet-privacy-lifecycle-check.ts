@@ -35,6 +35,7 @@ import {
 import { getPrivacyRetentionConfig, getRetentionCutoffDate } from "../src/server/privacy/config";
 import { pruneExpiredStorageData } from "../src/server/privacy/retentionEngine";
 import { redactSecrets, redactSensitiveObject, redactWalletAddress } from "../src/server/observability/logging";
+import { encodeWalletCookie } from "../src/server/security/walletSession";
 import { GET as exportGET, POST as exportPOST } from "../src/app/api/wallet-privacy/export/route";
 import { DELETE as deleteDELETE, POST as deletePOST } from "../src/app/api/wallet-privacy/delete/route";
 
@@ -115,13 +116,13 @@ async function runPrivacyLifecycleCheck() {
     maxMemeExposurePercent: 5,
     allowedChains: ["ethereum", "polygon"],
     blockedTokens: [],
-    allowedActions: ["buy", "sell"],
+    allowedActions: ["reduce_exposure", "swap_to_stable"],
     autoExecute: false,
   });
   createRecommendationRecord({
     runId: "run_userA_1",
     walletAddress: userA_EVM,
-    action: "buy",
+    action: "reduce_exposure",
     decisionScore: 85,
     confidence: 0.9,
     summary: "Favorable buy opportunity",
@@ -164,7 +165,7 @@ async function runPrivacyLifecycleCheck() {
     maxMemeExposurePercent: 15,
     allowedChains: ["ethereum"],
     blockedTokens: [],
-    allowedActions: ["buy"],
+    allowedActions: ["reduce_exposure"],
     autoExecute: false,
   });
   createTransactionRecord({
@@ -208,7 +209,7 @@ async function runPrivacyLifecycleCheck() {
   const forbiddenExportReq = createMockNextRequest(
     `http://localhost:3000/api/wallet-privacy/export?walletAddress=${userB_EVM}`,
     "GET",
-    { Cookie: `gr_wallet_session=v1:${userA_EVM}` }
+    { Cookie: `gr_wallet_session=${encodeWalletCookie(userA_EVM)}` }
   );
   const forbiddenExportRes = await exportGET(forbiddenExportReq);
   assert(forbiddenExportRes.status === 403, `Expected 403 for mismatched wallet export, got ${forbiddenExportRes.status}`);
@@ -217,7 +218,7 @@ async function runPrivacyLifecycleCheck() {
   const validExportReq = createMockNextRequest(
     `http://localhost:3000/api/wallet-privacy/export?walletAddress=${userA_EVM}`,
     "GET",
-    { Cookie: `gr_wallet_session=v1:${userA_EVM}` }
+    { Cookie: `gr_wallet_session=${encodeWalletCookie(userA_EVM)}` }
   );
   const validExportRes = await exportGET(validExportReq);
   assert(validExportRes.status === 200, `Expected 200 for valid export, got ${validExportRes.status}`);
@@ -240,7 +241,7 @@ async function runPrivacyLifecycleCheck() {
   const netDeleteReq = createMockNextRequest(
     `http://localhost:3000/api/wallet-privacy/delete?walletAddress=${userA_EVM}&network=ethereum`,
     "DELETE",
-    { Cookie: `gr_wallet_session=v1:${userA_EVM}` }
+    { Cookie: `gr_wallet_session=${encodeWalletCookie(userA_EVM)}` }
   );
   const netDeleteRes = await deleteDELETE(netDeleteReq);
   assert(netDeleteRes.status === 200, `Expected 200 for network-scoped delete, got ${netDeleteRes.status}`);
@@ -257,7 +258,7 @@ async function runPrivacyLifecycleCheck() {
   const fullDeleteReq = createMockNextRequest(
     `http://localhost:3000/api/wallet-privacy/delete?walletAddress=${userA_EVM}`,
     "DELETE",
-    { Cookie: `gr_wallet_session=v1:${userA_EVM}` }
+    { Cookie: `gr_wallet_session=${encodeWalletCookie(userA_EVM)}` }
   );
   const fullDeleteRes = await deleteDELETE(fullDeleteReq);
   assert(fullDeleteRes.status === 200, `Expected 200 for full delete, got ${fullDeleteRes.status}`);
@@ -284,7 +285,7 @@ async function runPrivacyLifecycleCheck() {
   const retryDeleteReq = createMockNextRequest(
     `http://localhost:3000/api/wallet-privacy/delete?walletAddress=${userA_EVM}`,
     "DELETE",
-    { Cookie: `gr_wallet_session=v1:${userA_EVM}` }
+    { Cookie: `gr_wallet_session=${encodeWalletCookie(userA_EVM)}` }
   );
   const retryDeleteRes = await deleteDELETE(retryDeleteReq);
   assert(retryDeleteRes.status === 200, `Expected 200 on retry delete, got ${retryDeleteRes.status}`);

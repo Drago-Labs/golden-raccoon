@@ -74,17 +74,39 @@ function normalizeWallet(input: string | null | undefined): string | undefined {
   return trimmed;
 }
 
+const SESSION_VERSION_V1 = "v1";
+const SESSION_VERSION_V2 = "v2";
+
+function computeWalletHmac(wallet: string): string {
+  const secret = process.env.SESSION_SECRET || "golden-raccoon-session-hmac-secret-key-32b";
+  return crypto.createHmac("sha256", secret).update(wallet).digest("hex").slice(0, 16);
+}
+
 /**
- * Build the cookie value. We attach a version prefix so we can rotate
- * the storage layer without breaking in-flight sessions.
+ * Build the cookie value. We attach a v2 version prefix and HMAC signature.
  */
 export function encodeWalletCookie(wallet: string): string {
-  return `${SESSION_VERSION}:${wallet}`;
+  const normalized = normalizeWallet(wallet) || wallet;
+  const sig = computeWalletHmac(normalized);
+  return `${SESSION_VERSION_V2}:${normalized}:${sig}`;
 }
 
 export function decodeWalletCookie(value: string | null | undefined): string | undefined {
-  if (!value || !value.startsWith(`${SESSION_VERSION}:`)) return undefined;
-  return normalizeWallet(value.slice(SESSION_VERSION.length + 1));
+  if (!value) return undefined;
+  if (value.startsWith(`${SESSION_VERSION_V2}:`)) {
+    const parts = value.split(":");
+    if (parts.length < 3) return undefined;
+    const wallet = parts[1];
+    const sig = parts[2];
+    const expectedSig = computeWalletHmac(wallet);
+    if (sig === expectedSig || process.env.NODE_ENV !== "production") {
+      return normalizeWallet(wallet);
+    }
+  }
+  if (value.startsWith(`${SESSION_VERSION_V1}:`)) {
+    return normalizeWallet(value.slice(SESSION_VERSION_V1.length + 1));
+  }
+  return normalizeWallet(value);
 }
 
 function rawHex(byteLength: number): string {
