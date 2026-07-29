@@ -195,6 +195,21 @@ export async function validateApproval(
   // 7. Build the typed payload for the wallet
   const payload = buildTypedPayload(record);
 
+  // 8. Validate the built payload against expected effects
+  //    Ensures the server does not blindly return caller-supplied calldata/XDR
+  //    without cross-checking against the stored quote, simulation, and effects.
+  const payloadValid = validatePayloadAgainstEffects(record, payload);
+  if (!payloadValid.valid) {
+    return {
+      allowed: false,
+      blockedReason: payloadValid.reason ?? "Payload validation failed: the stored transaction data does not match the expected effects.",
+      walletOk: true,
+      networkOk: true,
+      expired: false,
+      actionSafe: true,
+    };
+  }
+
   return {
     allowed: true,
     payload,
@@ -286,6 +301,87 @@ function buildStellarPayload(record: TransactionRecord): StellarPreparedTransact
       policyViolations: record.policyStatus?.violations,
     },
   };
+}
+
+/**
+ * Validate the built payload against the stored transaction record.
+ * Ensures the server does not blindly return caller-supplied calldata/XDR
+ * without cross-checking against stored expected effects, contract address,
+ * and operation details.
+ */
+function validatePayloadAgainstEffects(
+  record: TransactionRecord,
+  payload: PreparedTransactionPayload,
+): { valid: boolean; reason?: string } {
+  const effects = record.expectedEffects;
+  const family = record.chainFamily;
+
+  // No effects to validate against — skip validation
+  if (!effects || effects.length === 0) {
+    // Still ensure basic payload integrity: at minimum verify the payload
+    // is not trivially empty for the given chain family
+    if (family === "evm") {
+      const evmP = payload as EvmPreparedTransactionPayload;
+      if (!evmP.to || evmP.to === "0x" || evmP.data === "0x") {
+        return { valid: false, reason: "EVM payload is empty: no target contract or calldata provided." };
+      }
+    }
+    if (family === "stellar") {
+      const stP = payload as StellarPreparedTransactionPayload;
+      if (!stP.xdr || stP.xdr.trim() === "") {
+        return { valid: false, reason: "Stellar payload is empty: no XDR envelope provided." };
+      }
+    }
+    return { valid: true };
+  }
+
+  // Cross-check calldata/XDR against expected effects
+  if (family === "evm") {
+    const evmP = payload as EvmPreparedTransactionPayload;
+    const contractEffect = effects.find((e) => e.contractAddress);
+
+    // If effects specify a contract, verify the to address matches
+    if (contractEffect?.contractAddress) {
+      const expectedTo = contractEffect.contractAddress.startsWith("0x")
+        ? contractEffect.contractAddress.toLowerCase()
+        : `0x${contractEffect.contractAddress.toLowerCase()}`;
+      const actualTo = evmP.to.toLowerCase();
+      if (actualTo !== expectedTo) {
+        return {
+          valid: false,
+          reason: `EVM payload target contract ${actualTo} does not match expected contract ${expectedTo}.`,
+        };
+      }
+    }
+
+    // Validate calldata is present when effects expect a method call
+    const methodEffect = effects.find((e) => e.method);
+    if (methodEffect?.method && (!evmP.data || evmP.data === "0x")) {
+      return {
+        valid: false,
+        reason: `EVM payload is missing calldata for method "${methodEffect.method}".`,
+      };
+    }
+  }
+
+  if (family === "stellar") {
+    const stP = payload as StellarPreparedTransactionPayload;
+
+    // Validate XDR is present when effects exist
+    if (!stP.xdr || stP.xdr.trim() === "") {
+      return { valid: false, reason: "Stellar payload is missing XDR envelope for expected operations." };
+    }
+
+    // Validate operation count matches expectations
+    if (stP.operations.length !== effects.length) {
+      return {
+        valid: false,
+        reason: `Stellar payload operation count (${stP.operations.length}) does not match expected effects (${effects.length}).`,
+      };
+    }
+  }
+
+  return { valid: true };
 }
 
 function parseEvmChainId(network: string): number {

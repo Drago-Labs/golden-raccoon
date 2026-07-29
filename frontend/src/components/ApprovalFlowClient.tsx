@@ -148,8 +148,12 @@ export function ApprovalFlowClient({
           return;
         }
 
-        // Send the transaction via the connected wallet
-        const txHash = await walletClient.sendTransaction({
+        // Sign the transaction via the connected wallet (does NOT broadcast).
+        // The signed serialized tx is sent to /api/execute/submit which
+        // calls sendRawTransaction to broadcast it. This keeps broadcast
+        // on the server so lifecycle tracking is consistent.
+        const signedTx = await walletClient.signTransaction({
+          account: walletClient.account,
           to: evmPayload.to as `0x${string}`,
           data: (evmPayload.data || "0x") as `0x${string}`,
           value: BigInt(evmPayload.value || "0"),
@@ -158,7 +162,7 @@ export function ApprovalFlowClient({
           ...(evmPayload.gasPrice ? { gasPrice: BigInt(evmPayload.gasPrice) } : {}),
         } as never);
 
-        signedPayload = txHash;
+        signedPayload = signedTx;
       } else {
         // Stellar signing via Stellar Wallets Kit
         const stellarPayload = payload as StellarPreparedTransactionPayload;
@@ -387,15 +391,32 @@ function TransactionFlowSteps({ phase }: { phase: ApprovalState["phase"] }) {
 }
 
 function EvmPayloadDetails({ payload }: { payload: EvmPreparedTransactionPayload }) {
+  const calldataPreview = payload.data && payload.data !== "0x"
+    ? `${payload.data.slice(0, 42)}...`
+    : "None";
+  const disp = payload.displayParams ?? {};
+  const valueUsd = typeof disp.valueUsd === "number" ? `$${disp.valueUsd.toFixed(2)}` : null;
+  const action = typeof disp.action === "string" ? disp.action.replaceAll("_", " ") : "Unknown";
+
   return (
     <div className="space-y-2 rounded-xl border border-slate-700 bg-slate-950/50 px-4 py-3 text-xs">
       <div className="flex items-center justify-between">
         <span className="text-slate-400">Target contract</span>
-        <span className="font-mono text-white">{payload.to}</span>
+        <span className="font-mono text-white text-[10px]">{payload.to}</span>
       </div>
       <div className="flex items-center justify-between">
+        <span className="text-slate-400">Action</span>
+        <span className="capitalize text-sky-300">{action}</span>
+      </div>
+      {valueUsd && (
+        <div className="flex items-center justify-between">
+          <span className="text-slate-400">Estimated value</span>
+          <span className="text-emerald-300">{valueUsd}</span>
+        </div>
+      )}
+      <div className="flex items-center justify-between">
         <span className="text-slate-400">Method</span>
-        <span className="text-sky-300">{payload.method ?? "Unknown"}</span>
+        <span className="text-white">{payload.method ?? "Unknown"}</span>
       </div>
       <div className="flex items-center justify-between">
         <span className="text-slate-400">Chain ID</span>
@@ -405,6 +426,16 @@ function EvmPayloadDetails({ payload }: { payload: EvmPreparedTransactionPayload
         <span className="text-slate-400">Value</span>
         <span className="text-white">{payload.value} wei</span>
       </div>
+      {payload.gas && (
+        <div className="flex items-center justify-between">
+          <span className="text-slate-400">Gas limit</span>
+          <span className="text-white">{payload.gas}</span>
+        </div>
+      )}
+      <div className="flex flex-col gap-1">
+        <span className="text-slate-400">Calldata (truncated)</span>
+        <span className="break-all font-mono text-[10px] text-slate-300">{calldataPreview}</span>
+      </div>
       {payload.displayParams?.expectedEffects && (
         <div>
           <span className="text-slate-400">Expected effects</span>
@@ -412,7 +443,9 @@ function EvmPayloadDetails({ payload }: { payload: EvmPreparedTransactionPayload
             {(payload.displayParams.expectedEffects as Array<{ kind: string; from?: string; to?: string; amount?: string }>).map(
               (effect, i) => (
                 <li key={i} className="text-slate-300">
-                  {effect.kind}: {effect.amount ?? ""} {effect.to ? `-> ${effect.to}` : ""}
+                  <span className="capitalize">{effect.kind}</span>
+                  {effect.amount ? `: ${effect.amount}` : ""}
+                  {effect.to ? ` → ${effect.to.slice(0, 10)}...` : ""}
                 </li>
               ),
             )}
@@ -424,12 +457,27 @@ function EvmPayloadDetails({ payload }: { payload: EvmPreparedTransactionPayload
 }
 
 function StellarPayloadDetails({ payload }: { payload: StellarPreparedTransactionPayload }) {
+  const xdrPreview = payload.xdr ? `${payload.xdr.slice(0, 32)}...` : "None";
+  const disp = payload.displayParams ?? {};
+  const valueUsd = typeof disp.valueUsd === "number" ? `$${disp.valueUsd.toFixed(2)}` : null;
+  const action = typeof disp.action === "string" ? disp.action.replaceAll("_", " ") : "Unknown";
+
   return (
     <div className="space-y-2 rounded-xl border border-slate-700 bg-slate-950/50 px-4 py-3 text-xs">
       <div className="flex items-center justify-between">
         <span className="text-slate-400">Source account</span>
-        <span className="font-mono text-white">{payload.sourceAccount}</span>
+        <span className="font-mono text-white text-[10px]">{payload.sourceAccount}</span>
       </div>
+      <div className="flex items-center justify-between">
+        <span className="text-slate-400">Action</span>
+        <span className="capitalize text-sky-300">{action}</span>
+      </div>
+      {valueUsd && (
+        <div className="flex items-center justify-between">
+          <span className="text-slate-400">Estimated value</span>
+          <span className="text-emerald-300">{valueUsd}</span>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <span className="text-slate-400">Network</span>
         <span className="text-sky-300">{payload.networkPassphrase}</span>
@@ -450,13 +498,28 @@ function StellarPayloadDetails({ payload }: { payload: StellarPreparedTransactio
           <span className="font-mono text-white">{payload.sequence.slice(0, 12)}...</span>
         </div>
       )}
+      {payload.timeBounds && (
+        <div className="flex items-center justify-between">
+          <span className="text-slate-400">Time bounds</span>
+          <span className="text-white">
+            {payload.timeBounds.minTime ?? "-"} - {payload.timeBounds.maxTime ?? "-"}
+          </span>
+        </div>
+      )}
+      <div className="flex flex-col gap-1">
+        <span className="text-slate-400">XDR envelope (truncated)</span>
+        <span className="break-all font-mono text-[10px] text-slate-300">{xdrPreview}</span>
+      </div>
       {payload.operations.length > 0 && (
         <div>
           <span className="text-slate-400">Operation details</span>
           <ul className="mt-1 space-y-1 pl-2">
             {payload.operations.map((op, i) => (
               <li key={i} className="text-slate-300">
-                {op.type}: {op.amount ?? ""} {op.asset ?? ""} {op.destination ? `-> ${op.destination.slice(0, 8)}...` : ""}
+                <span className="capitalize">{op.type}</span>
+                {op.amount ? `: ${op.amount}` : ""}
+                {op.asset ? ` ${op.asset}` : ""}
+                {op.destination ? ` → ${op.destination.slice(0, 8)}...` : ""}
               </li>
             ))}
           </ul>
