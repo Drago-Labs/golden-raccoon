@@ -31,7 +31,7 @@ create table if not exists token_identities (
 create table if not exists agent_runs (
   id uuid primary key default gen_random_uuid(),
   wallet_address text not null,
-  mode text check (mode in ('portfolio_review', 'token_scan', 'pre_buy_check', 'holding_review', 'execution_prepare')),
+  mode text check (mode in ('portfolio_review', 'token_scan', 'pre_buy_check', 'holding_review', 'execution_prepare', 'discovery_candidate')),
   input_snapshot jsonb not null default '{}'::jsonb,
   target_symbol text,
   target_name text,
@@ -202,3 +202,65 @@ create index if not exists recommendations_wallet_created_idx on recommendations
 create index if not exists transactions_wallet_created_idx on transactions(wallet_address, created_at desc);
 create index if not exists approvals_wallet_created_idx on approvals(wallet_address, created_at desc);
 create index if not exists x402_payment_receipts_resource_created_idx on x402_payment_receipts(protected_resource, created_at desc);
+
+create table if not exists watchlist_entries (
+  id uuid primary key default gen_random_uuid(),
+  wallet_address text not null,
+  identity_key text not null,
+  chain text not null,
+  contract_address text,
+  pair_address text,
+  symbol text,
+  token_name text,
+  asset_key text,
+  issuer text,
+  asset_type text check (asset_type in ('native', 'classic', 'contract', 'issuer_account')),
+  source text not null,
+  note text,
+  last_scanned_at timestamptz,
+  latest_scan_run_id uuid,
+  latest_classification text check (latest_classification in ('watch', 'risky', 'scam', 'early_opportunity')),
+  latest_score integer,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists watchlist_entries_wallet_identity_uniq on watchlist_entries(wallet_address, identity_key);
+create index if not exists watchlist_entries_wallet_created_idx on watchlist_entries(wallet_address, created_at desc);
+
+create table if not exists watchlist_scan_runs (
+  id uuid primary key default gen_random_uuid(),
+  entry_id uuid not null references watchlist_entries(id) on delete cascade,
+  wallet_address text not null,
+  identity_key text not null,
+  agent_run_id uuid references agent_runs(id) on delete set null,
+  classification text not null check (classification in ('watch', 'risky', 'scam', 'early_opportunity')),
+  classification_reasons jsonb not null default '[]'::jsonb,
+  confidence numeric not null,
+  score integer not null,
+  source_lineage jsonb not null default '[]'::jsonb,
+  missing_data jsonb not null default '[]'::jsonb,
+  risk_report jsonb,
+  status text not null check (status in ('completed', 'partial', 'failed', 'stale')),
+  previous_run_id uuid references watchlist_scan_runs(id) on delete set null,
+  scanned_at timestamptz not null default now()
+);
+
+create index if not exists watchlist_scan_runs_entry_scanned_idx on watchlist_scan_runs(entry_id, scanned_at desc);
+create index if not exists watchlist_scan_runs_wallet_scanned_idx on watchlist_scan_runs(wallet_address, scanned_at desc);
+
+create table if not exists discovery_alerts (
+  id uuid primary key default gen_random_uuid(),
+  wallet_address text not null,
+  entry_id uuid references watchlist_entries(id) on delete cascade,
+  run_id uuid references watchlist_scan_runs(id) on delete set null,
+  kind text not null check (kind in ('critical_risk', 'liquidity_drop', 'holder_concentration', 'social_phishing', 'news_incident', 'classification_change')),
+  title text not null,
+  detail text not null,
+  severity text not null check (severity in ('low', 'medium', 'high', 'critical')),
+  source_label text,
+  acknowledged boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists discovery_alerts_wallet_created_idx on discovery_alerts(wallet_address, created_at desc);
+create index if not exists discovery_alerts_entry_created_idx on discovery_alerts(entry_id, created_at desc);
