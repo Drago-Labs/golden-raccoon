@@ -38,6 +38,10 @@ import type {
   AlertDelivery,
   AlertObservation,
   AlertRule,
+  AgentRunRecord,
+  RecommendationRecord,
+  TransactionRecord,
+  UserApprovalRecord,
 } from "@/server/types";
 
 type MaybePgPool = {
@@ -153,6 +157,35 @@ type PersistedAlertDelivery = Pick<
   | "attemptCount"
   | "createdAt"
   | "sentAt"
+>;
+
+type PersistedAgentRun = Pick<
+  AgentRunRecord,
+  | "id"
+  | "walletAddress"
+  | "mode"
+  | "status"
+  | "recommendation"
+  | "decisionScore"
+  | "confidence"
+  | "summary"
+  | "userAction"
+  | "createdAt"
+> & { targetSymbol?: string; targetName?: string; targetAddress?: string; targetChain?: string; targetRiskScore?: number; inputSnapshot: Record<string, unknown>; sourceStatusesJson: string };
+
+type PersistedRecommendation = Pick<
+  RecommendationRecord,
+  "id" | "runId" | "walletAddress" | "action" | "decisionScore" | "confidence" | "summary" | "createdAt"
+>;
+
+type PersistedTransaction = Pick<
+  TransactionRecord,
+  "hash" | "walletAddress" | "decisionId" | "type" | "asset" | "valueUsd" | "status" | "createdAt" | "network" | "userApproved" | "simulationStatus" | "explorerUrl" | "decisionAction"
+> & { lifecycleStatus: string; chainFamily: string };
+
+type PersistedApproval = Pick<
+  UserApprovalRecord,
+  "id" | "walletAddress" | "decisionId" | "txHash" | "network" | "action" | "asset" | "valueUsd" | "status" | "autoExecuted" | "createdAt"
 >;
 
 class PostgresStorageAdapter {
@@ -467,6 +500,263 @@ class PostgresStorageAdapter {
     await this.enqueueMirror(() => this.doMirrorAlertDelivery(delivery));
   }
 
+  // ---------------- History table mirrors ----------------
+
+  private async doMirrorAgentRun(run: PersistedAgentRun): Promise<void> {
+    if (!this.pool) return;
+    try {
+      await this.pool.query(
+        `INSERT INTO agent_runs (id, wallet_address, mode, input_snapshot, target_symbol, target_name, target_address, target_chain, target_risk_score, status, recommendation, decision_score, confidence, summary, source_statuses, user_action, created_at)
+         VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17)
+         ON CONFLICT (id) DO UPDATE SET
+           status = EXCLUDED.status,
+           recommendation = EXCLUDED.recommendation,
+           decision_score = EXCLUDED.decision_score,
+           confidence = EXCLUDED.confidence,
+           summary = EXCLUDED.summary,
+           user_action = EXCLUDED.user_action`,
+        [
+          run.id,
+          run.walletAddress,
+          run.mode ?? null,
+          JSON.stringify(run.inputSnapshot ?? {}),
+          (run as PersistedAgentRun & { targetSymbol?: string }).targetSymbol ?? null,
+          (run as PersistedAgentRun & { targetName?: string }).targetName ?? null,
+          (run as PersistedAgentRun & { targetAddress?: string }).targetAddress ?? null,
+          (run as PersistedAgentRun & { targetChain?: string }).targetChain ?? null,
+          (run as PersistedAgentRun & { targetRiskScore?: number }).targetRiskScore ?? null,
+          run.status,
+          run.recommendation,
+          run.decisionScore,
+          run.confidence,
+          run.summary,
+          run.sourceStatusesJson ?? "[]",
+          run.userAction ?? "pending",
+          run.createdAt,
+        ],
+      );
+      this.mirrorSuccessCount += 1;
+    } catch (error) {
+      this.mirrorFailureCount += 1;
+      this.lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  private async doMirrorRecommendation(rec: PersistedRecommendation): Promise<void> {
+    if (!this.pool) return;
+    try {
+      await this.pool.query(
+        `INSERT INTO recommendations (id, run_id, wallet_address, action, decision_score, confidence, summary, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          rec.id,
+          rec.runId ?? null,
+          rec.walletAddress,
+          rec.action,
+          rec.decisionScore,
+          rec.confidence,
+          rec.summary,
+          rec.createdAt,
+        ],
+      );
+      this.mirrorSuccessCount += 1;
+    } catch (error) {
+      this.mirrorFailureCount += 1;
+      this.lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  private async doMirrorTransaction(tx: PersistedTransaction): Promise<void> {
+    if (!this.pool) return;
+    try {
+      await this.pool.query(
+        `INSERT INTO transactions (wallet_address, decision_id, tx_hash, type, asset, value_usd, status, lifecycle_status, chain_family, network, user_approved, simulation_status, explorer_url, decision_action, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         ON CONFLICT (tx_hash) DO UPDATE SET
+           status = EXCLUDED.status,
+           lifecycle_status = EXCLUDED.lifecycle_status,
+           user_approved = EXCLUDED.user_approved,
+           simulation_status = EXCLUDED.simulation_status,
+           explorer_url = EXCLUDED.explorer_url`,
+        [
+          tx.walletAddress ?? null,
+          tx.decisionId ?? null,
+          tx.hash,
+          tx.type,
+          tx.asset,
+          tx.valueUsd,
+          tx.status,
+          tx.lifecycleStatus,
+          tx.chainFamily,
+          tx.network,
+          tx.userApproved ?? false,
+          tx.simulationStatus ?? null,
+          tx.explorerUrl ?? null,
+          tx.decisionAction ?? null,
+          tx.createdAt,
+        ],
+      );
+      this.mirrorSuccessCount += 1;
+    } catch (error) {
+      this.mirrorFailureCount += 1;
+      this.lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  private async doMirrorApproval(approval: PersistedApproval): Promise<void> {
+    if (!this.pool) return;
+    try {
+      await this.pool.query(
+        `INSERT INTO approvals (id, wallet_address, decision_id, tx_hash, network, action, asset, value_usd, status, auto_executed, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          approval.id,
+          approval.walletAddress,
+          approval.decisionId ?? null,
+          approval.txHash,
+          approval.network ?? null,
+          approval.action ?? null,
+          approval.asset ?? null,
+          approval.valueUsd ?? null,
+          approval.status,
+          approval.autoExecuted,
+          approval.createdAt,
+        ],
+      );
+      this.mirrorSuccessCount += 1;
+    } catch (error) {
+      this.mirrorFailureCount += 1;
+      this.lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async mirrorAgentRun(run: PersistedAgentRun): Promise<void> {
+    if (!this.connectionString || !(await this.ensurePool())) return;
+    await this.enqueueMirror(() => this.doMirrorAgentRun(run));
+  }
+
+  async mirrorRecommendation(rec: PersistedRecommendation): Promise<void> {
+    if (!this.connectionString || !(await this.ensurePool())) return;
+    await this.enqueueMirror(() => this.doMirrorRecommendation(rec));
+  }
+
+  async mirrorTransaction(tx: PersistedTransaction): Promise<void> {
+    if (!this.connectionString || !(await this.ensurePool())) return;
+    await this.enqueueMirror(() => this.doMirrorTransaction(tx));
+  }
+
+  async mirrorApproval(approval: PersistedApproval): Promise<void> {
+    if (!this.connectionString || !(await this.ensurePool())) return;
+    await this.enqueueMirror(() => this.doMirrorApproval(approval));
+  }
+
+  // ---------------- Hydration for history tables ----------------
+
+  async hydrateHistoryTables(target: {
+    agentRuns: AgentRunRecord[];
+    recommendations: RecommendationRecord[];
+    transactions: TransactionRecord[];
+    approvals: UserApprovalRecord[];
+  }): Promise<{ hydrated: number; skipped: number }> {
+    if (!this.connectionString || !(await this.ensurePool())) {
+      return { hydrated: 0, skipped: 0 };
+    }
+    return (await this.enqueueMirror(() => this.doHydrateHistoryTables(target))) ?? { hydrated: 0, skipped: 0 };
+  }
+
+  private async doHydrateHistoryTables(target: {
+    agentRuns: AgentRunRecord[];
+    recommendations: RecommendationRecord[];
+    transactions: TransactionRecord[];
+    approvals: UserApprovalRecord[];
+  }): Promise<{ hydrated: number; skipped: number }> {
+    if (!this.pool) return { hydrated: 0, skipped: 0 };
+
+    let hydrated = 0;
+    let skipped = 0;
+
+    hydrated += await this.mergeAgentRunsFromPostgres(target.agentRuns, () => skipped++);
+    hydrated += await this.mergeRecommendationsFromPostgres(target.recommendations, () => skipped++);
+    hydrated += await this.mergeTransactionsFromPostgres(target.transactions, () => skipped++);
+    hydrated += await this.mergeApprovalsFromPostgres(target.approvals, () => skipped++);
+
+    return { hydrated, skipped };
+  }
+
+  private async mergeAgentRunsFromPostgres(
+    store: AgentRunRecord[],
+    onSkip: () => void,
+  ): Promise<number> {
+    if (!this.pool) return 0;
+    const result = await this.pool.query("SELECT * FROM agent_runs ORDER BY created_at ASC");
+    let hydrationCount = 0;
+
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      const mapped = mapAgentRunRow(row);
+      const existing = store.find((entry) => entry.id === mapped.id);
+      if (existing) { onSkip(); continue; }
+      store.push(mapped);
+      hydrationCount += 1;
+    }
+    return hydrationCount;
+  }
+
+  private async mergeRecommendationsFromPostgres(
+    store: RecommendationRecord[],
+    onSkip: () => void,
+  ): Promise<number> {
+    if (!this.pool) return 0;
+    const result = await this.pool.query("SELECT * FROM recommendations ORDER BY created_at ASC");
+    let hydrationCount = 0;
+
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      const mapped = mapRecommendationRow(row);
+      const existing = store.find((entry) => entry.id === mapped.id);
+      if (existing) { onSkip(); continue; }
+      store.push(mapped);
+      hydrationCount += 1;
+    }
+    return hydrationCount;
+  }
+
+  private async mergeTransactionsFromPostgres(
+    store: TransactionRecord[],
+    onSkip: () => void,
+  ): Promise<number> {
+    if (!this.pool) return 0;
+    const result = await this.pool.query("SELECT * FROM transactions ORDER BY created_at ASC");
+    let hydrationCount = 0;
+
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      const mapped = mapTransactionRow(row);
+      const existing = store.find((entry) => entry.hash === mapped.hash);
+      if (existing) { onSkip(); continue; }
+      store.push(mapped);
+      hydrationCount += 1;
+    }
+    return hydrationCount;
+  }
+
+  private async mergeApprovalsFromPostgres(
+    store: UserApprovalRecord[],
+    onSkip: () => void,
+  ): Promise<number> {
+    if (!this.pool) return 0;
+    const result = await this.pool.query("SELECT * FROM approvals ORDER BY created_at ASC");
+    let hydrationCount = 0;
+
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      const mapped = mapApprovalRow(row);
+      const existing = store.find((entry) => entry.id === mapped.id);
+      if (existing) { onSkip(); continue; }
+      store.push(mapped);
+      hydrationCount += 1;
+    }
+    return hydrationCount;
+  }
+
   private async ensurePool(): Promise<boolean> {
     if (this.pool && this.connected) return true;
     const result = await this.connect();
@@ -716,6 +1006,97 @@ function mapAlertDeliveryRow(row: Record<string, unknown>): AlertDelivery {
   };
 }
 
+function mapAgentRunRow(row: Record<string, unknown>): AgentRunRecord {
+  const id = typeof row.id === "string" ? row.id : "";
+  const inputSnapshot = (toJson(row.input_snapshot) ?? {}) as Record<string, unknown>;
+  const resultSnapshots = (inputSnapshot.resultSnapshots ?? []) as Array<{ agent: string }>;
+  return {
+    id,
+    walletAddress: typeof row.wallet_address === "string" ? row.wallet_address.toLowerCase() : "",
+    mode: (row.mode as AgentRunRecord["mode"]) ?? undefined,
+    inputSnapshot,
+    targetToken: row.target_symbol || row.target_address ? {
+      symbol: typeof row.target_symbol === "string" ? row.target_symbol : undefined,
+      name: typeof row.target_name === "string" ? row.target_name : undefined,
+      tokenAddress: typeof row.target_address === "string" ? row.target_address : undefined,
+      chain: typeof row.target_chain === "string" ? row.target_chain : undefined,
+      riskScore: row.target_risk_score != null ? toNumber(row.target_risk_score) : undefined,
+    } : undefined,
+    status: (row.status as AgentRunRecord["status"]) ?? "failed",
+    recommendation: (row.recommendation as AgentRunRecord["recommendation"]) ?? "manual_review",
+    decisionScore: Math.round(toNumber(row.decision_score)) || 0,
+    confidence: toNumber(row.confidence) || 0,
+    summary: typeof row.summary === "string" ? row.summary : "",
+    results: (resultSnapshots as Array<{ agent: string }>).map((snap) => ({
+      agent: snap.agent as AgentRunRecord["results"][number]["agent"],
+      status: "unavailable" as const,
+      riskScore: 0,
+      score: 0,
+      riskLevel: "medium" as const,
+      verdict: "",
+      summary: "Hydrated from Postgres — results re-run required for full detail.",
+      findings: [],
+      sources: [],
+      dataQuality: { mode: "unavailable" as const, connectedSources: 0, unavailableSources: 0, mockSources: 0, sourceCount: 0, reliability: 0, detail: "hydrated" },
+      confidence: 0,
+      recommendedAction: "no_action" as const,
+      blockingReasons: [],
+      missingData: [],
+      createdAt: toIso(row.created_at),
+    })),
+    sourceStatuses: (toJson(row.source_statuses) ?? []) as AgentRunRecord["sourceStatuses"],
+    userAction: (row.user_action as AgentRunRecord["userAction"]) ?? "pending",
+    createdAt: toIso(row.created_at),
+  };
+}
+
+function mapRecommendationRow(row: Record<string, unknown>): RecommendationRecord {
+  return {
+    id: typeof row.id === "string" ? row.id : "",
+    runId: typeof row.run_id === "string" ? row.run_id : undefined,
+    walletAddress: typeof row.wallet_address === "string" ? row.wallet_address.toLowerCase() : "",
+    action: (row.action as RecommendationRecord["action"]) ?? "no_action",
+    decisionScore: Math.round(toNumber(row.decision_score)) || 0,
+    confidence: toNumber(row.confidence) || 0,
+    summary: typeof row.summary === "string" ? row.summary : "",
+    createdAt: toIso(row.created_at),
+  };
+}
+
+function mapTransactionRow(row: Record<string, unknown>): TransactionRecord {
+  return {
+    hash: typeof row.tx_hash === "string" ? row.tx_hash : "",
+    walletAddress: typeof row.wallet_address === "string" ? row.wallet_address.toLowerCase() : undefined,
+    decisionId: typeof row.decision_id === "string" ? row.decision_id : undefined,
+    type: (row.type as TransactionRecord["type"]) ?? "transfer",
+    decisionAction: (row.decision_action as TransactionRecord["decisionAction"]) ?? undefined,
+    asset: typeof row.asset === "string" ? row.asset : "",
+    explorerUrl: typeof row.explorer_url === "string" ? row.explorer_url : undefined,
+    valueUsd: toNumber(row.value_usd) || 0,
+    status: (row.status as TransactionRecord["status"]) ?? "pending",
+    createdAt: toIso(row.created_at),
+    network: typeof row.network === "string" ? row.network : "",
+    userApproved: Boolean(row.user_approved),
+    simulationStatus: (row.simulation_status as TransactionRecord["simulationStatus"]) ?? undefined,
+  };
+}
+
+function mapApprovalRow(row: Record<string, unknown>): UserApprovalRecord {
+  return {
+    id: typeof row.id === "string" ? row.id : "",
+    walletAddress: typeof row.wallet_address === "string" ? row.wallet_address.toLowerCase() : "",
+    decisionId: typeof row.decision_id === "string" ? row.decision_id : undefined,
+    txHash: typeof row.tx_hash === "string" ? row.tx_hash : "",
+    network: typeof row.network === "string" ? row.network : undefined,
+    action: (row.action as UserApprovalRecord["action"]) ?? undefined,
+    asset: typeof row.asset === "string" ? row.asset : undefined,
+    valueUsd: row.value_usd != null ? toNumber(row.value_usd) : undefined,
+    status: "confirmed",
+    autoExecuted: false,
+    createdAt: toIso(row.created_at),
+  };
+}
+
 /**
  * Public exposure of the row-mapping helpers so fixtures and dry-run
  * tooling can verify the SQL ↔ TypeScript parity without needing a live
@@ -727,6 +1108,10 @@ export const __rowMappers = {
   observation: mapAlertObservationRow,
   alert: mapAlertRow,
   delivery: mapAlertDeliveryRow,
+  agentRun: mapAgentRunRow,
+  recommendation: mapRecommendationRow,
+  transaction: mapTransactionRow,
+  approval: mapApprovalRow,
 };
 
 let adapterSingleton: PostgresStorageAdapter | null = null;
@@ -756,6 +1141,62 @@ export function mirrorAlertWrite(alert: Alert): void {
 
 export function mirrorAlertDeliveryWrite(delivery: AlertDelivery): void {
   void getPostgresStorageAdapter().mirrorAlertDelivery(delivery);
+}
+
+export function mirrorAgentRunWrite(run: AgentRunRecord): void {
+  void getPostgresStorageAdapter().mirrorAgentRun({
+    id: run.id,
+    walletAddress: run.walletAddress,
+    mode: run.mode,
+    inputSnapshot: run.inputSnapshot ?? {},
+    sourceStatusesJson: JSON.stringify(run.sourceStatuses ?? []),
+    status: run.status,
+    recommendation: run.recommendation,
+    decisionScore: run.decisionScore,
+    confidence: run.confidence,
+    summary: run.summary,
+    userAction: run.userAction,
+    createdAt: run.createdAt,
+    targetSymbol: run.targetToken?.symbol,
+    targetName: run.targetToken?.name,
+    targetAddress: run.targetToken?.tokenAddress,
+    targetChain: run.targetToken?.chain,
+    targetRiskScore: run.targetToken?.riskScore,
+  });
+}
+
+export function mirrorRecommendationWrite(rec: RecommendationRecord): void {
+  void getPostgresStorageAdapter().mirrorRecommendation(rec);
+}
+
+function detectChainFamily(network?: string): "evm" | "stellar" {
+  const n = network?.toLowerCase() ?? "";
+  if (n.startsWith("stellar") || n === "testnet" || n === "pubnet") return "stellar";
+  return "evm";
+}
+
+export function mirrorTransactionWrite(tx: TransactionRecord): void {
+  void getPostgresStorageAdapter().mirrorTransaction({
+    hash: tx.hash,
+    walletAddress: tx.walletAddress,
+    decisionId: tx.decisionId,
+    type: tx.type,
+    asset: tx.asset,
+    valueUsd: tx.valueUsd,
+    status: tx.status,
+    lifecycleStatus: tx.status,
+    chainFamily: detectChainFamily(tx.network),
+    network: tx.network,
+    userApproved: tx.userApproved ?? false,
+    simulationStatus: tx.simulationStatus,
+    explorerUrl: tx.explorerUrl,
+    decisionAction: tx.decisionAction,
+    createdAt: tx.createdAt,
+  });
+}
+
+export function mirrorApprovalWrite(approval: UserApprovalRecord): void {
+  void getPostgresStorageAdapter().mirrorApproval(approval);
 }
 
 /**

@@ -41,6 +41,7 @@ create table if not exists agent_runs (
   target_name text,
   target_address text,
   target_chain text,
+  target_risk_score numeric,
   status text not null check (status in ('completed', 'partial', 'failed')),
   recommendation text not null,
   decision_score integer not null,
@@ -50,6 +51,14 @@ create table if not exists agent_runs (
   user_action text not null default 'pending' check (user_action in ('pending', 'approved', 'rejected', 'adjusted', 'executed')),
   created_at timestamptz not null default now()
 );
+
+-- Idempotent backfill for target_risk_score
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_name = 'agent_runs' and column_name = 'target_risk_score') then
+    alter table agent_runs add column target_risk_score numeric;
+  end if;
+end $$;
 
 create table if not exists agent_results (
   id uuid primary key default gen_random_uuid(),

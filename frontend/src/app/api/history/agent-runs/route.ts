@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AgentResult } from "@/server/types";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { checkRateLimit } from "@/server/security/rateLimit";
-import { createAgentRunRecord, listAgentRunRecords } from "@/server/storage";
+import { createAgentRunRecord, listAgentRunRecordsPaginated } from "@/server/storage";
 import { scheduleIngestion } from "@/server/observability/alertIngestion";
 
 const targetTokenSchema = z.object({
@@ -32,8 +32,14 @@ export function GET(request: NextRequest) {
   }
 
   const walletAddress = request.nextUrl.searchParams.get("walletAddress") ?? undefined;
+  const cursor = request.nextUrl.searchParams.get("cursor") ?? undefined;
+  const limitRaw = request.nextUrl.searchParams.get("limit");
+  const limit = limitRaw ? Math.min(Math.max(1, parseInt(limitRaw, 10)), 200) : 50;
 
-  return withCacheHeaders(NextResponse.json(listAgentRunRecords(walletAddress)), "history");
+  return withCacheHeaders(
+    NextResponse.json(listAgentRunRecordsPaginated(walletAddress, { cursor, limit })),
+    "history",
+  );
 }
 
 export async function POST(request: Request) {

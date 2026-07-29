@@ -716,6 +716,7 @@ export type TransactionRecord = {
   walletAddress?: string;
   userApproved?: boolean;
   decisionId?: string;
+  explorerUrl?: string;
   simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
   policyStatus?: TransactionPreview["policyStatus"];
   stellarDetails?: {
@@ -756,6 +757,66 @@ export type AgentRunRecord = {
   }>;
   userAction?: "pending" | "approved" | "rejected" | "adjusted" | "executed";
   createdAt: string;
+};
+
+export type PaginationParams = {
+  limit?: number;
+  cursor?: string;
+};
+
+export type PaginatedResult<T> = {
+  items: T[];
+  nextCursor?: string;
+  total: number;
+};
+
+export type TrendDataPoint = {
+  date: string;
+  buyRisk: number;
+  confidence: number;
+  agentScores: Array<{
+    agent: string;
+    displayName: string;
+    score: number;
+    scoreKind: "risk" | "trust" | "signal" | "exposure" | "decision";
+    confidence: number;
+  }>;
+};
+
+export type AgentTrend = {
+  agent: string;
+  displayName: string;
+  scoreKind: "risk" | "trust" | "signal" | "exposure" | "decision";
+  points: Array<{
+    date: string;
+    score: number;
+    confidence: number;
+    runId: string;
+  }>;
+};
+
+export type DecisionDetail = {
+  runId: string;
+  reasons: string[];
+  blockers: string[];
+  ruleSnapshot?: Record<string, unknown>;
+  whatWouldChange?: string;
+  summary: string;
+  score: number;
+  confidence: number;
+  createdAt: string;
+};
+
+export type SourceSnapshotDetail = {
+  agent: string;
+  label: string;
+  url?: string;
+  status: string;
+  checkedAt?: string;
+  reliability?: number;
+  latencyMs?: number;
+  error?: string;
+  provider?: string;
 };
 
 export type StorageProvider = "memory" | "supabase_postgres";

@@ -1,16 +1,22 @@
 import type {
   AgentResult,
   AgentRunRecord,
+  AgentTrend,
   Alert,
   AlertDelivery,
   AlertDeliveryChannel,
   AlertObservation,
   AlertRule,
+  DecisionDetail,
   DiscoveryAlert,
+  PaginatedResult,
+  PaginationParams,
   RecommendationRecord,
+  SourceSnapshotDetail,
   StorageCounts,
   StorageHealth,
   TransactionRecord,
+  TrendDataPoint,
   UserApprovalRecord,
   UserRule,
   WatchlistEntry,
@@ -26,12 +32,16 @@ import { getDefaultRules } from "@/server/rules/defaultRules";
 import { validateAgentResult } from "@/server/agents/schema";
 import {
   getPostgresStorageAdapter,
+  mirrorAgentRunWrite,
   mirrorAlertDeliveryUpdate,
   mirrorAlertDeliveryWrite,
   mirrorAlertObservationWrite,
   mirrorAlertRuleWrite,
   mirrorAlertUpdate,
   mirrorAlertWrite,
+  mirrorApprovalWrite,
+  mirrorRecommendationWrite,
+  mirrorTransactionWrite,
 } from "@/server/storage/postgresAdapter";
 
 /**
@@ -82,13 +92,21 @@ export function ensureStorageReady(): Promise<{ tried: boolean; hydrated: number
     }
 
     try {
-      const hydrate = await adapter.hydrateAlertTables({
+      const alertHydrate = await adapter.hydrateAlertTables({
         rules: getAlertRulesStore(),
         observations: getAlertObservationsStore(),
         alerts: getAlertsStore(),
         deliveries: getAlertDeliveriesStore(),
       });
-      const result = { tried: true, hydrated: hydrate.hydrated, skipped: hydrate.skipped, detail: "ok" };
+      const historyHydrate = await adapter.hydrateHistoryTables({
+        agentRuns: getAgentRuns(),
+        recommendations: getRecommendations(),
+        transactions: getTransactions(),
+        approvals: getApprovals(),
+      });
+      const totalHydrated = alertHydrate.hydrated + historyHydrate.hydrated;
+      const totalSkipped = alertHydrate.skipped + historyHydrate.skipped;
+      const result = { tried: true, hydrated: totalHydrated, skipped: totalSkipped, detail: "ok" };
       store.__goldenRaccoonLastHydration = { ...result, at: new Date().toISOString() };
 
       return result;
@@ -139,6 +157,19 @@ function mirrorAlertUpdateDeferred(input: Alert) {
 }
 function mirrorAlertDeliveryUpdateDeferred(input: AlertDelivery) {
   mirrorAlertDeliveryUpdate(input);
+}
+
+function mirrorHistoryAgentRunWrite(input: AgentRunRecord) {
+  mirrorAgentRunWrite(input);
+}
+function mirrorHistoryRecommendationWrite(input: RecommendationRecord) {
+  mirrorRecommendationWrite(input);
+}
+function mirrorHistoryTransactionWrite(input: TransactionRecord) {
+  mirrorTransactionWrite(input);
+}
+function mirrorHistoryApprovalWrite(input: UserApprovalRecord) {
+  mirrorApprovalWrite(input);
 }
 
 type CreateAgentRunInput = {
@@ -628,7 +659,7 @@ export function createAgentRunRecord(input: CreateAgentRunInput): AgentRunRecord
   };
 
   getAgentRuns().unshift(record);
-  createRecommendationRecord({
+  const rec = createRecommendationRecord({
     runId: record.id,
     walletAddress: record.walletAddress,
     action: record.recommendation,
@@ -636,6 +667,9 @@ export function createAgentRunRecord(input: CreateAgentRunInput): AgentRunRecord
     confidence: record.confidence,
     summary: record.summary,
   });
+
+  mirrorHistoryAgentRunWrite(record);
+  mirrorHistoryRecommendationWrite(rec);
 
   return record;
 }
@@ -685,6 +719,8 @@ export function createTransactionRecord(input: Omit<TransactionRecord, "createdA
     getTransactions().unshift(record);
   }
 
+  mirrorHistoryTransactionWrite(record);
+
   return record;
 }
 
@@ -707,7 +743,154 @@ export function createApprovalRecord(input: Omit<UserApprovalRecord, "id" | "cre
 
   getApprovals().unshift(record);
 
+  mirrorHistoryApprovalWrite(record);
+
   return record;
+}
+
+// ---------------- Paginated list functions ----------------
+
+export function paginatedList<T>(
+  items: T[],
+  params: PaginationParams,
+  getId: (item: T) => string,
+): PaginatedResult<T> {
+  const limit = Math.min(Math.max(1, params.limit ?? 50), 200);
+  let startIndex = 0;
+
+  if (params.cursor) {
+    const cursorIndex = items.findIndex((item) => getId(item) === params.cursor);
+    if (cursorIndex >= 0) {
+      startIndex = cursorIndex + 1;
+    }
+  }
+
+  const page = items.slice(startIndex, startIndex + limit);
+  const nextCursor = items.length > startIndex + limit ? getId(items[startIndex + limit]) : undefined;
+
+  return { items: page, nextCursor, total: items.length };
+}
+
+export function listAgentRunRecordsPaginated(walletAddress?: string, params: PaginationParams = {}) {
+  const records = listAgentRunRecords(walletAddress);
+  return paginatedList(records, params, (r) => r.id);
+}
+
+export function listRecommendationRecordsPaginated(walletAddress?: string, params: PaginationParams = {}) {
+  const records = listRecommendationRecords(walletAddress);
+  return paginatedList(records, params, (r) => r.id);
+}
+
+export function listTransactionRecordsPaginated(walletAddress?: string, params: PaginationParams = {}) {
+  const records = listTransactionRecords(walletAddress);
+  return paginatedList(records, params, (r) => r.hash);
+}
+
+export function listApprovalRecordsPaginated(walletAddress?: string, params: PaginationParams = {}) {
+  const records = listApprovalRecords(walletAddress);
+  return paginatedList(records, params, (r) => r.id);
+}
+
+// ---------------- Trend computation ----------------
+
+export function computeBuyRiskTrend(walletAddress?: string, limit = 30): TrendDataPoint[] {
+  const runs = listAgentRunRecords(walletAddress)
+    .filter((r) => r.mode === "token_scan" || r.mode === "pre_buy_check")
+    .slice(0, limit)
+    .reverse();
+
+  return runs.map((run) => {
+    const decision = run.results.find((r) => r.agent === "decision");
+    return {
+      date: run.createdAt,
+      buyRisk: decision?.riskScore ?? run.decisionScore,
+      confidence: decision?.confidence ?? run.confidence,
+      agentScores: run.results.map((r) => ({
+        agent: r.agent,
+        displayName: r.agent.charAt(0).toUpperCase() + r.agent.slice(1),
+        score: r.score,
+        scoreKind: r.agent === "decision" ? "decision" as const : "risk" as const,
+        confidence: r.confidence,
+      })),
+    };
+  });
+}
+
+export function computePerAgentTrends(walletAddress?: string): AgentTrend[] {
+  const runs = listAgentRunRecords(walletAddress).reverse();
+  const agentMap = new Map<string, AgentTrend>();
+
+  for (const run of runs) {
+    for (const result of run.results) {
+      const key = result.agent;
+      if (!agentMap.has(key)) {
+        agentMap.set(key, {
+          agent: key,
+          displayName: key.charAt(0).toUpperCase() + key.slice(1),
+          scoreKind: key === "decision" ? "decision" as const : "risk" as const,
+          points: [],
+        });
+      }
+      agentMap.get(key)!.points.push({
+        date: run.createdAt,
+        score: result.score,
+        confidence: result.confidence,
+        runId: run.id,
+      });
+    }
+  }
+
+  return Array.from(agentMap.values());
+}
+
+export function getDecisionDetail(runId: string): DecisionDetail | null {
+  const run = getAgentRunRecord(runId);
+  if (!run) return null;
+
+  const decision = run.results.find((r) => r.agent === "decision");
+  const blockers = run.results.flatMap((r) => r.blockingReasons);
+  const reasons = decision?.findings.map((f) => f.detail) ?? [];
+  const ruleSnapshot = run.inputSnapshot?.userRules as Record<string, unknown> | undefined;
+
+  return {
+    runId: run.id,
+    reasons,
+    blockers: [...new Set(blockers)],
+    ruleSnapshot,
+    whatWouldChange: (decision?.rawSignals as Record<string, unknown>)?.whatWouldChange as string | undefined,
+    summary: run.summary,
+    score: run.decisionScore,
+    confidence: run.confidence,
+    createdAt: run.createdAt,
+  };
+}
+
+export function getSourceSnapshotDetails(runId: string): SourceSnapshotDetail[] {
+  const run = getAgentRunRecord(runId);
+  if (!run) return [];
+
+  const snapshots: SourceSnapshotDetail[] = [];
+
+  for (const result of run.results) {
+    for (const source of result.sources) {
+      snapshots.push({
+        agent: result.agent,
+        label: source.label,
+        url: source.url,
+        status: source.status,
+        checkedAt: source.checkedAt,
+        reliability: source.reliability,
+        latencyMs: source.latencyMs,
+        error: source.error,
+        provider: source.provider,
+      });
+    }
+  }
+
+  return snapshots.sort((a, b) => {
+    if (!a.checkedAt || !b.checkedAt) return 0;
+    return new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime();
+  });
 }
 
 export function getUserRuleRecord(walletAddress = "0xDemoWallet") {
