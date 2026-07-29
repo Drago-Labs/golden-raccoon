@@ -12,6 +12,7 @@ export function getDefaultRules(walletAddress = "0xDemoWallet"): UserRule {
     blockedTokens: [],
     allowedActions: ["hold", "watch", "reduce_exposure", "swap_to_stable", "prepare_transaction", "no_action"],
     autoExecute: false,
+    version: 1,
     createdAt: new Date().toISOString(),
   };
 }

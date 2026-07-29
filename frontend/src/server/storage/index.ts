@@ -723,13 +723,16 @@ export function getUserRuleRecord(walletAddress = "0xDemoWallet") {
 export function upsertUserRuleRecord(input: UserRule) {
   const createdAt = input.createdAt ?? new Date().toISOString();
   const defaults = getDefaultRules(input.walletAddress);
+  const existingIndex = getUserRules().findIndex((rule) => rule.walletAddress.toLowerCase() === input.walletAddress.toLowerCase());
+  // Bump version on every update so decision/execution can use versioned snapshots
+  const currentVersion = existingIndex >= 0 ? getUserRules()[existingIndex].version : 0;
   const record: UserRule = {
     ...defaults,
     ...input,
     autoExecute: false,
+    version: input.version ?? (currentVersion + 1),
     createdAt,
   };
-  const existingIndex = getUserRules().findIndex((rule) => rule.walletAddress.toLowerCase() === input.walletAddress.toLowerCase());
 
   if (existingIndex >= 0) {
     getUserRules()[existingIndex] = record;

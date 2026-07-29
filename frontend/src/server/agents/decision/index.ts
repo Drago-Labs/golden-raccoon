@@ -1,6 +1,7 @@
-import type { AgentFinding, AgentMissingData, AgentRecommendedAction, AgentResult, RiskLevel, UserRule } from "@/server/types";
+import type { AgentFinding, AgentMissingData, AgentRecommendedAction, AgentResult, RiskLevel, StrategyPolicyDecision, UserRule } from "@/server/types";
 import { buildAgentResult, clampScore, scoreToRiskLevel } from "@/server/agents/shared";
 import { validateAgentResult } from "@/server/agents/schema";
+import { evaluateStrategy, type StrategyEnforcerContext } from "@/server/agents/strategy";
 
 type DecisionMode = "portfolio_review" | "token_scan" | "pre_buy_check" | "holding_review" | "execution_prepare" | "discovery_candidate";
 
@@ -43,6 +44,14 @@ type DecisionInput = {
   executionReadiness?: ExecutionReadiness;
   userRules?: Partial<UserRule>;
   userRiskProfile?: UserRiskProfile;
+};
+
+/** Structured user rule enforcement output from the Decision Agent */
+type DecisionStrategyEnforcement = {
+  policyDecisions: StrategyPolicyDecision[];
+  strategyBlockers: DecisionBlocker[];
+  ruleVersion: number;
+  ruleWalletAddress: string;
 };
 
 type WeightedScoreDetail = {
@@ -570,6 +579,13 @@ function resolveConflicts(results: AgentResult[], context: ReturnType<typeof inf
   return conflicts;
 }
 
+/**
+ * Core decision logic — chooses final action from score, confidence,
+ * context, blockers, conflicts, and user rule overrides.
+ *
+ * Critical blockers (contract, phishing, identity, missing-source,
+ * failed simulation, wallet-mismatch) always take precedence.
+ */
 function decideAction(input: {
   score: number;
   confidence: number;
@@ -588,13 +604,14 @@ function decideAction(input: {
 
   if (conflictAction) return conflictAction;
 
-  const maxRiskScore = input.userRiskProfile?.maxRiskScore ?? input.userRules?.maxRiskScore;
-
-  if (typeof maxRiskScore === "number" && input.score > maxRiskScore) {
+  // Low confidence can never be upgraded to a buy action
+  if (input.confidence < 0.42) {
     return "manual_review";
   }
 
-  if (input.confidence < 0.42) {
+  const maxRiskScore = input.userRiskProfile?.maxRiskScore ?? input.userRules?.maxRiskScore;
+
+  if (typeof maxRiskScore === "number" && input.score > maxRiskScore) {
     return "manual_review";
   }
 
@@ -604,11 +621,73 @@ function decideAction(input: {
 
   if (input.context.userAlreadyOwnsToken && input.context.holdingAllocationPercent >= 15 && input.score >= 40) {
     return "reduce_exposure";
-  }    if (input.score >= 75) return "avoid";
+  }
+  if (input.score >= 75) return "avoid";
   if (input.score >= 50) return input.context.userAlreadyOwnsToken ? "reduce_exposure" : "manual_review";
   if (input.score >= 25) return "watch";
 
   return input.context.userAlreadyOwnsToken && input.context.holdingAllocationPercent <= 20 ? "hold" : "watch";
+}
+
+/**
+ * Enforce user strategy rules during decision-making.
+ * Produces structured policy decisions with rule metadata so the UI
+ * can show which rule changed or blocked the recommendation.
+ *
+ * Critical blockers (contract, phishing, identity, missing-source,
+ * failed simulation, wallet-mismatch) are collected separately and
+ * always take precedence over strategy rules.
+ */
+function enforceStrategy(
+  recommendedAction: AgentRecommendedAction,
+  score: number,
+  confidence: number,
+  context: ReturnType<typeof inferContext>,
+  userRules?: Partial<UserRule>,
+): DecisionStrategyEnforcement {
+  if (!userRules) {
+    return {
+      policyDecisions: [],
+      strategyBlockers: [],
+      ruleVersion: 0,
+      ruleWalletAddress: "",
+    };
+  }
+
+  const strategyContext: StrategyEnforcerContext = {
+    action: recommendedAction,
+    riskScore: score,
+    percent: context.holdingAllocationPercent >= 25 ? 30 : context.holdingAllocationPercent,
+    holdingAllocationPercent: context.holdingAllocationPercent,
+    stableReservePercent: context.stableReservePercent,
+    confidence,
+    phase: "decision",
+  };
+
+  const result = evaluateStrategy(strategyContext, userRules as UserRule);
+
+  const strategyBlockers: DecisionBlocker[] = [];
+  for (const decision of result.violations) {
+    strategyBlockers.push({
+      label: `Strategy rule: ${decision.ruleLabel}`,
+      severity: decision.ruleCategory === "risk_threshold" || decision.ruleCategory === "trade_size"
+        ? "high"
+        : "medium",
+      action: "manual_review",
+      detail: decision.reason,
+    });
+  }
+
+  return {
+    policyDecisions: [
+      ...result.violations,
+      ...result.warnings,
+      ...result.passed,
+    ],
+    strategyBlockers,
+    ruleVersion: result.ruleVersion,
+    ruleWalletAddress: result.ruleWalletAddress,
+  };
 }
 
 export type DiscoveryClassification = "watch" | "risky" | "scam" | "early_opportunity";
@@ -936,13 +1015,23 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
     userRules: input.userRules,
     userRiskProfile: input.userRiskProfile,
   });
+  // Enforce user strategy rules and capture structured policy decisions
+  const strategyEnforcement = enforceStrategy(
+    recommendedAction,
+    score,
+    confidence,
+    context,
+    input.userRules,
+  );
+  // Strategy rule violations become additional blockers (always secondary to critical ones)
+  const allBlockers = [...blockers, ...strategyEnforcement.strategyBlockers];
   const explanation = buildExplanation({
     action: recommendedAction,
     score,
     confidence,
     results,
     context,
-    blockers,
+    blockers: allBlockers,
     conflicts,
     missingData,
   });
@@ -953,7 +1042,7 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
     confidence,
     coverage,
     weightedScore,
-    blockers,
+    blockers: allBlockers,
     conflicts,
     missingData,
     explanation,
@@ -971,15 +1060,17 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
     sources: getDecisionSources(results, invalidMessages.length),
     confidence,
     recommendedAction,
-    blockingReasons: blockers.map((blocker) => `${blocker.label}: ${blocker.detail}`),
+    blockingReasons: allBlockers.map((blocker) => `${blocker.label}: ${blocker.detail}`),
     missingData,
     rawSignals: {
       context,
       weightedScore,
       sourceCoverage: coverage,
       blockers,
+      allBlockers,
       conflicts,
       confidenceFormula,
+      strategyEnforcement,
       deterministicCore: getDecisionCoreAudit({
         action: recommendedAction,
         score,

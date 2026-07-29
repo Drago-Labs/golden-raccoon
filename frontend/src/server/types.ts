@@ -391,10 +391,12 @@ export type TransactionPreview = {
     blockedTokens?: string[];
     allowedActions?: AgentRecommendedAction[];
     autoExecute: false;
-  };
-  policyStatus?: {
+  };    policyStatus?: {
     allowed: boolean;
     violations: string[];
+    decisions?: StrategyPolicyDecision[];
+    ruleVersion?: number;
+    ruleWalletAddress?: string;
   };
   quote?: {
     provider: "planned_dex_aggregator" | "soroswap" | "stellar_aggregator";
@@ -424,6 +426,57 @@ export type TransactionPreview = {
   };
 };
 
+export type StrategyPolicyRuleCategory =
+  | "risk_threshold"
+  | "trade_size"
+  | "daily_limit"
+  | "liquidity"
+  | "exposure"
+  | "stable_reserve"
+  | "allowed_chain"
+  | "blocked_token"
+  | "blocked_category"
+  | "slippage"
+  | "allowed_action"
+  | "stellar_issuer"
+  | "stellar_trustline"
+  | "auto_execute";
+
+/**
+ * Structured policy decision returned by the shared strategy enforcer.
+ * Each decision records the specific rule, observed value, threshold,
+ * and a human-readable reason so the UI and audit log can show which
+ * user rule changed or blocked the recommendation.
+ */
+export type StrategyPolicyDecision = {
+  ruleId: string;
+  ruleVersion: number;
+  ruleLabel: string;
+  ruleCategory: StrategyPolicyRuleCategory;
+  /** The value observed from the agent input / portfolio context */
+  observedValue: number | string;
+  /** The threshold defined in the user rule */
+  threshold: number | string;
+  violated: boolean;
+  reason: string;
+  action: "blocked" | "warned" | "passed";
+};
+
+/**
+ * Full strategy enforcement result combining legacy violations
+ * with structured policy decisions for audit and UI.
+ */
+export type StrategyPolicyResult = {
+  allowed: boolean;
+  violations: StrategyPolicyDecision[];
+  passed: StrategyPolicyDecision[];
+  warnings: StrategyPolicyDecision[];
+  ruleVersion: number;
+  ruleWalletAddress: string;
+  /** Legacy string[] for backward-compatible API responses */
+  violationMessages: string[];
+};
+
 export type UserRule = {
   walletAddress: string;
   maxRiskScore: number;
@@ -435,6 +488,7 @@ export type UserRule = {
   blockedTokens?: string[];
   allowedActions?: AgentRecommendedAction[];
   autoExecute: boolean;
+  version: number;
   createdAt: string;
 };
 

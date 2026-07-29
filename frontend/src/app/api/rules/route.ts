@@ -18,6 +18,7 @@ const ruleSchema = z.object({
     .array(z.enum(["hold", "watch", "reduce_exposure", "swap_to_stable", "avoid", "manual_review", "prepare_transaction", "no_action"]))
     .optional(),
   autoExecute: z.boolean(),
+  version: z.number().int().min(1).optional(),
   createdAt: z.string().optional(),
 });
 
@@ -55,6 +56,7 @@ export async function POST(request: Request) {
   return withCacheHeaders(NextResponse.json(upsertUserRuleRecord({
     ...parsed.data,
     autoExecute: false,
+    version: parsed.data.version ?? 1,
     createdAt: parsed.data.createdAt ?? new Date().toISOString(),
   })), "rules");
 }
