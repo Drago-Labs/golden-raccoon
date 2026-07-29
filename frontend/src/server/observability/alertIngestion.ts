@@ -1,7 +1,7 @@
 import type { AgentRunRecord, AlertObservation, AlertRule } from "@/server/types";
 import type { AlertEvaluation } from "@/server/observability/alertEngine";
 import { extractObservationsForRun } from "@/server/observability/observations";
-import { createAlertObservation, upsertAlertRule } from "@/server/storage";
+import { createAlertObservation, ensureStorageReady, upsertAlertRule } from "@/server/storage";
 import { evaluateAndPersistObservation, listEnabledRulesForEvaluation } from "@/server/observability/alertEngine";
 import { defaultAlertRuleDefinitions } from "@/server/observability/alertDefaults";
 
@@ -19,13 +19,35 @@ export type IngestResult = {
  *
  * Designed to be fire-and-forget so the route handler can return quickly:
  * the caller schedules it via `Promise.resolve().then(...)` or `after()`.
+ *
+ * The method is async because it awaits the optional Postgres hydration gate
+ * (`ensureStorageReady`) so that persisted rules, observations, alerts, and
+ * deliveries from prior runs are loaded into memory before the current
+ * batch is evaluated against them. Without this initial guard the engine
+ * would see empty rule/alert stores after a restart, produce no alerts for
+ * the first few ingests, and lose the durability guarantee.
+ *
+ * It also calls `ensureDefaultRulesForWallet` before rule lookup so that
+ * a wallet that has never visited the alerts page still has rules seeded
+ * and can receive degradation / risk alerts on its first agent run.
  */
-export function ingestAgentRunAlerts(record: AgentRunRecord): IngestResult {
+export async function ingestAgentRunAlerts(record: AgentRunRecord): Promise<IngestResult> {
   if (!record || !record.walletAddress) {
     return { persistedObservationIds: [], evaluations: [], skippedCount: 0 };
   }
 
   const walletAddress = record.walletAddress.trim().toLowerCase();
+
+  // Hydrate persisted data from Postgres before reading rules/observations.
+  await ensureStorageReady();
+
+  // Ensure default rules exist for this wallet before evaluating
+  // observations. Without this, a wallet that has never visited the alerts
+  // page would have no rules seeded, so all observations (including
+  // rpc_degradation from unavailable providers) would silently produce no
+  // alerts.
+  ensureDefaultRulesForWallet(walletAddress);
+
   const observations: AlertObservation[] = extractObservationsForRun(record);
   const persistedObservationIds: string[] = [];
   const evaluations: AlertEvaluation[] = [];
