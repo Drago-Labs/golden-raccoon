@@ -431,7 +431,7 @@ create index if not exists alert_deliveries_alert_idx on alert_deliveries(alert_
 
 -- Watchlist & discovery tables (upstream V3 discovery).
 create table if not exists watchlist_entries (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key,
   wallet_address text not null,
   identity_key text not null,
   chain text not null,
@@ -446,7 +446,7 @@ create table if not exists watchlist_entries (
   source text not null,
   note text,
   last_scanned_at timestamptz,
-  latest_scan_run_id uuid,
+  latest_scan_run_id text,
   latest_classification text check (latest_classification in ('watch', 'risky', 'scam', 'early_opportunity')),
   latest_score integer,
   latest_status text check (latest_status in ('completed', 'partial', 'failed', 'stale')),
@@ -457,8 +457,8 @@ create unique index if not exists watchlist_entries_wallet_identity_uniq on watc
 create index if not exists watchlist_entries_wallet_created_idx on watchlist_entries(wallet_address, created_at desc);
 
 create table if not exists watchlist_scan_runs (
-  id uuid primary key default gen_random_uuid(),
-  entry_id uuid not null references watchlist_entries(id) on delete cascade,
+  id text primary key,
+  entry_id text not null references watchlist_entries(id) on delete cascade,
   wallet_address text not null,
   identity_key text not null,
   agent_run_id uuid references agent_runs(id) on delete set null,
@@ -470,7 +470,7 @@ create table if not exists watchlist_scan_runs (
   missing_data jsonb not null default '[]'::jsonb,
   risk_report jsonb,
   status text not null check (status in ('completed', 'partial', 'failed', 'stale')),
-  previous_run_id uuid references watchlist_scan_runs(id) on delete set null,
+  previous_run_id text references watchlist_scan_runs(id) on delete set null,
   scanned_at timestamptz not null default now()
 );
 
@@ -478,10 +478,10 @@ create index if not exists watchlist_scan_runs_entry_scanned_idx on watchlist_sc
 create index if not exists watchlist_scan_runs_wallet_scanned_idx on watchlist_scan_runs(wallet_address, scanned_at desc);
 
 create table if not exists discovery_alerts (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key,
   wallet_address text not null,
-  entry_id uuid references watchlist_entries(id) on delete cascade,
-  run_id uuid references watchlist_scan_runs(id) on delete set null,
+  entry_id text references watchlist_entries(id) on delete cascade,
+  run_id text references watchlist_scan_runs(id) on delete set null,
   kind text not null check (kind in ('critical_risk', 'liquidity_drop', 'holder_concentration', 'social_phishing', 'news_incident', 'classification_change')),
   title text not null,
   detail text not null,

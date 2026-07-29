@@ -1090,11 +1090,19 @@ export function updateWatchlistEntryLatestScan(
     entry.successfulScanRunIds = [update.scanRunId, ...(entry.successfulScanRunIds ?? [])].slice(0, 50);
   }
 
+  // When the scan failed, preserve the prior visible classification/score and mark
+  // status as "stale" instead of "failed" — the same semantics the in-memory store
+  // enforces above. Without this guard the Postgres mirror would overwrite the last
+  // successful scan's evidence with the failed run's placeholder values.
+  const mirrorClassification = update.status === "failed" ? (entry.latestClassification ?? update.classification) : update.classification;
+  const mirrorScore = update.status === "failed" ? (entry.latestScore ?? update.score) : update.score;
+  const mirrorStatus = update.status === "failed" ? "stale" : update.status;
+
   mirrorWatchlistEntryLatestScanUpdate(id, {
-    classification: update.classification,
-    score: update.score,
+    classification: mirrorClassification,
+    score: mirrorScore,
     scannedAt: update.scannedAt,
-    status: update.status,
+    status: mirrorStatus,
     scanRunId: update.scanRunId,
   });
 

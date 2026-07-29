@@ -236,7 +236,7 @@ export function WatchlistRemoveButton({ entryId, wallet }: { entryId: string; wa
       const response = await fetch("/api/watchlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "remove", entryId }),
+        body: JSON.stringify({ action: "remove", entryId, walletAddress: wallet }),
       });
       const data = await response.json();
       if (data.ok) {
