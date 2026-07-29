@@ -1,10 +1,9 @@
 import type { AgentRecommendedAction, AgentResult, PortfolioSnapshot, StellarSwapQuote, TransactionPreview, UserRule } from "@/server/types";
-import type { QuoteResult } from "@/server/providers/quote/types";
 import { buildAgentResult } from "@/server/agents/shared";
 import { buildExecutionPolicy, evaluateExecutionPolicy } from "@/server/agents/execution/policy";
 import { getChainFamily } from "@/lib/chainIdentity";
 import { buildTrustlinePreview, type TrustlineCheckInput } from "@/server/stellar/trustline";
-import { getVerifiedQuote } from "@/server/providers/quote";
+import { getStellarSwapQuote } from "@/server/stellar/swap";
 
 type ExecutionAgentInput = {
   action?: AgentRecommendedAction | string;
@@ -122,7 +121,7 @@ function getSimulationPlan(input: {
   };
 }
 
-function buildQuotePlanFromReal(input: {
+function getQuotePlan(input: {
   requiresTrade: boolean;
   isStellar?: boolean;
   fromToken: string;
@@ -133,57 +132,26 @@ function buildQuotePlanFromReal(input: {
   gasEstimateUsd: number;
   quoteAvailable?: boolean;
   expectedOutputAmount?: number;
-}, realQuote?: QuoteResult): {
-  display: NonNullable<TransactionPreview["quote"]> | undefined;
-  real: QuoteResult | undefined;
-} {
+}): NonNullable<TransactionPreview["quote"]> | undefined {
   if (!input.requiresTrade) {
-    return { display: undefined, real: undefined };
+    return undefined;
   }
 
-  // If we have a real quote from a provider adapter, derive the display from it.
-  if (realQuote) {
-    const outputAmount = Number.parseFloat(realQuote.expectedOutputAmount);
-    return {
-      display: {
-        provider: realQuote.provider === "stellar_horizon"
-          ? "stellar_aggregator"
-          : realQuote.provider === "dexscreener"
-            ? "dexscreener"
-            : "planned_dex_aggregator",
-        route: realQuote.route,
-        expectedOutputToken: input.toToken,
-        expectedOutputAmount: Number.isFinite(outputAmount) ? outputAmount : undefined,
-        estimatedValueUsd: realQuote.estimatedValueUsd,
-        priceImpactBps: realQuote.priceImpactBps,
-        slippageBps: realQuote.slippageBps,
-        gasEstimateUsd: input.gasEstimateUsd,
-        status: realQuote.status === "simulated" ? "simulated" : "fresh",
-        detail: realQuote.detail,
-      },
-      real: realQuote,
-    };
-  }
-
-  // Fallback to planned / placeholder quote (no live provider available).
   return {
-    display: {
-      provider: input.isStellar ? "stellar_aggregator" : "planned_dex_aggregator",
-      route: [input.fromToken, input.toToken],
-      expectedOutputToken: input.toToken,
-      expectedOutputAmount: input.expectedOutputAmount,
-      estimatedValueUsd: input.estimatedValueUsd,
-      priceImpactBps: input.priceImpactBps,
-      slippageBps: input.slippageBps,
-      gasEstimateUsd: input.gasEstimateUsd,
-      status: input.quoteAvailable ? (input.isStellar ? "fresh" : "planned") : "unavailable",
-      detail: input.quoteAvailable
-        ? input.isStellar
-          ? "Stellar DEX aggregator quote is fresh for user review."
-          : "DEX aggregator quote fields are present for user review."
-        : "No live quote provider result is available; this plan is not executable.",
-    },
-    real: undefined,
+    provider: input.isStellar ? "stellar_aggregator" : "planned_dex_aggregator",
+    route: [input.fromToken, input.toToken],
+    expectedOutputToken: input.toToken,
+    expectedOutputAmount: input.expectedOutputAmount,
+    estimatedValueUsd: input.estimatedValueUsd,
+    priceImpactBps: input.priceImpactBps,
+    slippageBps: input.slippageBps,
+    gasEstimateUsd: input.gasEstimateUsd,
+    status: input.quoteAvailable ? (input.isStellar ? "fresh" : "planned") : "unavailable",
+    detail: input.quoteAvailable
+      ? input.isStellar
+        ? "Stellar DEX aggregator quote is fresh for user review."
+        : "DEX aggregator quote fields are present for user review."
+      : "No live quote provider result is available; this plan is not executable.",
   };
 }
 
@@ -221,10 +189,21 @@ export async function buildExecutionPreview(input: ExecutionAgentInput): Promise
     },
     executionPolicy,
   );
+  const quote = getQuotePlan({
+    requiresTrade: plan.requiresTrade,
+    isStellar,
+    fromToken,
+    toToken,
+    estimatedValueUsd,
+    slippageBps,
+    priceImpactBps,
+    gasEstimateUsd,
+    quoteAvailable: input.quoteAvailable,
+    expectedOutputAmount: input.expectedOutputAmount,
+  });
   const trustlineAction = action === "create_trustline";
   let stellarTrustlinePreview = undefined;
   let stellarSwapQuote: StellarSwapQuote | undefined = undefined;
-  let realQuote: QuoteResult | undefined;
 
   // Wire in Stellar trustline preview for trustline actions
   if (trustlineAction && isStellar && input.walletAddress && input.stellarAssetCode && input.stellarIssuer) {
@@ -242,86 +221,28 @@ export async function buildExecutionPreview(input: ExecutionAgentInput): Promise
     }
   }
 
-  // Wire in unified real quote provider for trade actions
-  if (!trustlineAction && plan.requiresTrade && input.walletAddress && input.fromToken && input.toToken) {
+  // Wire in Stellar swap quote for trade actions on Stellar
+  if (!trustlineAction && plan.requiresTrade && isStellar && input.walletAddress && input.fromToken && input.toToken && input.stellarSwapAmount) {
     try {
-      const quoteRequest = {
-        chain: input.network ?? "ethereum",
-        chainFamily: getChainFamily(input.network ?? "ethereum") as "evm" | "stellar",
+      const quoteResult = await getStellarSwapQuote({
+        chain: input.network ?? "stellar-testnet",
         walletAddress: input.walletAddress,
         fromAsset: input.fromToken,
         toAsset: input.toToken,
         fromIssuer: input.stellarFromIssuer,
         toIssuer: input.stellarToIssuer,
-        amount: String(input.stellarSwapAmount ?? input.estimatedValueUsd ?? 1),
-        slippageBps: input.slippageBps ?? 100,
-      };
-
-      const { quote: fetchedQuote } = await getVerifiedQuote(quoteRequest);
-      realQuote = fetchedQuote;
-
-      // Populate stellar-specific quote for backward compat
-      if (isStellar && fetchedQuote.stellarOps) {
-        stellarSwapQuote = {
-          provider: "stellar_aggregator",
-          routeType: fetchedQuote.routeType === "classic_path_payment"
-            ? "classic_path_payment"
-            : fetchedQuote.routeType === "soroban_swap"
-              ? "soroban_swap"
-              : "classic_path_payment",
-          route: fetchedQuote.route,
-          expectedOutputAmount: Number.parseFloat(fetchedQuote.expectedOutputAmount),
-          estimatedValueUsd: fetchedQuote.estimatedValueUsd,
-          priceImpactBps: fetchedQuote.priceImpactBps,
-          slippageBps: fetchedQuote.slippageBps,
-          minReceiveAmount: Number.parseFloat(fetchedQuote.minReceiveAmount),
-          pathPaymentOps: fetchedQuote.stellarOps
-            ?.filter(
-              (op): op is import("@/server/providers/quote/types").StellarPathPaymentOp =>
-                op.type === "path_payment_strict_send" || op.type === "path_payment_strict_receive",
-            )
-            .map((op) => ({
-              type: op.type,
-              sendAsset: op.sendAsset,
-              sendAmount: op.sendAmount,
-              destAsset: op.destAsset,
-              destAmount: op.destMin,
-              path: op.path,
-            })),
-          status: fetchedQuote.status === "simulated" ? "simulated" : "fresh",
-          fetchedAt: fetchedQuote.fetchedAt,
-          expiresAt: fetchedQuote.expiresAt,
-          detail: fetchedQuote.detail,
-        };
+        amount: input.stellarSwapAmount,
+        slippageBps: input.slippageBps,
+      });
+      if (quoteResult.quote) {
+        stellarSwapQuote = quoteResult.quote;
       }
     } catch {
-      // Real quote unavailable — fall through to planned quote
+      // Stellar quote unavailable, continue with generic quote plan
     }
   }
 
-  const { display: quoteDisplay } = buildQuotePlanFromReal(
-    {
-      requiresTrade: plan.requiresTrade,
-      isStellar,
-      fromToken,
-      toToken,
-      estimatedValueUsd,
-      slippageBps,
-      priceImpactBps,
-      gasEstimateUsd,
-      quoteAvailable: input.quoteAvailable,
-      expectedOutputAmount: input.expectedOutputAmount,
-    },
-    realQuote,
-  );
-  const quote = quoteDisplay;
-
-  const quoteStatus = quote?.status;
-  const quoteMissing = !trustlineAction && plan.requiresTrade
-    && quoteStatus !== "planned"
-    && quoteStatus !== "fresh"
-    && quoteStatus !== "simulated"
-    && !realQuote;
+  const quoteMissing = !trustlineAction && plan.requiresTrade && quote?.status !== "planned" && quote?.status !== "fresh";
   const blockedReason = policyStatus.violations[0] ?? (
     (input.stellarQuoteStatus === "unavailable" && !stellarSwapQuote && !trustlineAction)
       ? "Live Stellar swap quote is required before preparing an executable transaction."
