@@ -3,10 +3,11 @@ import { z } from "zod";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { addToWatchlist, listWatchlist, removeFromWatchlist } from "@/server/discovery/watchlist";
 import { ensureStorageReady } from "@/server/storage";
+import { resolveWalletSession } from "@/server/security/walletSession";
 
 const addBodySchema = z.object({
   action: z.enum(["add"]).default("add"),
-  walletAddress: z.string().min(1).max(80),
+  walletAddress: z.string().min(1).max(80).optional(),
   chain: z.string().min(1).max(40),
   network: z.string().max(40).optional(),
   contractAddress: z.string().max(80).optional(),
@@ -23,11 +24,11 @@ const addBodySchema = z.object({
 const removeBodySchema = z.object({
   action: z.literal("remove"),
   entryId: z.string().min(1).max(120),
-  walletAddress: z.string().min(1).max(80),
+  walletAddress: z.string().min(1).max(80).optional(),
 });
 
 const listQuerySchema = z.object({
-  walletAddress: z.string().min(1).max(80),
+  walletAddress: z.string().min(1).max(80).optional(),
 });
 
 export async function GET(request: Request) {
@@ -40,13 +41,17 @@ export async function GET(request: Request) {
   await ensureStorageReady();
 
   const url = new URL(request.url);
-  const parsed = listQuerySchema.safeParse({ walletAddress: url.searchParams.get("walletAddress") ?? "" });
+  const parsed = listQuerySchema.safeParse({ walletAddress: url.searchParams.get("walletAddress") ?? undefined });
 
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  return NextResponse.json({ entries: listWatchlist(parsed.data.walletAddress) });
+  // Wallet isolation: the session cookie is authoritative
+  const session = resolveWalletSession(request, { suppliedWallet: parsed.data.walletAddress });
+  if (session.response) return session.response;
+
+  return NextResponse.json({ entries: listWatchlist(session.wallet!) });
 }
 
 export async function POST(request: Request) {
@@ -59,11 +64,17 @@ export async function POST(request: Request) {
   await ensureStorageReady();
 
   const body = await request.json().catch(() => ({}));
+
   const parsedAdd = addBodySchema.safeParse({ ...body, action: "add" });
 
   if (parsedAdd.success) {
+    // Wallet isolation: the session cookie is authoritative
+    const session = resolveWalletSession(request, { suppliedWallet: parsedAdd.data.walletAddress });
+    if (session.response) return session.response;
+    const wallet = session.wallet!;
+
     const result = await addToWatchlist({
-      walletAddress: parsedAdd.data.walletAddress,
+      walletAddress: wallet,
       chain: parsedAdd.data.chain,
       network: parsedAdd.data.network,
       contractAddress: parsedAdd.data.contractAddress,
@@ -85,8 +96,11 @@ export async function POST(request: Request) {
   const parsedRemove = removeBodySchema.safeParse({ ...body, action: "remove" });
 
   if (parsedRemove.success) {
-    const { walletAddress } = parsedRemove.data;
-    const entries = listWatchlist(walletAddress);
+    // Wallet isolation: the session cookie is authoritative
+    const session = resolveWalletSession(request, { suppliedWallet: parsedRemove.data.walletAddress });
+    if (session.response) return session.response;
+
+    const entries = listWatchlist(session.wallet!);
     const owned = entries.find((entry) => entry.id === parsedRemove.data.entryId);
 
     if (!owned) {

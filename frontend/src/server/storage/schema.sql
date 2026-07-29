@@ -314,13 +314,76 @@ begin
     alter table alert_observations add column if not exists incomplete_data boolean default false;
   exception when others then null;
   end;
-  -- Widen watchlist table IDs from uuid to text to match in-memory string IDs
+  -- Widen watchlist table IDs from uuid to text to match in-memory string IDs.
+  -- On existing PostgreSQL deployments the base schema declared watchlist_entries.id
+  -- and watchlist_scan_runs.id as uuid with foreign keys between them.  PostgreSQL
+  -- rejects ALTER COLUMN TYPE on a referenced primary key unless the child foreign
+  -- keys are dropped first.  We therefore drop every FK that involves a watchlist
+  -- UUID column, widen all affected columns, then recreate the FKs.
+  begin
+    alter table watchlist_scan_runs drop constraint if exists watchlist_scan_runs_entry_id_fkey;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs drop constraint if exists watchlist_scan_runs_previous_run_id_fkey;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts drop constraint if exists discovery_alerts_entry_id_fkey;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts drop constraint if exists discovery_alerts_run_id_fkey;
+  exception when others then null;
+  end;
+  -- Now widen all watchlist/discovery columns from uuid to text.
   begin
     alter table watchlist_entries alter column id type text using id::text;
   exception when others then null;
   end;
   begin
     alter table watchlist_entries alter column latest_scan_run_id type text using latest_scan_run_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs alter column entry_id type text using entry_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs alter column previous_run_id type text using previous_run_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts alter column entry_id type text using entry_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts alter column run_id type text using run_id::text;
+  exception when others then null;
+  end;
+  -- Recreate the foreign key constraints that were dropped above.
+  begin
+    alter table watchlist_scan_runs add constraint watchlist_scan_runs_entry_id_fkey
+      foreign key (entry_id) references watchlist_entries(id) on delete cascade;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs add constraint watchlist_scan_runs_previous_run_id_fkey
+      foreign key (previous_run_id) references watchlist_scan_runs(id) on delete set null;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts add constraint discovery_alerts_entry_id_fkey
+      foreign key (entry_id) references watchlist_entries(id) on delete cascade;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts add constraint discovery_alerts_run_id_fkey
+      foreign key (run_id) references watchlist_scan_runs(id) on delete set null;
   exception when others then null;
   end;
   -- Add columns that the base schema may not have (fresh CREATE TABLE handles these already).
@@ -368,18 +431,6 @@ begin
       check (asset_type in ('native', 'classic', 'contract', 'issuer_account', 'sac', 'sep41'));
   exception when others then null;
   end;
-  begin
-    alter table watchlist_scan_runs alter column id type text using id::text;
-  exception when others then null;
-  end;
-  begin
-    alter table watchlist_scan_runs alter column entry_id type text using entry_id::text;
-  exception when others then null;
-  end;
-  begin
-    alter table watchlist_scan_runs alter column previous_run_id type text using previous_run_id::text;
-  exception when others then null;
-  end;
   -- Add missing columns on watchlist_scan_runs for existing deployments.
   begin
     alter table watchlist_scan_runs add column if not exists identity_key text;
@@ -403,14 +454,6 @@ begin
   end;
   begin
     alter table watchlist_scan_runs add column if not exists agent_run_id uuid;
-  exception when others then null;
-  end;
-  begin
-    alter table discovery_alerts alter column entry_id type text using entry_id::text;
-  exception when others then null;
-  end;
-  begin
-    alter table discovery_alerts alter column run_id type text using run_id::text;
   exception when others then null;
   end;
 end $$;
