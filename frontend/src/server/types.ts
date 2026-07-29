@@ -698,20 +698,78 @@ export type TokenScanResult = {
   scannedAt: string;
 };
 
+export type TransactionLifecycleStatus =
+  | "prepared"
+  | "user_rejected"
+  | "submitted"
+  | "confirmed"
+  | "failed"
+  | "replaced"
+  | "expired"
+  | "pending";
+
+export type TransactionLifecycleEventName =
+  | "prepared"
+  | "submitted"
+  | "submission_failed"
+  | "user_rejected"
+  | "polled"
+  | "confirmed"
+  | "failed"
+  | "replaced"
+  | "expired"
+  | "duplicate_rejected";
+
+export type TransactionLifecycleEvent = {
+  id: string;
+  hash: string;
+  event: TransactionLifecycleEventName;
+  detail?: Record<string, unknown>;
+  occurredAt: string;
+  provider?: string;
+  providerUrl?: string;
+};
+
+export type ChainFamily = "evm" | "stellar";
+
+export type TransactionExpectedEffect = {
+  kind: "transfer" | "swap" | "approval" | "contract_call" | "publish_risk";
+  fromToken?: string;
+  toToken?: string;
+  fromAddress?: string;
+  toAddress?: string;
+  amount?: string;
+  amountBaseUnits?: string;
+  contractAddress?: string;
+  method?: string;
+  assetKey?: string;
+  decimals?: number;
+};
+
 export type TransactionRecord = {
   hash: string;
   type: "swap" | "approval" | "agent_log" | "transfer" | "trustline_create" | "trustline_change";
   decisionAction?: AgentRecommendedAction;
   asset: string;
   valueUsd: number;
-  status: "prepared" | "user_rejected" | "submitted" | "confirmed" | "failed" | "replaced" | "expired" | "pending";
+  status: TransactionLifecycleStatus;
+  lifecycleStatus: TransactionLifecycleStatus;
+  chainFamily: ChainFamily;
   createdAt: string;
+  submittedAt?: string;
+  terminalAt?: string;
+  lastPolledAt?: string;
   network: string;
   walletAddress?: string;
+  sourceAccount?: string;
   userApproved?: boolean;
   decisionId?: string;
   simulationStatus?: SimulationResultDetail["status"];
   policyStatus?: TransactionPreview["policyStatus"];
+  expectedEffects?: TransactionExpectedEffect[];
+  idempotencyKey?: string;
+  explorerUrl?: string;
+  failureReason?: string;
   stellarDetails?: {
     sequence?: string;
     feeCharged?: number;
@@ -721,6 +779,42 @@ export type TransactionRecord = {
     resultXdr?: string;
     trustlineAsset?: string;
   };
+};
+
+export type SubmitTransactionInput = {
+  chainFamily: ChainFamily;
+  network: string;
+  walletAddress: string;
+  sourceAccount?: string;
+  decisionId?: string;
+  decisionAction?: AgentRecommendedAction;
+  asset: string;
+  valueUsd?: number;
+  simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
+  policyStatus?: TransactionPreview["policyStatus"];
+  expectedEffects?: TransactionExpectedEffect[];
+  userApproved: true;
+  signedPayload: string;
+  idempotencyKey?: string;
+};
+
+export type SubmitTransactionResult = {
+  hash: string;
+  chainFamily: ChainFamily;
+  network: string;
+  submittedAt: string;
+  status: TransactionLifecycleStatus;
+  explorerUrl?: string;
+  idempotent: boolean;
+  reuseReason?: "idempotency_key" | "duplicate_hash";
+  lifecycle: TransactionLifecycleEvent[];
+};
+
+export type PollTransactionResult = {
+  transaction: TransactionRecord;
+  polled: boolean;
+  terminalReached: boolean;
+  events: TransactionLifecycleEvent[];
 };
 
 export type AgentRunRecord = {
@@ -875,7 +969,7 @@ export type UserApprovalRecord = {
   action?: AgentRecommendedAction;
   asset?: string;
   valueUsd?: number;
-  status: "confirmed";
+  status: "confirmed" | "pending";
   autoExecuted: false;
   createdAt: string;
 };

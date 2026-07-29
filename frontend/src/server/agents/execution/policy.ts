@@ -1,6 +1,10 @@
 import type { AgentRecommendedAction, UserRule } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { getChainFamily } from "@/lib/chainIdentity";
+import {
+  evaluateImmutableBuyBlockers,
+  type ImmutableBuySafetySignals,
+} from "@/server/autoMode/policy";
 
 export type StellarPolicyOverrides = {
   allowedIssuers?: string[];
@@ -34,6 +38,8 @@ export type ExecutionPolicyInput = {
   estimatedValueUsd?: number;
   slippageBps?: number;
   simulationStatus?: "not_required" | "pending" | "passed" | "failed" | "unavailable";
+  autoModeBuy?: boolean;
+  autoModeBuySafetySignals?: ImmutableBuySafetySignals;
   // Stellar-specific trustline fields
   stellarIssuer?: string;
   stellarIssuerClawback?: boolean;
@@ -86,7 +92,14 @@ function isStellarChain(chain?: string) {
 
 export function evaluateExecutionPolicy(input: ExecutionPolicyInput, policy: ExecutionPolicy) {
   const violations: string[] = [];
+  const immutableBuyBlockers = input.autoModeBuy
+    ? evaluateImmutableBuyBlockers(input.autoModeBuySafetySignals)
+    : [];
   const tradeAction = input.action === "swap_to_stable" || input.action === "reduce_exposure" || input.action === "prepare_transaction";
+
+  for (const blocker of immutableBuyBlockers) {
+    violations.push(`Immutable auto-buy blocker: ${blocker.replaceAll("_", " ")}.`);
+  }
 
   if (policy.autoExecute) {
     violations.push("Auto-execute is disabled. User wallet approval is mandatory.");
@@ -187,6 +200,7 @@ export function evaluateExecutionPolicy(input: ExecutionPolicyInput, policy: Exe
   return {
     allowed: violations.length === 0,
     violations,
+    immutableBuyBlockers,
   };
 }
 

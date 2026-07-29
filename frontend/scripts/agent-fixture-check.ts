@@ -28,7 +28,39 @@ import { buildAnalysisChecks } from "../src/server/scan/tokenScan";
 import { getX402RouteConfig, getX402RuntimeConfig, validateX402RuntimeConfig } from "../src/server/x402/config";
 import { assertFreshX402Payment, hashPaymentHeader } from "../src/server/x402/guards";
 import type { AgentResult, PortfolioSnapshot, TokenHolding } from "../src/server/types";
+import { NextRequest } from "next/server";
 import { POST as confirmExecution } from "../src/app/api/execute/confirm/route";
+import { POST as submitExecution } from "../src/app/api/execute/submit/route";
+import { POST as prepareExecution } from "../src/app/api/execute/prepare/route";
+import { POST as rejectExecution } from "../src/app/api/execute/reject/route";
+import { GET as getTransactionLifecycle } from "../src/app/api/execute/transactions/[hash]/route";
+import { GET as listTransactionHistory } from "../src/app/api/history/transactions/route";
+import {
+  configureEvmSimulator,
+  clearEvmSimulator,
+} from "../src/server/transactions/adapters/evm";
+import {
+  configureStellarSimulator,
+  clearStellarSimulator,
+} from "../src/server/transactions/adapters/stellar";
+import {
+  submitTransaction,
+  pollTransaction,
+  expireTransactionIfStale,
+  prepareTransaction,
+  recordUserRejection,
+  TransactionLifecycleError,
+} from "../src/server/transactions/lifecycleManager";
+import {
+  appendLifecycleEventByName,
+  createTransactionRecord,
+  getTransactionRecord,
+  getTransactionRecordByIdempotencyKey,
+  isImmutableTerminal,
+  listTransactionLifecycleEvents,
+  updateTransactionRecord,
+} from "../src/server/storage";
+import type { TransactionLifecycleStatus } from "../src/server/types";
 import { runDiscoveryFixtures } from "../src/server/discovery/fixtures";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -820,7 +852,9 @@ async function runExecutionChecks() {
       }),
     }),
   );
-  assert(duplicateConfirmResponse.status === 409, "Confirm must reject duplicate transaction hash.");
+  assert(duplicateConfirmResponse.status === 200, "Confirm must remain idempotent for re-verification of an externally-broadcast hash.");
+  const duplicateConfirmJson = await duplicateConfirmResponse.json();
+  assert(duplicateConfirmJson.pendingVerification === true, "Re-confirming an externally-broadcast hash must report pendingVerification until on-chain verification succeeds.");
 
   const runRecord = createAgentRunRecord({
     walletAddress: "0xabc",
@@ -1072,6 +1106,689 @@ async function runReadinessChecks() {
   assert(compareReplaySnapshot(replaySnapshot, blueChipLikeResult()).compatible, "Replay snapshot must compare compatible deterministic results.");
 }
 
+async function runTransactionLifecycleChecks() {
+  clearEvmSimulator();
+  clearStellarSimulator();
+
+  const evmHash = `0x${"1".repeat(64)}`;
+  const stellarHash = `${"a".repeat(64)}`;
+  const stellarWallet = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const evmSubmitted = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle",
+    decisionAction: "reduce_exposure",
+    asset: "MEME",
+    valueUsd: 25,
+    simulationStatus: "passed",
+    policyStatus: { allowed: true, violations: [] },
+    expectedEffects: [{ kind: "swap", fromToken: "MEME", toToken: "USDC" }],
+    userApproved: true,
+    signedPayload: evmHash,
+    idempotencyKey: "idem_evm_success",
+  });
+  assert(evmSubmitted.outcome === "submitted" && evmSubmitted.transaction.lifecycleStatus === "submitted", "EVM submit must persist a submitted lifecycle.");
+  assert(evmSubmitted.transaction.explorerUrl?.includes("tx"), "EVM submit must attach an explorer URL.");
+  assert(evmSubmitted.result.idempotent === false, "Fresh EVM submit must not be flagged as idempotent.");
+  assert(evmSubmitted.transaction.submittedAt !== undefined, "EVM submit must record a submittedAt timestamp.");
+  const evmEvents = listTransactionLifecycleEvents(evmSubmitted.transaction.hash);
+  assert(evmEvents.some((event) => event.event === "prepared") && evmEvents.some((event) => event.event === "submitted"), "EVM submit must append prepared and submitted lifecycle events.");
+
+  const evmPoll = await pollTransaction(evmSubmitted.transaction.hash);
+  assert(evmPoll.transaction.lifecycleStatus === "confirmed" && evmPoll.terminalReached === true, "EVM poll-to-confirmed must mark the transaction confirmed.");
+  assert(listTransactionLifecycleEvents(evmPoll.transaction.hash).some((event) => event.event === "confirmed"), "EVM poll-to-confirmed must append a confirmed event.");
+  assert(evmPoll.transaction.terminalAt !== undefined, "EVM confirmed transactions must record a terminalAt timestamp.");
+
+  assert(isImmutableTerminal("confirmed"), "Confirmed lifecycle must be considered immutable terminal.");
+  assert(isImmutableTerminal("failed") && isImmutableTerminal("replaced") && isImmutableTerminal("expired") && isImmutableTerminal("user_rejected"), "All terminal lifecycle states must be flagged immutable.");
+
+  const evmIdempotent = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle",
+    decisionAction: "reduce_exposure",
+    asset: "MEME",
+    valueUsd: 25,
+    simulationStatus: "passed",
+    policyStatus: { allowed: true, violations: [] },
+    userApproved: true,
+    signedPayload: evmHash,
+    idempotencyKey: "idem_evm_success",
+  });
+  assert(evmIdempotent.outcome === "ignored_duplicate" && evmIdempotent.result.idempotent === true && evmIdempotent.result.reuseReason === "idempotency_key", "Duplicate EVM submit with same idempotency key must short-circuit without overwriting history.");
+
+  const evmDuplicateHash = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle_other",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmHash,
+  });
+  assert(evmDuplicateHash.outcome === "ignored_duplicate" && evmDuplicateHash.result.reuseReason === "duplicate_hash", "Duplicate EVM submit with same hash and different key must reject without overwriting.");
+  assert(listTransactionLifecycleEvents(evmHash).some((event) => event.event === "duplicate_rejected"), "Duplicate hash submit must append a duplicate_rejected lifecycle event.");
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "failed" });
+  const evmFailedHash = `0x${"2".repeat(64)}`;
+  const evmFailed = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle_failed",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmFailedHash,
+    idempotencyKey: "idem_evm_failed",
+  });
+  const evmFailedPoll = await pollTransaction(evmFailed.transaction.hash);
+  assert(evmFailedPoll.transaction.lifecycleStatus === "failed", "EVM poll-to-failed must mark the transaction failed.");
+  assert(evmFailedPoll.transaction.failureReason !== undefined, "Failed EVM transactions must record a failureReason.");
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "replaced" });
+  const evmReplacedHash = `0x${"3".repeat(64)}`;
+  const evmReplaced = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle_replaced",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmReplacedHash,
+    idempotencyKey: "idem_evm_replaced",
+  });
+  const evmReplacedPoll = await pollTransaction(evmReplaced.transaction.hash);
+  assert(evmReplacedPoll.transaction.lifecycleStatus === "replaced", "EVM poll-to-replaced must mark the transaction replaced.");
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "expired" });
+  const evmExpiredHash = `0x${"4".repeat(64)}`;
+  const evmExpired = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle_expired",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmExpiredHash,
+    idempotencyKey: "idem_evm_expired",
+  });
+  const evmExpiredPoll = await pollTransaction(evmExpired.transaction.hash);
+  assert(evmExpiredPoll.transaction.lifecycleStatus === "expired", "EVM poll-to-expired must mark the transaction expired.");
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "pending" });
+  const evmPendingHash = `0x${"5".repeat(64)}`;
+  const evmPending = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    decisionId: "decision_lifecycle_pending",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmPendingHash,
+    idempotencyKey: "idem_evm_pending",
+  });
+  const evmPendingPoll = await pollTransaction(evmPending.transaction.hash);
+  assert(evmPendingPoll.transaction.lifecycleStatus === "pending" && evmPendingPoll.terminalReached === false, "EVM poll-to-pending must remain non-terminal.");
+  const expiry = await expireTransactionIfStale(evmPendingPoll.transaction.hash, { ttlMs: 1, now: () => new Date(Date.now() + 60_000) });
+  assert(expiry.expired === true && expiry.transaction?.lifecycleStatus === "expired", "Stale pending transactions must transition to expired when TTL elapses.");
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "rejected" });
+  const evmRejected = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: `0x${"6".repeat(64)}`,
+    idempotencyKey: "idem_evm_rejected",
+  });
+  assert(evmRejected.outcome === "terminally_recorded", "EVM rejected submit must be persisted as a terminally_recorded submission_failed.");
+  assert(evmRejected.transaction.lifecycleStatus === "failed", "EVM rejected submit must persist the failed lifecycle, not leave the record at prepared.");
+  assert(evmRejected.transaction.failureReason?.includes("rejected") ?? false, "EVM rejected submit must record the rejected reason on the failed record.");
+  assert(listTransactionLifecycleEvents(evmRejected.transaction.hash).some((event) => event.event === "submission_failed"), "EVM rejected submit must append a submission_failed lifecycle event.");
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
+  // ---- Stellar lifecycle ----
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const stellarSubmitted = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarWallet,
+    sourceAccount: stellarWallet,
+    decisionId: "decision_stellar_success",
+    asset: "GOAT",
+    expectedEffects: [{ kind: "publish_risk", method: "publish_risk", contractAddress: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA" }],
+    userApproved: true,
+    signedPayload: stellarHash,
+    idempotencyKey: "idem_stellar_success",
+  });
+  assert(stellarSubmitted.outcome === "submitted", "Stellar submit must persist submitted lifecycle.");
+  assert(stellarSubmitted.transaction.explorerUrl?.includes("stellar.expert"), "Stellar submit must attach a stellar.expert explorer URL.");
+  const stellarConfirmed = await pollTransaction(stellarSubmitted.transaction.hash);
+  assert(stellarConfirmed.transaction.lifecycleStatus === "confirmed", "Stellar poll-to-confirmed must mark the transaction confirmed.");
+
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "failed" });
+  const stellarFailedHash = `${"b".repeat(64)}`;
+  const stellarFailed = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarWallet,
+    sourceAccount: stellarWallet,
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: stellarFailedHash,
+    idempotencyKey: "idem_stellar_failed",
+  });
+  const stellarFailedPoll = await pollTransaction(stellarFailed.transaction.hash);
+  assert(stellarFailedPoll.transaction.lifecycleStatus === "failed", "Stellar poll-to-failed must mark the transaction failed.");
+
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "replaced" });
+  const stellarReplacedHash = `${"c".repeat(64)}`;
+  const stellarReplaced = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarWallet,
+    sourceAccount: stellarWallet,
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: stellarReplacedHash,
+    idempotencyKey: "idem_stellar_replaced",
+  });
+  const stellarReplacedPoll = await pollTransaction(stellarReplaced.transaction.hash);
+  assert(stellarReplacedPoll.transaction.lifecycleStatus === "replaced", "Stellar poll-to-replaced must mark the transaction replaced.");
+
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "expired" });
+  const stellarExpiredHash = `${"d".repeat(64)}`;
+  const stellarExpired = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarWallet,
+    sourceAccount: stellarWallet,
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: stellarExpiredHash,
+    idempotencyKey: "idem_stellar_expired",
+  });
+  const stellarExpiredPoll = await pollTransaction(stellarExpired.transaction.hash);
+  assert(stellarExpiredPoll.transaction.lifecycleStatus === "expired", "Stellar poll-to-expired must mark the transaction expired.");
+
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "rejected" });
+  const stellarRejected = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarWallet,
+    sourceAccount: stellarWallet,
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: `${"e".repeat(64)}`,
+    idempotencyKey: "idem_stellar_rejected",
+  });
+  assert(stellarRejected.outcome === "terminally_recorded", "Stellar rejected submit must be persisted as a terminally_recorded submission_failed.");
+  assert(stellarRejected.transaction.lifecycleStatus === "failed", "Stellar rejected submit must persist the failed lifecycle, not leave the record at prepared.");
+  assert(stellarRejected.transaction.failureReason?.includes("rejected") ?? false, "Stellar rejected submit must record the rejected reason on the failed record.");
+  assert(listTransactionLifecycleEvents(stellarRejected.transaction.hash).some((event) => event.event === "submission_failed"), "Stellar rejected submit must append a submission_failed lifecycle event.");
+
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  clearStellarSimulator();
+
+  try {
+    await submitTransaction({
+      chainFamily: "evm",
+      network: "stellar-testnet",
+      walletAddress: stellarWallet,
+      sourceAccount: stellarWallet,
+      asset: "GOAT",
+      userApproved: true,
+      signedPayload: stellarWallet,
+    });
+    throw new Error("family/network mismatch should have thrown");
+  } catch (error) {
+    assert(error instanceof TransactionLifecycleError && error.code === "network_chain_family_mismatch", "Submit must reject network/family mismatches.");
+  }
+
+  // ---- submission_failed is a terminal persisted state, not a thrown error ----
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "rejected" });
+  const submissionFailedHash = `0x${"7".repeat(64)}`;
+  const submissionFailed = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: submissionFailedHash,
+    idempotencyKey: "idem_evm_submission_failed",
+  });
+  assert(submissionFailed.outcome === "terminally_recorded", "Rejected RPC submit must persist as terminally_recorded outcome.");
+  assert(submissionFailed.transaction.lifecycleStatus === "failed", "Submission rejection must persist the failed lifecycle, not leave the record at prepared.");
+  assert(submissionFailed.result.status === "failed", "Submission report must surface failed status to callers.");
+  assert(Boolean(submissionFailed.transaction.failureReason), "Failed submission must record a failureReason tied to the RPC rejection.");
+  assert(listTransactionLifecycleEvents(submissionFailed.transaction.hash).some((event) => event.event === "submission_failed"), "Failed submissions must append a submission_failed lifecycle event.");
+  assert(listTransactionLifecycleEvents(submissionFailed.transaction.hash).some((event) => event.event === "prepared"), "Failed submissions must still retain the prepared lifecycle event for audit.");
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
+  // ---- user_rejected is a real lifecycle path, not an orphan event ----
+  const userRejectedHash = `0x${"8".repeat(64)}`;
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const userRejectedPrep = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: userRejectedHash,
+    idempotencyKey: "idem_evm_user_rejected",
+  });
+  assert(userRejectedPrep.transaction.lifecycleStatus === "submitted", "User-rejected fixture requires a fresh submitted record.");
+  const userRejected = await recordUserRejection(userRejectedHash, { walletAddress: "0xabc", reason: "User clicked reject in wallet." });
+  assert(userRejected.lifecycleStatus === "user_rejected", "recordUserRejection must mark the transaction as user_rejected.");
+  assert(isImmutableTerminal(userRejected.lifecycleStatus as TransactionLifecycleStatus), "user_rejected must be flagged as immutable terminal.");
+  assert(Boolean(userRejected.failureReason), "user_rejected must record a human-readable failureReason.");
+  assert(listTransactionLifecycleEvents(userRejectedHash).some((event) => event.event === "user_rejected"), "user_rejected transactions must append a user_rejected lifecycle event.");
+
+  // Re-rejecting an already terminal transaction is a no-op
+  const reRejected = await recordUserRejection(userRejectedHash, { walletAddress: "0xabc" });
+  assert(reRejected.lifecycleStatus === "user_rejected", "Re-rejecting a terminal user_rejected transaction must remain terminal.");
+
+  // ---- prepareTransaction is idempotent across repeated POSTs with the same key ----
+  const prepared = prepareTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    decisionId: "decision_prepare_idempotent",
+    idempotencyKey: "idem_prepare_idempotent",
+  });
+  assert(!prepared.idempotent && prepared.created === true, "First prepare must create a new prepared record.");
+
+  const preparedAgain = prepareTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    decisionId: "decision_prepare_idempotent",
+    idempotencyKey: "idem_prepare_idempotent",
+  });
+  assert(preparedAgain.idempotent && preparedAgain.created === false, "Second prepare with the same idempotency key must be idempotent.");
+  assert(preparedAgain.transaction.hash === prepared.transaction.hash, "Idempotent prepare must return the same transaction record.");
+  assert(prepared.transaction.lifecycleStatus === "prepared", "Prepare must persist the prepared lifecycle.");
+  assert(listTransactionLifecycleEvents(prepared.transaction.hash).some((event) => event.event === "prepared"), "Prepared transactions must append a prepared lifecycle event.");
+
+  const prepareResponse = await prepareExecution(
+    new Request("http://localhost/api/execute/prepare", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: "0xabc",
+        chainFamily: "evm",
+        network: "GOAT Network",
+        decisionId: "decision_prepare_route",
+        asset: "MEME",
+        estimatedValueUsd: 50,
+        simulationStatus: "passed",
+        fromToken: "MEME",
+        toToken: "USDC",
+        percent: 10,
+        riskScore: 40,
+        idemKey: "idem_prepare_route",
+        idempotencyKey: "idem_prepare_route",
+      }),
+    }),
+  );
+  assert(prepareResponse.status === 200, "Prepare API must accept a valid input.");
+  const prepareJson = await prepareResponse.json();
+  assert(prepareJson.prepare?.created === true, "First prepare API call must create a new prepared record.");
+  assert(typeof prepareJson.prepare?.transaction?.hash === "string", "Prepare API must expose the prepared transaction hash.");
+  assert(prepareJson.lifecycle?.status === "prepared", "Prepare API lifecycle status must be prepared.");
+  assert(typeof prepareJson.lifecycle?.idempotencyKey === "string", "Prepare API response must include the idempotency key.");
+
+  const duplicatePrepareResponse = await prepareExecution(
+    new Request("http://localhost/api/execute/prepare", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: "0xabc",
+        chainFamily: "evm",
+        network: "GOAT Network",
+        decisionId: "decision_prepare_route",
+        asset: "MEME",
+        estimatedValueUsd: 50,
+        simulationStatus: "passed",
+        fromToken: "MEME",
+        toToken: "USDC",
+        percent: 10,
+        riskScore: 40,
+        idempotencyKey: "idem_prepare_route",
+      }),
+    }),
+  );
+  const duplicatePrepareJson = await duplicatePrepareResponse.json();
+  assert(duplicatePrepareResponse.status === 200, "Duplicate prepare must respond 200 (idempotent).");
+  assert(duplicatePrepareJson.prepare?.idempotent === true && duplicatePrepareJson.prepare?.created === false, "Duplicate prepare API call must be idempotent.");
+  assert(duplicatePrepareJson.prepare?.transaction?.hash === prepareJson.prepare?.transaction?.hash, "Duplicate prepare API call must reuse the prepared record.");
+
+  // ---- reject API persists user_rejected terminal state ----
+  const rejectHash = `0x${"a".repeat(63)}1`;
+  const rejectCreated = createTransactionRecord({
+    hash: rejectHash,
+    type: "approval",
+    asset: "MEME",
+    valueUsd: 0,
+    status: "submitted",
+    lifecycleStatus: "submitted",
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    userApproved: true,
+  });
+  assert(rejectCreated.lifecycleStatus === "submitted", "Rejected fixture requires an existing submitted record.");
+
+  const rejectResponse = await rejectExecution(
+    new Request("http://localhost/api/execute/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        txHash: rejectHash,
+        walletAddress: "0xabc",
+        reason: "User clicked reject in wallet.",
+        source: "wallet",
+      }),
+    }),
+  );
+  assert(rejectResponse.status === 200, "Reject API must record user_rejected for known hashes.");
+  const rejectJson = await rejectResponse.json();
+  assert(rejectJson.status === "user_rejected", "Reject API must expose user_rejected status.");
+  assert(getTransactionRecord(rejectHash)?.lifecycleStatus === "user_rejected", "Reject API must persist user_rejected terminal state in storage.");
+
+  const unknownRejectResponse = await rejectExecution(
+    new Request("http://localhost/api/execute/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        txHash: `0x${"b".repeat(63)}2`,
+        walletAddress: "0xabc",
+      }),
+    }),
+  );
+  assert(unknownRejectResponse.status === 404, "Reject API must reject unknown transaction hashes.");
+
+  const mismatchedRejectResponse = await rejectExecution(
+    new Request("http://localhost/api/execute/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        txHash: rejectHash,
+        walletAddress: "0xdef",
+        reason: "Mismatched wallet cannot reject.",
+      }),
+    }),
+  );
+  assert(mismatchedRejectResponse.status === 403, "Reject API must reject mismatched wallet addresses.");
+
+  // ---- confirm endpoint route surfaces pending verification when on-chain verifier has no terminal answer ----
+  // Use a fresh network with an explicit pending simulator so the test is deterministic.
+  configureEvmSimulator("evm", "ethereum", { pollOutcome: "pending" });
+  const confirmPendingHash = `0x${"c".repeat(63)}3`;
+  const confirmPending = await confirmExecution(
+    new Request("http://localhost/api/execute/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: "0xabc",
+        txHash: confirmPendingHash,
+        network: "ethereum",
+        userApproved: true,
+        action: "reduce_exposure",
+        asset: "MEME",
+        valueUsd: 25,
+        simulationStatus: "passed",
+        policyAllowed: true,
+      }),
+    }),
+  );
+  assert(confirmPending.status === 200, "Confirm API must record the externally broadcast hash and verify on-chain.");
+  const confirmPendingJson = await confirmPending.json();
+  assert(confirmPendingJson.pendingVerification === true, "Confirm must report pendingVerification when the on-chain verifier cannot confirm yet.");
+  assert(confirmPendingJson.transaction?.lifecycleStatus === "pending" || confirmPendingJson.transaction?.lifecycleStatus === "submitted", "Confirm must record a non-terminal lifecycle when verification is still pending.");
+  clearEvmSimulator();
+
+  // Append a manual user_rejected event and ensure new hash is flagged
+  appendLifecycleEventByName(`0x${"f".repeat(64)}`, "user_rejected", { reason: "User clicked reject in wallet." });
+  assert(listTransactionLifecycleEvents(`0x${"f".repeat(64)}`).some((event) => event.event === "user_rejected"), "Lifecycle event store must keep manual user_rejected events.");
+
+  // ---- EVM signed-payload submit exercises real payload path, not pre-hash shortcut ----
+  const evmSignedPayload = `0x${"f".repeat(300)}`;
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const evmSignedResult = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmSignedPayload,
+    idempotencyKey: "idem_evm_signed_payload",
+  });
+  assert(evmSignedResult.outcome === "submitted", "EVM signed-payload submit must produce a submitted lifecycle.");
+  assert(evmSignedResult.transaction.lifecycleStatus === "submitted", "EVM signed-payload submit must reach submitted status.");
+  const evmSignedHash = evmSignedResult.transaction.hash;
+  assert(listTransactionLifecycleEvents(evmSignedHash).some((event) => event.event === "prepared"), "EVM signed-payload submit must append a prepared lifecycle event.");
+  const evmSignedPoll = await pollTransaction(evmSignedHash);
+  assert(evmSignedPoll.transaction.lifecycleStatus === "confirmed", "EVM signed-payload transaction must confirm via poll.");
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
+  // ---- Stellar signed-payload submit exercises real payload path, not pre-hash shortcut ----
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const stellarSignedPayload = "AAAAAgAAAABh" + `${"a".repeat(100)}`;
+  const stellarSignedResult = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    sourceAccount: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: stellarSignedPayload,
+    idempotencyKey: "idem_stellar_signed_payload",
+  });
+  assert(stellarSignedResult.outcome === "submitted", "Stellar signed-payload submit must produce a submitted lifecycle.");
+  assert(stellarSignedResult.transaction.lifecycleStatus === "submitted", "Stellar signed-payload submit must reach submitted status.");
+  const stellarSignedHash = stellarSignedResult.transaction.hash;
+  const stellarSignedPoll = await pollTransaction(stellarSignedHash);
+  assert(stellarSignedPoll.transaction.lifecycleStatus === "confirmed", "Stellar signed-payload transaction must confirm via poll.");
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
+  // ---- Stellar terminal user_rejected E2E integration coverage ----
+  const stellarRejectedPayload = `${"a".repeat(63)}b`;
+  const stellarRejectedWallet = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const stellarRejectedPrep = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: stellarRejectedWallet,
+    sourceAccount: stellarRejectedWallet,
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: stellarRejectedPayload,
+    idempotencyKey: "idem_stellar_user_rejected_e2e",
+  });
+  assert(stellarRejectedPrep.transaction.lifecycleStatus === "submitted", "Stellar user_rejected fixture requires a fresh submitted record.");
+  const stellarRejectedHash = stellarRejectedPrep.transaction.hash;
+  const stellarRejectedLifecycle = await recordUserRejection(stellarRejectedHash, { walletAddress: stellarRejectedWallet, reason: "User clicked reject in Stellar wallet." });
+  assert(stellarRejectedLifecycle.lifecycleStatus === "user_rejected", "Stellar recordUserRejection must mark the transaction as user_rejected.");
+  assert(isImmutableTerminal(stellarRejectedLifecycle.lifecycleStatus as TransactionLifecycleStatus), "Stellar user_rejected must be flagged as immutable terminal.");
+  assert(listTransactionLifecycleEvents(stellarRejectedHash).some((event) => event.event === "user_rejected"), "Stellar user_rejected transactions must append a user_rejected lifecycle event.");
+
+  const stellarRejectApi = await rejectExecution(
+    new Request("http://localhost/api/execute/reject", {
+      method: "POST",
+      body: JSON.stringify({
+        txHash: stellarRejectedHash,
+        walletAddress: stellarRejectedWallet,
+        reason: "Stellar wallet UI cancelled.",
+        source: "wallet",
+        chainFamily: "stellar",
+        network: "stellar-testnet",
+      }),
+    }),
+  );
+  assert(stellarRejectApi.status === 200, "Reject API must accept Stellar user_rejected for known hashes.");
+  const stellarRejectJson = await stellarRejectApi.json();
+  assert(stellarRejectJson.status === "user_rejected", "Reject API response must surface user_rejected for Stellar hashes.");
+  assert(getTransactionRecord(stellarRejectedHash)?.lifecycleStatus === "user_rejected", "Reject API must persist user_rejected terminal state for Stellar hashes in storage.");
+  clearStellarSimulator();
+
+  const txMissing = (() => {
+    try {
+      const recorded = getTransactionRecord(`0x${"9".repeat(64)}`);
+      return recorded;
+    } catch {
+      return undefined;
+    }
+  })();
+  assert(txMissing === undefined, "Unknown hash must return no transaction record.");
+
+  // ---- API route level coverage ----
+  const submitResponse = await submitExecution(
+    new Request("http://localhost/api/execute/submit", {
+      method: "POST",
+      body: JSON.stringify({
+        chainFamily: "stellar",
+        network: "stellar-testnet",
+        walletAddress: stellarWallet,
+        signedPayload: `${"7".repeat(64)}`,
+        asset: "GOAT",
+        decisionId: "decision_route_stellar",
+        userApproved: true,
+        idempotencyKey: "idem_route_stellar",
+      }),
+    }),
+  );
+  assert(submitResponse.status === 200, "Stellar submit API must accept valid Stellar payloads.");
+  const submitJson = await submitResponse.json();
+  assert(submitJson.transaction.chainFamily === "stellar", "Submit API must persist chain family.");
+
+  const stellarHash2 = `${"7".repeat(64)}`;
+  const stellarHash2Lower = stellarHash2.toLowerCase();
+  const wrongFamilyResponse = await submitExecution(
+    new Request("http://localhost/api/execute/submit", {
+      method: "POST",
+      body: JSON.stringify({
+        chainFamily: "evm",
+        network: "stellar-testnet",
+        walletAddress: stellarWallet,
+        signedPayload: stellarHash2Lower,
+        asset: "GOAT",
+        userApproved: true,
+        idempotencyKey: "idem_route_wrong_family",
+      }),
+    }),
+  );
+  assert(wrongFamilyResponse.status === 400, "Submit must reject when chain family does not match network.");
+
+  const wrongWalletFormat = await submitExecution(
+    new Request("http://localhost/api/execute/submit", {
+      method: "POST",
+      body: JSON.stringify({
+        chainFamily: "evm",
+        network: "GOAT Network",
+        walletAddress: "not-an-address",
+        signedPayload: `0x${"a".repeat(64)}`,
+        asset: "MEME",
+        userApproved: true,
+      }),
+    }),
+  );
+  assert(wrongWalletFormat.status === 400, "Submit must reject invalid wallets.");
+
+  const evmMismatchedSourceWallet = `0x${"a".repeat(40)}`;
+  const evmMismatchedSourceOther = `0x${"d".repeat(40)}`;
+  const evmMismatchedSource = await submitExecution(
+    new Request("http://localhost/api/execute/submit", {
+      method: "POST",
+      body: JSON.stringify({
+        chainFamily: "evm",
+        network: "GOAT Network",
+        walletAddress: evmMismatchedSourceWallet,
+        sourceAccount: evmMismatchedSourceOther,
+        signedPayload: `0x${"b".repeat(64)}`,
+        asset: "MEME",
+        userApproved: true,
+      }),
+    }),
+  );
+  assert(evmMismatchedSource.status === 403, "Submit must reject EVM source/wallet mismatches.");
+
+  // Confirm API chain-family validation
+  const stellarConfirmCollision = await confirmExecution(
+    new Request("http://localhost/api/execute/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: stellarWallet,
+        chainFamily: "stellar",
+        txHash: stellarHash2,
+        userApproved: true,
+      }),
+    }),
+  );
+  assert(stellarConfirmCollision.status === 200, "Confirm must accept a Stellar hash when chainFamily=stellar.");
+
+  const evmConfirmCollision = await confirmExecution(
+    new Request("http://localhost/api/execute/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: stellarWallet,
+        chainFamily: "evm",
+        txHash: stellarHash2,
+        userApproved: true,
+      }),
+    }),
+  );
+  assert(evmConfirmCollision.status === 400, "Confirm must reject a Stellar hash when chainFamily=evm.");
+
+  // Poll endpoint
+  const pollRoute = await getTransactionLifecycle(
+    new NextRequest(`http://localhost/api/execute/transactions/${evmSubmitted.transaction.hash}`, { method: "GET" }),
+    { params: Promise.resolve({ hash: evmSubmitted.transaction.hash }) },
+  );
+  assert(pollRoute.status === 200, "Status endpoint must accept known hashes.");
+  const pollJson = await pollRoute.json();
+  assert(Array.isArray(pollJson.events) && pollJson.events.length > 0, "Status endpoint must include lifecycle events.");
+  assert(pollJson.transaction.lifecycleStatus === "confirmed", "Status endpoint must reflect the latest lifecycle state.");
+
+  const missingRoute = await getTransactionLifecycle(
+    new NextRequest(`http://localhost/api/execute/transactions/${"9".repeat(64)}`, { method: "GET" }),
+    { params: Promise.resolve({ hash: "9".repeat(64) }) },
+  );
+  assert(missingRoute.status === 404, "Status endpoint must return 404 for unknown hashes.");
+
+  const richHistory = await listTransactionHistory(new NextRequest(`http://localhost/api/history/transactions?walletAddress=0xabc`, { method: "GET" }));
+  assert(richHistory.status === 200, "History endpoint must respond 200.");
+  const historyJson = await richHistory.json();
+  assert(Array.isArray(historyJson) && historyJson.length > 0, "History endpoint must return enriched records.");
+  assert(historyJson.every((record: { events?: unknown[] }) => Array.isArray(record.events)), "History records must include their lifecycle events.");
+  assert(historyJson.every((record: { explorerUrl?: string }) => typeof record.explorerUrl === "string"), "History records must include an explorer URL.");
+
+  // Storage invariants
+  const lookupByHash = getTransactionRecord(evmSubmitted.transaction.hash);
+  assert(lookupByHash?.hash === evmSubmitted.transaction.hash, "Storage must retrieve transaction records by hash.");
+  const lookupByKey = getTransactionRecordByIdempotencyKey("0xabc", "idem_evm_success");
+  assert(lookupByKey?.idempotencyKey === "idem_evm_success", "Storage must look up records by idempotency key.");
+  assert(updateTransactionRecord(evmSubmitted.transaction.hash, { valueUsd: 999 })?.valueUsd === 999, "Update should mutate tracking fields without touching status.");
+
+  clearEvmSimulator();
+}
+
 async function runProviderReliabilityChecks() {
   assert(getProviderTimeoutBudget("portfolio") === 8_000, "Portfolio provider timeout budget must be 8s.");
   assert(getProviderTimeoutBudget("onchain") === 12_000, "Onchain provider timeout budget must be 12s.");
@@ -1231,6 +1948,7 @@ async function main() {
   await runSocialChecks();
   await runDecisionChecks();
   await runExecutionChecks();
+  await runTransactionLifecycleChecks();
   await runReadinessChecks();
   await runProviderReliabilityChecks();
   runCachePolicyChecks();

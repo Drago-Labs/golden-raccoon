@@ -6,10 +6,14 @@ import type {
   AlertDeliveryChannel,
   AlertObservation,
   AlertRule,
+  ChainFamily,
   DiscoveryAlert,
   RecommendationRecord,
   StorageCounts,
   StorageHealth,
+  TransactionLifecycleEvent,
+  TransactionLifecycleEventName,
+  TransactionLifecycleStatus,
   TransactionRecord,
   UserApprovalRecord,
   UserRule,
@@ -23,6 +27,7 @@ import type {
   RiskLevel,
 } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
+import { isTransactionHashForChain } from "@/lib/chainIdentity";
 import { validateAgentResult } from "@/server/agents/schema";
 import {
   getPostgresStorageAdapter,
@@ -32,7 +37,15 @@ import {
   mirrorAlertRuleWrite,
   mirrorAlertUpdate,
   mirrorAlertWrite,
+  mirrorTransactionLifecycleEvent,
+  mirrorTransactionRecord,
 } from "@/server/storage/postgresAdapter";
+export {
+  authorizeAutoMode,
+  closeAutoModeAuthorization,
+  getAutoModeSnapshot,
+  saveAutoModePolicy,
+} from "@/server/autoMode/storage";
 
 /**
  * Hydration gate. When the Postgres adapter has rows on disk, this
@@ -52,6 +65,7 @@ import {
   __goldenRaccoonAgentRuns?: AgentRunRecord[];
   __goldenRaccoonRecommendations?: RecommendationRecord[];
   __goldenRaccoonTransactions?: TransactionRecord[];
+  __goldenRaccoonTransactionEvents?: TransactionLifecycleEvent[];
   __goldenRaccoonApprovals?: UserApprovalRecord[];
   __goldenRaccoonUserRules?: UserRule[];
   __goldenRaccoonX402PaymentReceipts?: X402PaymentReceipt[];
@@ -82,13 +96,21 @@ export function ensureStorageReady(): Promise<{ tried: boolean; hydrated: number
     }
 
     try {
-      const hydrate = await adapter.hydrateAlertTables({
-        rules: getAlertRulesStore(),
-        observations: getAlertObservationsStore(),
-        alerts: getAlertsStore(),
-        deliveries: getAlertDeliveriesStore(),
-      });
-      const result = { tried: true, hydrated: hydrate.hydrated, skipped: hydrate.skipped, detail: "ok" };
+      const [alertHydrate, txHydrate] = await Promise.all([
+        adapter.hydrateAlertTables({
+          rules: getAlertRulesStore(),
+          observations: getAlertObservationsStore(),
+          alerts: getAlertsStore(),
+          deliveries: getAlertDeliveriesStore(),
+        }),
+        adapter.hydrateTransactionTables({
+          transactions: getTransactions(),
+          events: getTransactionEvents(),
+        }),
+      ]);
+      const totalHydrated = alertHydrate.hydrated + txHydrate.hydrated;
+      const totalSkipped = alertHydrate.skipped + txHydrate.skipped;
+      const result = { tried: true, hydrated: totalHydrated, skipped: totalSkipped, detail: "ok" };
       store.__goldenRaccoonLastHydration = { ...result, at: new Date().toISOString() };
 
       return result;
@@ -141,6 +163,31 @@ function mirrorAlertDeliveryUpdateDeferred(input: AlertDelivery) {
   mirrorAlertDeliveryUpdate(input);
 }
 
+async function persistTransactionRecord(record: TransactionRecord) {
+  if (!getPostgresStorageAdapter().isConfigured()) return;
+  try { await mirrorTransactionRecord(record); } catch { /* best-effort */ }
+}
+
+async function persistTransactionUpdate(hash: string, updates: Partial<TransactionRecord>) {
+  if (!getPostgresStorageAdapter().isConfigured()) return;
+  try {
+    const existing = getTransactions().find((r) => r.hash.toLowerCase() === hash.toLowerCase());
+    if (!existing) return;
+    const merged: TransactionRecord = { ...existing, ...updates, hash: existing.hash, createdAt: existing.createdAt };
+    await mirrorTransactionRecord(merged);
+  } catch { /* best-effort */ }
+}
+
+async function persistTransactionEvent(event: TransactionLifecycleEvent) {
+  if (!getPostgresStorageAdapter().isConfigured()) return;
+  try { await mirrorTransactionLifecycleEvent(event); } catch { /* best-effort */ }
+}
+
+function getTransactionEvents() {
+  memoryStore.__goldenRaccoonTransactionEvents ??= [];
+  return memoryStore.__goldenRaccoonTransactionEvents;
+}
+
 type CreateAgentRunInput = {
   walletAddress: string;
   mode?: AgentRunRecord["mode"];
@@ -157,8 +204,11 @@ export const storageSchemaContract = {
     "agent_results",
     "recommendations",
     "user_rules",
+    "auto_mode_policies",
+    "auto_mode_authorization_events",
     "approvals",
     "transactions",
+    "transaction_lifecycle_events",
     "x402_payment_receipts",
     "token_identities",
     "source_snapshots",
@@ -177,7 +227,12 @@ export const storageSchemaContract = {
     "listRecommendationRecords",
     "createRecommendationRecord",
     "listTransactionRecords",
+    "getTransactionRecord",
+    "getTransactionRecordByIdempotencyKey",
     "createTransactionRecord",
+    "updateTransactionRecord",
+    "listTransactionLifecycleEvents",
+    "createTransactionLifecycleEvent",
     "listApprovalRecords",
     "createApprovalRecord",
     "listX402PaymentReceipts",
@@ -185,6 +240,10 @@ export const storageSchemaContract = {
     "createX402PaymentReceipt",
     "getUserRuleRecord",
     "upsertUserRuleRecord",
+    "getAutoModeSnapshot",
+    "saveAutoModePolicy",
+    "authorizeAutoMode",
+    "closeAutoModeAuthorization",
     "listAlertRules",
     "getAlertRule",
     "upsertAlertRule",
@@ -669,23 +728,110 @@ export function listTransactionRecords(walletAddress?: string) {
 }
 
 export function getTransactionRecord(hash: string) {
-  return getTransactions().find((record) => record.hash.toLowerCase() === hash.toLowerCase());
+  const family: ChainFamily = isTransactionHashForChain(hash, "evm")
+    ? "evm"
+    : isTransactionHashForChain(hash, "stellar")
+      ? "stellar"
+      : "evm";
+  return getTransactionRecordForFamily(hash, family);
 }
 
-export function createTransactionRecord(input: Omit<TransactionRecord, "createdAt"> & { createdAt?: string }) {
-  const existingIndex = getTransactions().findIndex((record) => record.hash.toLowerCase() === input.hash.toLowerCase());
+export function getTransactionRecordForFamily(hash: string, family: ChainFamily) {
+  const normalized = canonicalizeTransactionHash(hash, family);
+  return getTransactions().find((record) => canonicalizeTransactionHash(record.hash, record.chainFamily) === normalized);
+}
+
+export function getTransactionRecordByIdempotencyKey(walletAddress: string, idempotencyKey: string) {
+  if (!idempotencyKey) return undefined;
+  const normalizedWallet = walletAddress.trim().toLowerCase();
+  return getTransactions().find((record) =>
+    record.idempotencyKey === idempotencyKey && (record.walletAddress ?? "").trim().toLowerCase() === normalizedWallet,
+  );
+}
+
+export function createTransactionRecord(input: Omit<TransactionRecord, "createdAt" | "lifecycleStatus"> & { createdAt?: string; lifecycleStatus?: TransactionLifecycleStatus }) {
+  const existing = getTransactionRecord(input.hash);
+
+  if (existing) {
+    return existing;
+  }
+
+  const lifecycleStatus: TransactionLifecycleStatus = input.lifecycleStatus ?? input.status ?? "prepared";
   const record: TransactionRecord = {
     ...input,
+    lifecycleStatus,
+    status: lifecycleStatus,
     createdAt: input.createdAt ?? new Date().toISOString(),
   };
 
-  if (existingIndex >= 0) {
-    getTransactions()[existingIndex] = record;
-  } else {
-    getTransactions().unshift(record);
-  }
+  getTransactions().unshift(record);
+  persistTransactionRecord(record);
 
   return record;
+}
+
+export function updateTransactionRecord(hash: string, updates: Partial<Omit<TransactionRecord, "hash" | "createdAt">> & { status?: TransactionLifecycleStatus }) {
+  const list = getTransactions();
+  const existingIndex = list.findIndex((record) => record.hash.toLowerCase() === hash.toLowerCase());
+
+  if (existingIndex < 0) {
+    return undefined;
+  }
+
+  const previous = list[existingIndex];
+  const nextStatus: TransactionLifecycleStatus = updates.status ?? updates.lifecycleStatus ?? previous.lifecycleStatus;
+  const merged: TransactionRecord = {
+    ...previous,
+    ...updates,
+    hash: previous.hash,
+    createdAt: previous.createdAt,
+    lifecycleStatus: nextStatus,
+    status: nextStatus,
+  };
+
+  list[existingIndex] = merged;
+  persistTransactionUpdate(hash, updates);
+
+  return merged;
+}
+
+export function listTransactionLifecycleEvents(hash: string) {
+  const normalized = hash.trim().toLowerCase();
+  return getTransactionEvents()
+    .filter((event) => event.hash.toLowerCase() === normalized)
+    .sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime());
+}
+
+export function createTransactionLifecycleEvent(input: Omit<TransactionLifecycleEvent, "id" | "occurredAt"> & { occurredAt?: string }) {
+  const event: TransactionLifecycleEvent = {
+    id: createRecordId("tx_event"),
+    occurredAt: input.occurredAt ?? new Date().toISOString(),
+    ...input,
+  };
+
+  getTransactionEvents().unshift(event);
+  persistTransactionEvent(event);
+
+  return event;
+}
+
+export function canonicalizeTransactionHash(hash: string, family: ChainFamily = "evm") {
+  const trimmed = hash.trim();
+  return family === "stellar" ? trimmed.toUpperCase() : trimmed.toLowerCase();
+}
+
+export function appendLifecycleEventByName(hash: string, event: TransactionLifecycleEventName, detail?: Record<string, unknown>, provider?: { label: string; url?: string }) {
+  return createTransactionLifecycleEvent({
+    hash,
+    event,
+    detail,
+    provider: provider?.label,
+    providerUrl: provider?.url,
+  });
+}
+
+export function isImmutableTerminal(status: TransactionLifecycleStatus) {
+  return status === "confirmed" || status === "failed" || status === "replaced" || status === "expired" || status === "user_rejected";
 }
 
 export function listApprovalRecords(walletAddress?: string) {
@@ -982,4 +1128,12 @@ export function acknowledgeDiscoveryAlert(id: string) {
   alert.acknowledged = true;
 
   return alert;
+}
+
+export function removeTransactionRecordByHash(hash: string): boolean {
+  const records = getTransactions();
+  const index = records.findIndex((r) => r.hash.toLowerCase() === hash.toLowerCase());
+  if (index < 0) return false;
+  records.splice(index, 1);
+  return true;
 }
