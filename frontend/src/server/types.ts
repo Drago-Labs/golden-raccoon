@@ -630,13 +630,14 @@ export type DiscoveryScanResult = {
 export type WatchlistEntryInput = {
   walletAddress: string;
   chain: string;
+  network?: string;
   contractAddress?: string;
   pairAddress?: string;
   symbol?: string;
   tokenName?: string;
   assetKey?: string;
   issuer?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   source: DiscoveryCandidate["source"] | "manual_watchlist";
   note?: string;
 };
@@ -646,13 +647,14 @@ export type WatchlistEntry = {
   walletAddress: string;
   identityKey: string;
   chain: string;
+  network?: string;
   contractAddress?: string;
   pairAddress?: string;
   symbol?: string;
   tokenName?: string;
   assetKey?: string;
   issuer?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   source: WatchlistEntryInput["source"];
   note?: string;
   createdAt: string;
@@ -831,6 +833,8 @@ export type TransactionRecord = {
   policyStatus?: TransactionPreview["policyStatus"];
   expectedEffects?: TransactionExpectedEffect[];
   idempotencyKey?: string;
+  /** Pre-built EVM calldata (0x-prefixed hex) carried from prepare to approve */
+  calldata?: string;
   explorerUrl?: string;
   failureReason?: string;
   stellarDetails?: {
@@ -1116,4 +1120,98 @@ export type AlertDelivery = {
   attemptCount: number;
   createdAt: string;
   sentAt?: string;
+};
+
+// ──────────────────────────────────────────────
+// Explicit wallet approval flow types (V2-051+)
+// ──────────────────────────────────────────────
+
+/**
+ * Discriminated prepared-transaction payload for EVM calldata vs Stellar XDR.
+ * The server rebuilds and validates the exact payload from the approved quote
+ * and simulation before returning it to the client for wallet signing.
+ */
+export type EvmPreparedTransactionPayload = {
+  chainFamily: "evm";
+  /** Target contract address */
+  to: string;
+  /** Encoded calldata (0x-prefixed hex) */
+  data: string;
+  /** Value in wei as decimal string */
+  value: string;
+  /** EIP-155 chain id */
+  chainId: number;
+  /** Gas limit (optional — wallet estimates if absent) */
+  gas?: string;
+  /** Gas price in wei (optional — wallet estimates if absent) */
+  gasPrice?: string;
+  /** Human-readable method name for display */
+  method?: string;
+  /** Decoded human-readable parameters for display */
+  displayParams?: Record<string, unknown>;
+};
+
+export type StellarPreparedTransactionPayload = {
+  chainFamily: "stellar";
+  /** Unsigned base64 XDR envelope to be signed by Stellar Wallets Kit */
+  xdr: string;
+  networkPassphrase: string;
+  sourceAccount: string;
+  /** Decoded operations for display */
+  operations: Array<{
+    type: string;
+    asset?: string;
+    amount?: string;
+    destination?: string;
+    contractId?: string;
+    method?: string;
+  }>;
+  /** Fee in stroops (optional — wallet estimates if absent) */
+  fee?: number;
+  /** Sequence number for the transaction */
+  sequence?: string;
+  /** Time bounds for the transaction */
+  timeBounds?: {
+    minTime?: number;
+    maxTime?: number;
+  };
+  /** Human-readable method name for display */
+  method?: string;
+  /** Decoded human-readable parameters for display */
+  displayParams?: Record<string, unknown>;
+};
+
+export type PreparedTransactionPayload = EvmPreparedTransactionPayload | StellarPreparedTransactionPayload;
+
+/**
+ * Result of the approval validation step.
+ * The server validates the prepared transaction and returns the payload
+ * that the client should send to the user's wallet for signing.
+ */
+export type ApprovalValidationResult = {
+  /** Whether the approval is allowed */
+  allowed: boolean;
+  /** Reason if blocked */
+  blockedReason?: string;
+  /** The typed payload for wallet signing */
+  payload?: PreparedTransactionPayload;
+  /** Wallet mismatch info */
+  walletOk: boolean;
+  /** Network mismatch info */
+  networkOk: boolean;
+  /** Whether the plan has expired */
+  expired: boolean;
+  /** Whether the action is safe to sign */
+  actionSafe: boolean;
+};
+
+/**
+ * Input for the approve API endpoint.
+ */
+export type ApproveTransactionInput = {
+  idempotencyKey: string;
+  walletAddress: string;
+  chainFamily: ChainFamily;
+  network: string;
+  sourceAccount?: string;
 };

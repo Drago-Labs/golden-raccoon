@@ -66,6 +66,8 @@ export type PrepareTransactionInput = {
   simulationStatus?: NonNullable<TransactionRecord["simulationStatus"]>;
   policyStatus?: NonNullable<TransactionRecord["policyStatus"]>;
   idempotencyKey: string;
+  /** Pre-built EVM calldata (0x-prefixed hex) or Stellar envelope XDR (base64) */
+  rawPayload?: string;
 };
 
 export type PrepareTransactionResult = {
@@ -202,6 +204,10 @@ export function prepareTransaction(input: PrepareTransactionInput): PrepareTrans
     expectedEffects: input.expectedEffects,
     idempotencyKey: input.idempotencyKey,
     explorerUrl: undefined,
+    calldata: input.rawPayload,
+    stellarDetails: input.rawPayload && input.chainFamily === "stellar"
+      ? { envelopeXdr: input.rawPayload }
+      : undefined,
   });
 
   storage.appendEvent(record.hash, "prepared", {
