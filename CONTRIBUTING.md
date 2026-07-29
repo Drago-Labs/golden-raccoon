@@ -44,3 +44,21 @@ RUSTC="$(rustup which rustc)" stellar contract build --manifest-path soroban/Car
 ```
 
 Never commit a Stellar secret key, signed XDR, provider credential, or production wallet seed. User transactions must be signed only by the connected wallet.
+
+## Accessibility
+
+Golden Raccoon targets WCAG 2.2 AA across core flows (scan, wallet, risk
+report, strategy, execution, history, operations, Soroban publication). When
+changing UI:
+
+- Run `npm run test:a11y` (included in `npm run quality:gate`) before
+  opening a PR. It statically checks for skip links, focus-visible styles,
+  reduced-motion support, non-color-only risk indicators, and required
+  `docs/A11Y_AUDIT.md` sections.
+- Prefer the shared helpers in `frontend/src/components/a11y/` (`LiveRegion`,
+  `VisuallyHidden`, `StatusBadge`) instead of ad hoc status text or
+  color-only indicators.
+- Update `docs/A11Y_AUDIT.md` when you fix or knowingly defer an
+  accessibility issue, and complete its manual audit checklist (keyboard,
+  screen reader, contrast, 200% zoom, mobile reflow, reduced motion) for any
+  release that touches UI.
