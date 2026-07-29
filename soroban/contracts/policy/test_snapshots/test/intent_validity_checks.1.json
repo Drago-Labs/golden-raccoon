@@ -244,6 +244,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "slippage_bps"
+                    },
+                    "val": {
+                      "u32": 50
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "target_token"
                     },
                     "val": {

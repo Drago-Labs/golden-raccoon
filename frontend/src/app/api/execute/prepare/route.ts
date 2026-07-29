@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import type { SimulationResultDetail } from "@/server/types";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { buildExecutionPreviewFromPortfolio } from "@/server/agents/execution";
 import { getPortfolioSnapshot } from "@/server/portfolio/getPortfolio";
@@ -100,7 +101,31 @@ export async function POST(request: Request) {
 
   const { portfolio } = await getPortfolioSnapshot(parsed.data.walletAddress);
   const rules = getUserRuleRecord(parsed.data.walletAddress ?? portfolio.walletAddress);
-  const preview = buildExecutionPreviewFromPortfolio(portfolio, { ...parsed.data, rules });
+
+  const normalizedSimulation: SimulationResultDetail | undefined = parsed.data.simulation
+    ? {
+        provider: parsed.data.simulation.provider ?? "not_required",
+        status: parsed.data.simulation.status ?? "pending",
+        checks: parsed.data.simulation.checks ?? [],
+        detail: parsed.data.simulation.detail ?? "",
+        simulatedAt: parsed.data.simulation.simulatedAt,
+        blockNumber: parsed.data.simulation.blockNumber,
+        ledgerSeq: parsed.data.simulation.ledgerSeq,
+        quoteExpiry: parsed.data.simulation.quoteExpiry,
+        calldataHash: parsed.data.simulation.calldataHash,
+        fromAmount: parsed.data.simulation.fromAmount,
+        route: parsed.data.simulation.route,
+        slippageBps: parsed.data.simulation.slippageBps,
+        sequenceNumber: parsed.data.simulation.sequenceNumber,
+        fee: parsed.data.simulation.fee,
+        balanceChanges: parsed.data.simulation.balanceChanges,
+        allowanceRisk: parsed.data.simulation.allowanceRisk,
+        trustlineRisk: parsed.data.simulation.trustlineRisk,
+        chainFamily: parsed.data.simulation.chainFamily,
+      }
+    : undefined;
+
+  const preview = buildExecutionPreviewFromPortfolio(portfolio, { ...parsed.data, simulation: normalizedSimulation, rules });
 
   return withCacheHeaders(NextResponse.json(preview), "execution");
 }

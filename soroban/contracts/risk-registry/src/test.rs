@@ -1,7 +1,10 @@
 extern crate std;
 
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Ledger}, vec, Address, BytesN, Env, String, Symbol};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    vec, Address, BytesN, Env, String, Symbol,
+};
 
 fn setup() -> (Env, RiskRegistryClient<'static>, Address, Address) {
     let env = Env::default();
@@ -50,10 +53,59 @@ fn rejects_unauthorized_invalid_and_stale_reports() {
     let verdict = Symbol::new(&env, "watch");
     let uri = String::from_str(&env, "https://example.invalid/report");
 
-    assert_eq!(client.try_publish_risk(&unknown, &asset_id, &network, &label, &10, &verdict, &report_hash, &uri, &1_700_000_000), Err(Ok(RegistryError::UnauthorizedPublisher)));
-    assert_eq!(client.try_publish_risk(&publisher, &asset_id, &network, &label, &101, &verdict, &report_hash, &uri, &1_700_000_000), Err(Ok(RegistryError::InvalidScore)));
-    client.publish_risk(&publisher, &asset_id, &network, &label, &10, &verdict, &report_hash, &uri, &1_700_000_000);
-    assert_eq!(client.try_publish_risk(&publisher, &asset_id, &network, &label, &11, &verdict, &report_hash, &uri, &1_700_000_000), Err(Ok(RegistryError::StaleReport)));
+    assert_eq!(
+        client.try_publish_risk(
+            &unknown,
+            &asset_id,
+            &network,
+            &label,
+            &10,
+            &verdict,
+            &report_hash,
+            &uri,
+            &1_700_000_000
+        ),
+        Err(Ok(RegistryError::UnauthorizedPublisher))
+    );
+    assert_eq!(
+        client.try_publish_risk(
+            &publisher,
+            &asset_id,
+            &network,
+            &label,
+            &101,
+            &verdict,
+            &report_hash,
+            &uri,
+            &1_700_000_000
+        ),
+        Err(Ok(RegistryError::InvalidScore))
+    );
+    client.publish_risk(
+        &publisher,
+        &asset_id,
+        &network,
+        &label,
+        &10,
+        &verdict,
+        &report_hash,
+        &uri,
+        &1_700_000_000,
+    );
+    assert_eq!(
+        client.try_publish_risk(
+            &publisher,
+            &asset_id,
+            &network,
+            &label,
+            &11,
+            &verdict,
+            &report_hash,
+            &uri,
+            &1_700_000_000
+        ),
+        Err(Ok(RegistryError::StaleReport))
+    );
 }
 
 #[test]

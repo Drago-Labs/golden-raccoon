@@ -1,8 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype,
-    panic_with_error, xdr::ToXdr, Address, Bytes, BytesN, Env, String, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error,
+    xdr::ToXdr, Address, Bytes, BytesN, Env, String, Vec,
 };
 
 const INSTANCE_TTL_THRESHOLD: u32 = 30 * 24 * 60 * 60 / 5;
@@ -54,6 +54,7 @@ pub struct Intent {
     pub policy_commitment: BytesN<32>,
     pub target_token: Address,
     pub amount: i128,
+    pub slippage_bps: u32,
     pub nonce: u64,
     pub expiry: u64,
     pub executed: bool,
@@ -148,44 +149,75 @@ pub enum PolicyError {
     IntentExpired = 18,
     InvalidSlippage = 19,
     AlreadyAllowed = 20,
+    IntentAlreadyExists = 21,
+    DecisionLimitExceeded = 22,
 }
 
 #[contract]
 pub struct PolicyContract;
 
 fn bump_instance(env: &Env) {
-    env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
 }
 
 fn extend_entry(env: &Env, key: &DataKey) {
-    env.storage().persistent().extend_ttl(key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND_TO);
 }
 
 fn require_not_paused(env: &Env) {
-    if env.storage().instance().get::<DataKey, bool>(&DataKey::Paused).unwrap_or(false) {
+    if env
+        .storage()
+        .instance()
+        .get::<DataKey, bool>(&DataKey::Paused)
+        .unwrap_or(false)
+    {
         panic_with_error!(env, PolicyError::Paused);
     }
 }
 
 fn require_owner(env: &Env) {
     let owner: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
-    if env.current_contract_address() != owner {
-        owner.require_auth();
-    }
+    owner.require_auth();
 }
 
-
+fn require_owner_or_emergency(env: &Env, caller: &Address) {
+    let owner: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
+    let emergency: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::EmergencyAdmin)
+        .unwrap();
+    if *caller != owner && *caller != emergency {
+        panic_with_error!(env, PolicyError::Unauthorized);
+    }
+    caller.require_auth();
+}
 
 fn require_agent(env: &Env) {
     let agent: Address = env.storage().instance().get(&DataKey::Agent).unwrap();
     agent.require_auth();
 }
 
-fn hash_policy_decision(env: &Env, user: &Address, agent: &Address, max_tx_value: i128, max_slippage: u32, nonce: u64, expiry: u64) -> BytesN<32> {
+fn hash_policy_decision(
+    env: &Env,
+    user: &Address,
+    agent: &Address,
+    max_tx_value: i128,
+    max_slippage: u32,
+    nonce: u64,
+    expiry: u64,
+) -> BytesN<32> {
     let mut buf = Bytes::new(env);
     buf.append(&Bytes::from_slice(env, DOMAIN_SEPARATOR.as_bytes()));
     buf.append(&Bytes::from_slice(env, b"POLICY_DECISION"));
-    buf.append(&Bytes::from_slice(env, &env.ledger().sequence().to_be_bytes()));
+    buf.append(&Bytes::from_slice(
+        env,
+        &env.ledger().sequence().to_be_bytes(),
+    ));
     let user_bytes: Bytes = env.crypto().keccak256(&user.to_xdr(env)).into();
     buf.append(&user_bytes);
     let agent_bytes: Bytes = env.crypto().keccak256(&agent.to_xdr(env)).into();
@@ -197,11 +229,21 @@ fn hash_policy_decision(env: &Env, user: &Address, agent: &Address, max_tx_value
     env.crypto().keccak256(&buf).into()
 }
 
-fn hash_intent(env: &Env, policy_commitment: &BytesN<32>, target_token: &Address, amount: i128, nonce: u64, expiry: u64) -> BytesN<32> {
+fn hash_intent(
+    env: &Env,
+    policy_commitment: &BytesN<32>,
+    target_token: &Address,
+    amount: i128,
+    nonce: u64,
+    expiry: u64,
+) -> BytesN<32> {
     let mut buf = Bytes::new(env);
     buf.append(&Bytes::from_slice(env, DOMAIN_SEPARATOR.as_bytes()));
     buf.append(&Bytes::from_slice(env, b"POLICY_INTENT"));
-    buf.append(&Bytes::from_slice(env, &env.ledger().sequence().to_be_bytes()));
+    buf.append(&Bytes::from_slice(
+        env,
+        &env.ledger().sequence().to_be_bytes(),
+    ));
     buf.append(&policy_commitment.clone().into());
     let token_bytes: Bytes = env.crypto().keccak256(&target_token.to_xdr(env)).into();
     buf.append(&token_bytes);
@@ -219,18 +261,28 @@ impl PolicyContract {
         }
         owner.require_auth();
         env.storage().instance().set(&DataKey::Owner, &owner);
-        env.storage().instance().set(&DataKey::EmergencyAdmin, &emergency_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::EmergencyAdmin, &emergency_admin);
         env.storage().instance().set(&DataKey::Agent, &agent);
         env.storage().instance().set(&DataKey::Paused, &false);
-        env.storage().instance().set(&DataKey::MaxTransactionValue, &0i128);
-        env.storage().instance().set(&DataKey::MaxSlippageBps, &100u32);
-        env.storage().instance().set(&DataKey::MaxDailySpend, &0i128);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxTransactionValue, &0i128);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxSlippageBps, &100u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxDailySpend, &0i128);
         bump_instance(&env);
     }
 
     pub fn set_emergency_admin(env: Env, admin: Address) {
         require_owner(&env);
-        env.storage().instance().set(&DataKey::EmergencyAdmin, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::EmergencyAdmin, &admin);
         bump_instance(&env);
     }
 
@@ -245,70 +297,107 @@ impl PolicyContract {
         if max_slippage_bps > 10_000 {
             panic_with_error!(&env, PolicyError::SlippageTooHigh);
         }
-        env.storage().instance().set(&DataKey::MaxTransactionValue, &max_tx_value);
-        env.storage().instance().set(&DataKey::MaxSlippageBps, &max_slippage_bps);
-        env.storage().instance().set(&DataKey::MaxDailySpend, &max_daily_spend);
-        LimitsUpdated { max_tx_value, max_slippage_bps, max_daily_spend }.publish(&env);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxTransactionValue, &max_tx_value);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxSlippageBps, &max_slippage_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxDailySpend, &max_daily_spend);
+        LimitsUpdated {
+            max_tx_value,
+            max_slippage_bps,
+            max_daily_spend,
+        }
+        .publish(&env);
         bump_instance(&env);
     }
 
     pub fn allow_asset(env: Env, asset: Address) {
         require_owner(&env);
-        if env.storage().persistent().has(&DataKey::BlockedAsset(asset.clone())) {
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::BlockedAsset(asset.clone()))
+        {
             panic_with_error!(&env, PolicyError::AssetBlocked);
         }
-        env.storage().persistent().set(&DataKey::AllowedAsset(asset.clone()), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AllowedAsset(asset.clone()), &true);
         extend_entry(&env, &DataKey::AllowedAsset(asset.clone()));
-        let mut list: Vec<Address> = env.storage().instance().get(&DataKey::AllowedAssetList).unwrap_or(Vec::new(&env));
+        let mut list: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AllowedAssetList)
+            .unwrap_or(Vec::new(&env));
         list.push_back(asset.clone());
-        env.storage().instance().set(&DataKey::AllowedAssetList, &list);
+        env.storage()
+            .instance()
+            .set(&DataKey::AllowedAssetList, &list);
         AssetAllowed { asset }.publish(&env);
         bump_instance(&env);
     }
 
     pub fn block_asset(env: Env, asset: Address, blocked: bool) {
         require_owner(&env);
-        env.storage().persistent().set(&DataKey::BlockedAsset(asset.clone()), &blocked);
+        env.storage()
+            .persistent()
+            .set(&DataKey::BlockedAsset(asset.clone()), &blocked);
         if blocked {
-            env.storage().persistent().remove(&DataKey::AllowedAsset(asset.clone()));
-            let mut list: Vec<Address> = env.storage().instance().get(&DataKey::BlockedAssetList).unwrap_or(Vec::new(&env));
+            env.storage()
+                .persistent()
+                .remove(&DataKey::AllowedAsset(asset.clone()));
+            let mut list: Vec<Address> = env
+                .storage()
+                .instance()
+                .get(&DataKey::BlockedAssetList)
+                .unwrap_or(Vec::new(&env));
             list.push_back(asset.clone());
-            env.storage().instance().set(&DataKey::BlockedAssetList, &list);
+            env.storage()
+                .instance()
+                .set(&DataKey::BlockedAssetList, &list);
         }
         AssetBlocked { asset, blocked }.publish(&env);
         bump_instance(&env);
     }
 
     pub fn is_asset_allowed(env: Env, asset: Address) -> bool {
-        if env.storage().persistent().get::<DataKey, bool>(&DataKey::BlockedAsset(asset.clone())).unwrap_or(false) {
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::BlockedAsset(asset.clone()))
+            .unwrap_or(false)
+        {
             return false;
         }
-        if env.storage().persistent().get::<DataKey, bool>(&DataKey::AllowedAsset(asset.clone())).unwrap_or(false) {
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::AllowedAsset(asset.clone()))
+            .unwrap_or(false)
+        {
             return true;
         }
-        let list: Vec<Address> = env.storage().instance().get(&DataKey::AllowedAssetList).unwrap_or(Vec::new(&env));
+        let list: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AllowedAssetList)
+            .unwrap_or(Vec::new(&env));
         list.is_empty()
     }
 
     pub fn pause(env: Env, caller: Address) {
-        let owner: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
-        let emergency: Address = env.storage().instance().get(&DataKey::EmergencyAdmin).unwrap();
-        if caller != owner && caller != emergency {
-            panic_with_error!(&env, PolicyError::Unauthorized);
-        }
-        caller.require_auth();
+        require_owner_or_emergency(&env, &caller);
         env.storage().instance().set(&DataKey::Paused, &true);
         Paused { by: caller }.publish(&env);
         bump_instance(&env);
     }
 
     pub fn unpause(env: Env, caller: Address) {
-        let owner: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
-        let emergency: Address = env.storage().instance().get(&DataKey::EmergencyAdmin).unwrap();
-        if caller != owner && caller != emergency {
-            panic_with_error!(&env, PolicyError::Unauthorized);
-        }
-        caller.require_auth();
+        require_owner_or_emergency(&env, &caller);
         env.storage().instance().set(&DataKey::Paused, &false);
         Unpaused { by: caller }.publish(&env);
         bump_instance(&env);
@@ -337,7 +426,15 @@ impl PolicyContract {
         env.storage().instance().set(&nonce_key, &nonce);
 
         let agent: Address = env.storage().instance().get(&DataKey::Agent).unwrap();
-        let decision_hash = hash_policy_decision(&env, &user, &agent, max_tx_value, max_slippage, nonce, expiry);
+        let decision_hash = hash_policy_decision(
+            &env,
+            &user,
+            &agent,
+            max_tx_value,
+            max_slippage,
+            nonce,
+            expiry,
+        );
 
         let decision = PolicyDecision {
             decision_hash: decision_hash.clone(),
@@ -354,7 +451,11 @@ impl PolicyContract {
         env.storage().persistent().set(&key, &decision);
         extend_entry(&env, &key);
 
-        PolicyApplied { user, decision_hash: decision_hash.clone() }.publish(&env);
+        PolicyApplied {
+            user,
+            decision_hash: decision_hash.clone(),
+        }
+        .publish(&env);
         bump_instance(&env);
         decision_hash
     }
@@ -366,7 +467,11 @@ impl PolicyContract {
             None => panic_with_error!(&env, PolicyError::UnknownDecision),
         };
         let owner: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
-        let emergency: Address = env.storage().instance().get(&DataKey::EmergencyAdmin).unwrap();
+        let emergency: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::EmergencyAdmin)
+            .unwrap();
         let agent: Address = env.storage().instance().get(&DataKey::Agent).unwrap();
         let is_authorised = env.current_contract_address() == owner
             || env.current_contract_address() == emergency
@@ -378,7 +483,10 @@ impl PolicyContract {
         decision.revoked = true;
         env.storage().persistent().set(&key, &decision);
         extend_entry(&env, &key);
-        IntentRevoked { intent_hash: decision_hash }.publish(&env);
+        IntentRevoked {
+            intent_hash: decision_hash,
+        }
+        .publish(&env);
         bump_instance(&env);
     }
 
@@ -400,12 +508,20 @@ impl PolicyContract {
             panic_with_error!(&env, PolicyError::ZeroAmount);
         }
 
-        let max_tx: i128 = env.storage().instance().get(&DataKey::MaxTransactionValue).unwrap_or(0);
+        let max_tx: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxTransactionValue)
+            .unwrap_or(0);
         if max_tx > 0 && amount > max_tx {
             panic_with_error!(&env, PolicyError::ExceedsTxLimit);
         }
 
-        let max_slippage: u32 = env.storage().instance().get(&DataKey::MaxSlippageBps).unwrap_or(100);
+        let max_slippage: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxSlippageBps)
+            .unwrap_or(100);
         if slippage_bps > max_slippage {
             panic_with_error!(&env, PolicyError::SlippageTooHigh);
         }
@@ -426,33 +542,48 @@ impl PolicyContract {
             panic_with_error!(&env, PolicyError::Expired);
         }
         if decision.max_transaction_value > 0 && amount > decision.max_transaction_value {
-            panic_with_error!(&env, PolicyError::ExceedsTxLimit);
+            panic_with_error!(&env, PolicyError::DecisionLimitExceeded);
         }
         if decision.max_slippage_bps > 0 && slippage_bps > decision.max_slippage_bps {
-            panic_with_error!(&env, PolicyError::SlippageTooHigh);
+            panic_with_error!(&env, PolicyError::DecisionLimitExceeded);
         }
 
         let nonce = decision.nonce;
 
         Self::check_daily_spend(env.clone(), amount);
 
-        let intent_hash = hash_intent(&env, &policy_commitment, &target_token, amount, nonce, expiry);
+        let intent_hash = hash_intent(
+            &env,
+            &policy_commitment,
+            &target_token,
+            amount,
+            nonce,
+            expiry,
+        );
 
         let intent = Intent {
             intent_hash: intent_hash.clone(),
             policy_commitment,
             target_token,
             amount,
+            slippage_bps,
             nonce,
             expiry,
             executed: false,
         };
 
         let key = DataKey::Intent(intent_hash.clone());
+        if env.storage().persistent().has(&key) {
+            panic_with_error!(&env, PolicyError::IntentAlreadyExists);
+        }
         env.storage().persistent().set(&key, &intent);
         extend_entry(&env, &key);
 
-        IntentCreated { intent_hash: intent_hash.clone(), policy_commitment: intent.policy_commitment }.publish(&env);
+        IntentCreated {
+            intent_hash: intent_hash.clone(),
+            policy_commitment: intent.policy_commitment,
+        }
+        .publish(&env);
         bump_instance(&env);
         intent_hash
     }
@@ -481,6 +612,12 @@ impl PolicyContract {
         if decision.revoked {
             panic_with_error!(&env, PolicyError::DecisionRevoked);
         }
+        if decision.max_transaction_value > 0 && intent.amount > decision.max_transaction_value {
+            panic_with_error!(&env, PolicyError::DecisionLimitExceeded);
+        }
+        if decision.max_slippage_bps > 0 && intent.slippage_bps > decision.max_slippage_bps {
+            panic_with_error!(&env, PolicyError::DecisionLimitExceeded);
+        }
 
         intent.executed = true;
         env.storage().persistent().set(&key, &intent);
@@ -505,7 +642,11 @@ impl PolicyContract {
     }
 
     pub fn check_daily_spend(env: Env, amount: i128) {
-        let max_daily: i128 = env.storage().instance().get(&DataKey::MaxDailySpend).unwrap_or(0);
+        let max_daily: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxDailySpend)
+            .unwrap_or(0);
         if max_daily <= 0 {
             return;
         }
@@ -518,11 +659,18 @@ impl PolicyContract {
         let daily_window: u32 = 1440;
 
         if reset_ledger == 0 || current_ledger.saturating_sub(reset_ledger) >= daily_window {
+            if amount > max_daily {
+                panic_with_error!(&env, PolicyError::ExceedsDailyLimit);
+            }
             reset_ledger = current_ledger;
             env.storage().instance().set(&reset_key, &reset_ledger);
             env.storage().instance().set(&spend_key, &amount);
         } else {
-            let spent: i128 = env.storage().instance().get::<DataKey, i128>(&spend_key).unwrap_or(0);
+            let spent: i128 = env
+                .storage()
+                .instance()
+                .get::<DataKey, i128>(&spend_key)
+                .unwrap_or(0);
             let new_spent = spent.saturating_add(amount);
             if new_spent > max_daily {
                 panic_with_error!(&env, PolicyError::ExceedsDailyLimit);
@@ -558,7 +706,10 @@ impl PolicyContract {
     }
 
     pub fn emergency_admin(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::EmergencyAdmin).unwrap()
+        env.storage()
+            .instance()
+            .get(&DataKey::EmergencyAdmin)
+            .unwrap()
     }
 
     pub fn agent(env: Env) -> Address {
@@ -566,10 +717,18 @@ impl PolicyContract {
     }
 
     pub fn is_paused(env: Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
-    pub fn get_intent_validity(env: Env, intent_hash: BytesN<32>, token: Address, amount: i128) -> (bool, String) {
+    pub fn get_intent_validity(
+        env: Env,
+        intent_hash: BytesN<32>,
+        token: Address,
+        amount: i128,
+    ) -> (bool, String) {
         let intent_key = DataKey::Intent(intent_hash.clone());
         let intent: Intent = match env.storage().persistent().get(&intent_key) {
             Some(i) => i,

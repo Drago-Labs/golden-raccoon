@@ -1,6 +1,9 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
+    String, Symbol, Vec,
+};
 
 const INSTANCE_TTL_THRESHOLD: u32 = 30 * 24 * 60 * 60 / 5;
 const INSTANCE_TTL_EXTEND_TO: u32 = 120 * 24 * 60 * 60 / 5;
@@ -75,7 +78,9 @@ pub enum RegistryError {
 pub struct RiskRegistry;
 
 fn bump_instance_ttl(env: &Env) {
-    env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
 }
 
 fn require_initialized(env: &Env) -> Result<(), RegistryError> {
@@ -89,7 +94,11 @@ fn require_initialized(env: &Env) -> Result<(), RegistryError> {
 
 #[contractimpl]
 impl RiskRegistry {
-    pub fn initialize(env: Env, admin: Address, publishers: Vec<Address>) -> Result<(), RegistryError> {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        publishers: Vec<Address>,
+    ) -> Result<(), RegistryError> {
         if env.storage().instance().has(&DataKey::Initialized) {
             return Err(RegistryError::AlreadyInitialized);
         }
@@ -98,7 +107,9 @@ impl RiskRegistry {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Initialized, &true);
         for publisher in publishers.iter() {
-            env.storage().persistent().set(&DataKey::Publisher(publisher.clone()), &true);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Publisher(publisher.clone()), &true);
             env.storage().persistent().extend_ttl(
                 &DataKey::Publisher(publisher.clone()),
                 RECORD_TTL_THRESHOLD,
@@ -110,7 +121,11 @@ impl RiskRegistry {
         Ok(())
     }
 
-    pub fn set_publisher(env: Env, publisher: Address, authorized: bool) -> Result<(), RegistryError> {
+    pub fn set_publisher(
+        env: Env,
+        publisher: Address,
+        authorized: bool,
+    ) -> Result<(), RegistryError> {
         require_initialized(&env)?;
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
@@ -118,11 +133,17 @@ impl RiskRegistry {
 
         if authorized {
             env.storage().persistent().set(&key, &true);
-            env.storage().persistent().extend_ttl(&key, RECORD_TTL_THRESHOLD, RECORD_TTL_EXTEND_TO);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, RECORD_TTL_THRESHOLD, RECORD_TTL_EXTEND_TO);
         } else {
             env.storage().persistent().remove(&key);
         }
-        PublisherAuthorizationChanged { publisher, authorized }.publish(&env);
+        PublisherAuthorizationChanged {
+            publisher,
+            authorized,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -172,8 +193,19 @@ impl RiskRegistry {
             ledger: env.ledger().sequence(),
         };
         env.storage().persistent().set(&key, &record);
-        env.storage().persistent().extend_ttl(&key, RECORD_TTL_THRESHOLD, RECORD_TTL_EXTEND_TO);
-        RiskPublished { asset_id, network, publisher, score, verdict, report_hash, updated_at }.publish(&env);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, RECORD_TTL_THRESHOLD, RECORD_TTL_EXTEND_TO);
+        RiskPublished {
+            asset_id,
+            network,
+            publisher,
+            score,
+            verdict,
+            report_hash,
+            updated_at,
+        }
+        .publish(&env);
         Ok(record)
     }
 
@@ -181,13 +213,18 @@ impl RiskRegistry {
         let key = DataKey::Record(asset_id, network);
         let value = env.storage().persistent().get(&key);
         if value.is_some() {
-            env.storage().persistent().extend_ttl(&key, RECORD_TTL_THRESHOLD, RECORD_TTL_EXTEND_TO);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, RECORD_TTL_THRESHOLD, RECORD_TTL_EXTEND_TO);
         }
         value
     }
 
     pub fn is_publisher(env: Env, publisher: Address) -> bool {
-        env.storage().persistent().get(&DataKey::Publisher(publisher)).unwrap_or(false)
+        env.storage()
+            .persistent()
+            .get(&DataKey::Publisher(publisher))
+            .unwrap_or(false)
     }
 
     pub fn admin(env: Env) -> Result<Address, RegistryError> {

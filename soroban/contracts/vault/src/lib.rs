@@ -1,8 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype,
-    panic_with_error, token, Address, BytesN, Env, String, Symbol,
+    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, token,
+    Address, BytesN, Env, String, Symbol,
 };
 
 const INSTANCE_TTL_THRESHOLD: u32 = 30 * 24 * 60 * 60 / 5;
@@ -38,12 +38,23 @@ pub struct Withdrawn {
 }
 
 fn bump_instance(env: &Env) {
-    env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
 }
 
-fn get_intent_validity(env: &Env, policy: &Address, intent_hash: BytesN<32>, token: Address, amount: i128) -> bool {
-    let result: (bool, String) = env
-        .invoke_contract(policy, &Symbol::new(env, "get_intent_validity"), (intent_hash, token, amount));
+fn get_intent_validity(
+    env: &Env,
+    policy: &Address,
+    intent_hash: BytesN<32>,
+    token: Address,
+    amount: i128,
+) -> bool {
+    let result: (bool, String) = env.invoke_contract(
+        policy,
+        &Symbol::new(env, "get_intent_validity"),
+        (intent_hash, token, amount),
+    );
     result.0
 }
 

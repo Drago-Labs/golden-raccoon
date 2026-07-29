@@ -105,46 +105,21 @@
     ],
     [
       [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
         {
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "create_intent",
+              "function_name": "set_limits",
               "args": [
                 {
-                  "bytes": "016edf1d742db2a30cbed7fad059f89f1bfc36a053f519fa12231f4be4c1181a"
+                  "i128": "1000000000"
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                  "u32": 100
                 },
                 {
-                  "i128": "100000000"
-                },
-                {
-                  "u64": "1700001800"
-                },
-                {
-                  "u32": 50
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "execute_intent",
-              "args": [
-                {
-                  "bytes": "7c7b46338b645e6c41a1c3fca0848c3e9de52612ce9a1466a737f82fe4893490"
+                  "i128": "50000000"
                 }
               ]
             }
@@ -185,98 +160,6 @@
               "durability": "persistent",
               "val": {
                 "bool": true
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 6308200
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "Intent"
-                  },
-                  {
-                    "bytes": "7c7b46338b645e6c41a1c3fca0848c3e9de52612ce9a1466a737f82fe4893490"
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "map": [
-                  {
-                    "key": {
-                      "symbol": "amount"
-                    },
-                    "val": {
-                      "i128": "100000000"
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "executed"
-                    },
-                    "val": {
-                      "bool": true
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "expiry"
-                    },
-                    "val": {
-                      "u64": "1700001800"
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "intent_hash"
-                    },
-                    "val": {
-                      "bytes": "7c7b46338b645e6c41a1c3fca0848c3e9de52612ce9a1466a737f82fe4893490"
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "nonce"
-                    },
-                    "val": {
-                      "u64": "1"
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "policy_commitment"
-                    },
-                    "val": {
-                      "bytes": "016edf1d742db2a30cbed7fad059f89f1bfc36a053f519fa12231f4be4c1181a"
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "slippage_bps"
-                    },
-                    "val": {
-                      "u32": 50
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "target_token"
-                    },
-                    "val": {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
-                    }
-                  }
-                ]
               }
             }
           },
@@ -423,21 +306,6 @@
                       "key": {
                         "vec": [
                           {
-                            "symbol": "DailySpend"
-                          },
-                          {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "i128": "100000000"
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
                             "symbol": "EmergencyAdmin"
                           }
                         ]
@@ -450,24 +318,12 @@
                       "key": {
                         "vec": [
                           {
-                            "symbol": "LastDailyReset"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "u32": 1000
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
                             "symbol": "MaxDailySpend"
                           }
                         ]
                       },
                       "val": {
-                        "i128": "5000000000"
+                        "i128": "50000000"
                       }
                     },
                     {
@@ -591,26 +447,6 @@
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
               "key": {
                 "ledger_key_nonce": {
-                  "nonce": "5541220902715666415"
-                }
-              },
-              "durability": "temporary",
-              "val": "void"
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 6312999
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
-              "key": {
-                "ledger_key_nonce": {
                   "nonce": "2032731177588607455"
                 }
               },
@@ -628,10 +464,10 @@
           "data": {
             "contract_data": {
               "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
               "key": {
                 "ledger_key_nonce": {
-                  "nonce": "4270020994084947596"
+                  "nonce": "5541220902715666415"
                 }
               },
               "durability": "temporary",
