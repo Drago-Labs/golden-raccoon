@@ -1,7 +1,7 @@
 "use client";
 
 import { CircleHelp, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { TokenHolding } from "@/server/types";
 import { getPortfolioRiskSignals } from "@/server/portfolio/riskScoring";
 
@@ -24,6 +24,9 @@ function arcPath(startAngle: number, endAngle: number) {
 
 export function RiskScoreCard({ score, holdings = [] }: { score: number; holdings?: TokenHolding[] }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const headingId = useId();
+  const toggleButtonRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const boundedScore = Math.min(100, Math.max(0, score));
   const level = boundedScore >= 71 ? "High" : boundedScore >= 41 ? "Medium" : "Low";
   const markerAngle = -90 + boundedScore * 1.8;
@@ -41,6 +44,18 @@ export function RiskScoreCard({ score, holdings = [] }: { score: number; holding
     { label: "Network execution", score: signals.chainExecutionRisk, weight: 5 },
   ];
 
+  useEffect(() => {
+    if (showBreakdown) {
+      closeButtonRef.current?.focus();
+      return;
+    }
+  }, [showBreakdown]);
+
+  function closeBreakdown() {
+    setShowBreakdown(false);
+    toggleButtonRef.current?.focus();
+  }
+
   return (
     <section className="glass-panel relative flex h-full flex-col rounded-[28px] p-6">
       <div className="flex items-center justify-between">
@@ -49,6 +64,7 @@ export function RiskScoreCard({ score, holdings = [] }: { score: number; holding
             Portfolio risk
             {holdings.length > 0 ? (
               <button
+                ref={toggleButtonRef}
                 type="button"
                 onClick={() => setShowBreakdown((visible) => !visible)}
                 className="inline-flex h-7 w-7 items-center justify-center rounded-full text-white/46 transition hover:bg-white/8 hover:text-white"
@@ -61,16 +77,28 @@ export function RiskScoreCard({ score, holdings = [] }: { score: number; holding
           </div>
           <div className="mt-1 text-4xl font-semibold">{boundedScore}/100</div>
         </div>
-        <span className="rounded-full border border-white/10 bg-white/7 px-3 py-1 text-xs font-medium" style={{ color: markerColor }}>
-          {level}
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/7 px-3 py-1 text-xs font-medium"
+          style={{ color: markerColor }}
+        >
+          <span aria-hidden="true" className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: markerColor }} />
+          Risk level: {level}
         </span>
       </div>
 
       {showBreakdown && holdings.length > 0 ? (
-        <div className="absolute inset-x-5 top-24 z-10 rounded-lg border border-white/12 bg-[#0b0b0b] p-4 shadow-2xl">
+        <div
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby={headingId}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") closeBreakdown();
+          }}
+          className="absolute inset-x-5 top-24 z-10 rounded-lg border border-white/12 bg-[#0b0b0b] p-4 shadow-2xl"
+        >
           <div className="flex items-center justify-between gap-3">
-            <div className="text-sm font-semibold">Why {boundedScore}/100?</div>
-            <button type="button" onClick={() => setShowBreakdown(false)} className="inline-flex h-8 w-8 items-center justify-center rounded-full text-white/46 hover:bg-white/8 hover:text-white" aria-label="Close risk breakdown">
+            <div id={headingId} className="text-sm font-semibold">Why {boundedScore}/100?</div>
+            <button ref={closeButtonRef} type="button" onClick={closeBreakdown} className="inline-flex h-8 w-8 items-center justify-center rounded-full text-white/46 hover:bg-white/8 hover:text-white" aria-label="Close risk breakdown">
               <X className="h-4 w-4" />
             </button>
           </div>
@@ -82,7 +110,14 @@ export function RiskScoreCard({ score, holdings = [] }: { score: number; holding
                     <span>{category.label}</span>
                     <span>{category.weight}% weight</span>
                   </div>
-                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    role="meter"
+                    aria-label={`${category.label} risk`}
+                    aria-valuenow={category.score}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10"
+                  >
                     <div className="h-full rounded-full bg-[#d9a441]" style={{ width: `${category.score}%` }} />
                   </div>
                 </div>
@@ -95,7 +130,12 @@ export function RiskScoreCard({ score, holdings = [] }: { score: number; holding
       ) : null}
 
       <div className="flex flex-1 items-center justify-center">
-        <svg viewBox="0 0 200 128" className="h-40 w-full max-w-xs overflow-visible" role="img" aria-label={`Portfolio risk ${boundedScore} out of 100`}>
+        <svg
+          viewBox="0 0 200 128"
+          className="h-40 w-full max-w-xs overflow-visible"
+          role="img"
+          aria-label={`Portfolio risk score ${boundedScore} out of 100, ${level} risk`}
+        >
           <defs>
             <linearGradient id="riskGaugeGradient" x1="24" x2="176" y1="100" y2="100" gradientUnits="userSpaceOnUse">
               <stop offset="0%" stopColor="#60d394" />

@@ -8,9 +8,9 @@ import { runSocialAgent } from "@/server/agents/social";
 import { runAgentSafely } from "@/server/agents/shared";
 import { createAgentRunId, createRunStepMetadata, getRunPartialStatus } from "@/server/agents/orchestrationState";
 import { resolveTokenIdentity } from "@/server/identity/tokenIdentity";
-import { createAgentRunRecord } from "@/server/storage";
+import { createAgentRunRecord, getUserRuleRecord } from "@/server/storage";
 
-export type AgentRunMode = "portfolio_review" | "token_scan" | "pre_buy_check" | "holding_review" | "execution_prepare";
+export type AgentRunMode = "portfolio_review" | "token_scan" | "pre_buy_check" | "holding_review" | "execution_prepare" | "discovery_candidate";
 
 type AgentOrchestrationInput = {
   mode: AgentRunMode;
@@ -18,6 +18,10 @@ type AgentOrchestrationInput = {
   identity?: AgentInputIdentity;
   portfolio?: PortfolioSnapshot;
   persistRun?: boolean;
+  discoveryContext?: {
+    source?: string;
+    metrics?: Record<string, unknown>;
+  };
 };
 
 type AgentOrchestrationResult = {
@@ -116,13 +120,13 @@ async function runTokenSpecialists(identity: ReturnType<typeof resolveTokenIdent
 function getDependencyGraph(mode: AgentRunMode) {
   return {
     identity_resolver: ["onchain", "news", "social"],
-    portfolio: mode === "portfolio_review" ? ["token_candidates", "decision"] : mode === "holding_review" || mode === "execution_prepare" ? ["identity_resolver", "decision"] : [],
+    portfolio: mode === "portfolio_review" ? ["token_candidates", "decision"] : mode === "holding_review" || mode === "execution_prepare" ? ["identity_resolver", "decision"] : mode === "discovery_candidate" ? ["identity_resolver", "decision"] : [],
     token_candidates: mode === "portfolio_review" ? ["identity_resolver"] : [],
     onchain: ["decision"],
     news: ["decision"],
     social: ["decision"],
     decision: mode === "execution_prepare" ? ["execution"] : [],
-    execution: [],
+    execution: mode === "execution_prepare" ? [] : ["never"],
   };
 }
 
@@ -141,6 +145,9 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
 
   const identity = identityInput ? resolveTokenIdentity(identityInput) : undefined;
 
+  // Load user rules once so Decision and Execution share the same versioned snapshot
+  const userRules = input.walletAddress ? getUserRuleRecord(input.walletAddress) : undefined;
+
   if (input.mode === "portfolio_review" && candidateInputs.length > 0) {
     for (const candidate of candidateInputs) {
       const candidateIdentity = resolveTokenIdentity(candidate);
@@ -158,7 +165,17 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
       walletAddress: input.walletAddress,
       userAlreadyOwnsToken: input.mode === "portfolio_review" || input.mode === "holding_review" || input.mode === "execution_prepare",
       tokenSymbol: identity?.symbol,
+      discoveryContext: input.mode === "discovery_candidate"
+        ? {
+            chainFamily: identity?.chainFamily,
+            discoverySource: input.discoveryContext?.source,
+            identityConfidence: identity?.confidence ?? 0,
+            identityConfidenceLabel: identity?.confidenceLabel ?? "low",
+            metrics: input.discoveryContext?.metrics,
+          }
+        : undefined,
     },
+    userRules,
   });
   results.push({
     ...decision,
@@ -170,14 +187,14 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
 
   if (input.mode === "execution_prepare") {
     const execution = await runWithRunMetadata(runId, "execution", () =>
-      Promise.resolve(
-        runExecutionAgent({
-          action: decision.recommendedAction,
-          walletAddress: input.walletAddress,
-          fromToken: identity?.symbol,
-          riskScore: decision.riskScore,
-        }),
-      ),
+      runExecutionAgent({
+        action: decision.recommendedAction,
+        walletAddress: input.walletAddress,
+        fromToken: identity?.symbol,
+        riskScore: decision.riskScore,
+        network: identity?.chain,
+        rules: userRules,
+      }),
     );
 
     results.push(execution);
