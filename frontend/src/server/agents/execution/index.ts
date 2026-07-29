@@ -122,6 +122,7 @@ isStellar?: boolean;
       ?? (input.simulationStatus === "failed"
         ? input.revertReason ?? "Simulation failed."
         : "Tenderly or equivalent simulation is planned before confirmation. Pending simulation blocks unsafe confidence but still allows preview display."),
+    simulatedTxHash: input.simulation?.simulatedTxHash ?? "",
     simulatedAt: input.simulation?.simulatedAt,
     blockNumber: input.simulation?.blockNumber,
     ledgerSeq: input.simulation?.ledgerSeq,
@@ -132,6 +133,7 @@ isStellar?: boolean;
     slippageBps: input.simulation?.slippageBps,
     sequenceNumber: input.simulation?.sequenceNumber,
     fee: input.simulation?.fee,
+    simulatedXdrHash: input.simulation?.simulatedXdrHash,
     balanceChanges: input.simulation?.balanceChanges,
     allowanceRisk: input.simulation?.allowanceRisk,
     trustlineRisk: input.simulation?.trustlineRisk,

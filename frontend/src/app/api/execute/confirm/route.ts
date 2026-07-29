@@ -65,6 +65,7 @@ const bodySchema = z.object({
   stellarTrustlineAsset: z.string().optional(),
   simulation: z
     .object({
+      simulatedTxHash: z.string(),
       simulatedAt: z.string().optional(),
       blockNumber: z.number().optional(),
       ledgerSeq: z.number().optional(),
@@ -75,6 +76,7 @@ const bodySchema = z.object({
       slippageBps: z.number().optional(),
       sequenceNumber: z.union([z.number(), z.string()]).optional(),
       fee: z.string().optional(),
+      simulatedXdrHash: z.string().optional(),
       resourceUsage: z
         .object({
           gasUnits: z.string().optional(),
@@ -202,6 +204,7 @@ export async function POST(request: Request) {
       status: parsed.data.simulationStatus ?? "pending",
       checks: [],
       detail: "",
+      simulatedTxHash: parsed.data.simulation.simulatedTxHash,
       simulatedAt: parsed.data.simulation.simulatedAt,
       blockNumber: parsed.data.simulation.blockNumber,
       ledgerSeq: parsed.data.simulation.ledgerSeq,
@@ -212,32 +215,73 @@ export async function POST(request: Request) {
       slippageBps: parsed.data.simulation.slippageBps,
       sequenceNumber: parsed.data.simulation.sequenceNumber,
       fee: parsed.data.simulation.fee,
+      simulatedXdrHash: parsed.data.simulation.simulatedXdrHash,
       balanceChanges: parsed.data.simulation.balanceChanges,
       allowanceRisk: parsed.data.simulation.allowanceRisk,
       trustlineRisk: parsed.data.simulation.trustlineRisk,
       chainFamily: parsed.data.simulation.chainFamily,
     };
 
-    const currentBlockNumber = parsed.data.currentBlockNumber;
-    const currentLedgerSeq = parsed.data.currentLedgerSeq;
-
-    if (!currentBlockNumber && !currentLedgerSeq) {
-      return NextResponse.json({ error: "freshness_unverifiable", detail: "Current block or ledger number is required to verify simulation freshness server-side." }, { status: 403 });
+    if (parsed.data.txHash !== simulationDetail.simulatedTxHash) {
+      return NextResponse.json({ error: "tx_hash_mismatch", detail: "Submitted transaction hash does not match the hash that was simulated. Re-run simulation for this transaction." }, { status: 403 });
     }
 
-    const freshness = checkSimulationFreshness(simulationDetail, currentBlockNumber, currentLedgerSeq);
+    if (isStellar && parsed.data.stellarEnvelopeXdr) {
+      if (!simulationDetail.simulatedXdrHash || parsed.data.stellarEnvelopeXdr !== simulationDetail.simulatedXdrHash) {
+        return NextResponse.json({ error: "xdr_mismatch", detail: "Submitted Stellar envelope XDR does not match the XDR that was simulated. Re-run simulation for this transaction." }, { status: 403 });
+      }
+    }
+
+    let serverBlockNumber: number | undefined;
+    let serverLedgerSeq: number | undefined;
+
+    if (isStellar) {
+      try {
+        const { server } = createStellarRpcServer(parsed.data.network);
+        const latestLedger = await server.getLatestLedger();
+        serverLedgerSeq = latestLedger.sequence;
+      } catch {
+        return NextResponse.json({ error: "freshness_fetch_failed", detail: "Failed to fetch current ledger sequence from Stellar RPC." }, { status: 503 });
+      }
+      if (!serverLedgerSeq) {
+        return NextResponse.json({ error: "freshness_unverifiable", detail: "Current ledger sequence is required to verify simulation freshness on Stellar." }, { status: 403 });
+      }
+    } else {
+      try {
+        const { createEvmPublicClient } = await import("@/server/transactions/adapters/evm");
+        const client = createEvmPublicClient({ network: parsed.data.network ?? "goat" });
+        if (client) {
+          const blockNumber = await client.getBlockNumber();
+          serverBlockNumber = Number(blockNumber);
+        }
+      } catch {
+        return NextResponse.json({ error: "freshness_fetch_failed", detail: "Failed to fetch current block number from EVM RPC." }, { status: 503 });
+      }
+      if (!serverBlockNumber) {
+        return NextResponse.json({ error: "freshness_unverifiable", detail: "Current block number is required to verify simulation freshness on EVM." }, { status: 403 });
+      }
+    }
+
+    const freshness = checkSimulationFreshness(simulationDetail, serverBlockNumber, serverLedgerSeq);
 
     if (!freshness.fresh) {
       return NextResponse.json({ error: "simulation_stale", detail: freshness.reason, expiredAt: freshness.expiredAt }, { status: 403 });
     }
 
-    const currentCalldata = parsed.data.currentCalldata;
-    const currentCalldataHash = currentCalldata ? hashCalldata(currentCalldata) : parsed.data.simulation.calldataHash;
+    if (!isStellar) {
+      const currentCalldata = parsed.data.currentCalldata;
 
-    const calldataMatch = checkCalldataMatch(simulationDetail, currentCalldataHash);
+      if (!currentCalldata) {
+        return NextResponse.json({ error: "calldata_required", detail: "Current calldata is required to verify simulation calldata match for EVM transactions." }, { status: 403 });
+      }
 
-    if (!calldataMatch) {
-      return NextResponse.json({ error: "simulation_mismatch", detail: "Simulation calldata does not match the current transaction payload. Re-run simulation with the latest parameters." }, { status: 403 });
+      const currentCalldataHash = hashCalldata(currentCalldata);
+
+      const calldataMatch = checkCalldataMatch(simulationDetail, currentCalldataHash);
+
+      if (!calldataMatch) {
+        return NextResponse.json({ error: "simulation_mismatch", detail: "Simulation calldata does not match the current transaction payload. Re-run simulation with the latest parameters." }, { status: 403 });
+      }
     }
 
     const paramsMatch = checkParamsMatch(simulationDetail, {

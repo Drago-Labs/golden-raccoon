@@ -103,31 +103,20 @@ export function checkParamsMatch(
 ): boolean {
   if (simulation.status === "not_required") return true;
 
-  if (simulation.fromAmount !== undefined) {
-    if (currentParams.amount === undefined || currentParams.amount !== simulation.fromAmount) return false;
+  if (simulation.fromAmount === undefined || currentParams.amount === undefined || currentParams.amount !== simulation.fromAmount) return false;
+
+  if (simulation.route === undefined || currentParams.route === undefined) return false;
+  if (currentParams.route.length !== simulation.route.length) return false;
+  for (let i = 0; i < currentParams.route.length; i++) {
+    if (currentParams.route[i].toLowerCase() !== simulation.route[i].toLowerCase()) return false;
   }
 
-  if (simulation.route !== undefined) {
-    if (currentParams.route === undefined || currentParams.route.length !== simulation.route.length) {
-      return false;
-    }
-    for (let i = 0; i < currentParams.route.length; i++) {
-      if (currentParams.route[i].toLowerCase() !== simulation.route[i].toLowerCase()) return false;
-    }
-  }
+  if (simulation.slippageBps === undefined || currentParams.slippageBps === undefined || currentParams.slippageBps !== simulation.slippageBps) return false;
 
-  if (simulation.slippageBps !== undefined) {
-    if (currentParams.slippageBps === undefined || currentParams.slippageBps !== simulation.slippageBps) return false;
-  }
+  if (simulation.sequenceNumber === undefined || currentParams.sequenceNumber === undefined) return false;
+  if (String(currentParams.sequenceNumber) !== String(simulation.sequenceNumber)) return false;
 
-  if (simulation.sequenceNumber !== undefined) {
-    if (currentParams.sequenceNumber === undefined) return false;
-    if (String(currentParams.sequenceNumber) !== String(simulation.sequenceNumber)) return false;
-  }
-
-  if (simulation.fee !== undefined) {
-    if (currentParams.fee === undefined || currentParams.fee !== simulation.fee) return false;
-  }
+  if (simulation.fee === undefined || currentParams.fee === undefined || currentParams.fee !== simulation.fee) return false;
 
   return true;
 }

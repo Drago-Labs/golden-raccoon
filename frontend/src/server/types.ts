@@ -841,6 +841,7 @@ export type SimulationResultDetail = {
   revertReason?: string;
   revertReasonHuman?: string;
   detail: string;
+  simulatedTxHash: string;
   simulatedAt?: string;
   blockNumber?: number;
   ledgerSeq?: number;
@@ -851,6 +852,7 @@ export type SimulationResultDetail = {
   slippageBps?: number;
   sequenceNumber?: number | string;
   fee?: string;
+  simulatedXdrHash?: string;
   resourceUsage?: {
     gasUnits?: string;
     gasPrice?: string;

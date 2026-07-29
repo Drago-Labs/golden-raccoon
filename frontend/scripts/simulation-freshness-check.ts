@@ -18,6 +18,7 @@ function passedSimulation(overrides: Partial<SimulationResultDetail> = {}): Simu
     status: "passed",
     checks: ["Approval simulation", "Sell/swap simulation"],
     detail: "Simulation passed.",
+    simulatedTxHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
     simulatedAt: new Date().toISOString(),
     blockNumber: 1000,
     fromAmount: "100",

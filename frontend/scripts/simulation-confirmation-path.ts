@@ -19,6 +19,9 @@ function simulateConfirmRoute(body: {
   action?: string;
   riskScore?: number;
   simulationStatus?: string;
+  isStellar?: boolean;
+  txHash?: string;
+  stellarEnvelopeXdr?: string;
   simulation?:
     | (Partial<SimulationResultDetail> & { status?: string })
     | undefined
@@ -36,6 +39,8 @@ function simulateConfirmRoute(body: {
   const riskScore = body.riskScore;
   const simStatus = body.simulationStatus ?? "passed";
   const sim = body.simulation;
+  const isStellar = body.isStellar ?? false;
+  const txHash = body.txHash ?? "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 
   if (!simStatus) {
     return { status: 400, error: "Missing status" };
@@ -60,15 +65,12 @@ function simulateConfirmRoute(body: {
       return FAIL;
     }
 
-    if (!body.currentBlockNumber && !body.currentLedgerSeq) {
-      return FAIL;
-    }
-
     const simulationDetail: SimulationResultDetail = {
       provider: "planned_tenderly",
       status: simStatus as SimulationResultDetail["status"],
       checks: sim.checks ?? [],
       detail: sim.detail ?? "",
+      simulatedTxHash: sim.simulatedTxHash ?? "",
       simulatedAt: sim.simulatedAt,
       blockNumber: sim.blockNumber,
       ledgerSeq: sim.ledgerSeq,
@@ -79,7 +81,31 @@ function simulateConfirmRoute(body: {
       slippageBps: sim.slippageBps,
       sequenceNumber: sim.sequenceNumber,
       fee: sim.fee,
+      simulatedXdrHash: sim.simulatedXdrHash,
     };
+
+    // Finding 1: txHash binding
+    if (txHash !== simulationDetail.simulatedTxHash) {
+      return FAIL;
+    }
+
+    // Finding 3: XDR binding for Stellar
+    if (isStellar && body.stellarEnvelopeXdr) {
+      if (!simulationDetail.simulatedXdrHash || body.stellarEnvelopeXdr !== simulationDetail.simulatedXdrHash) {
+        return FAIL;
+      }
+    }
+
+    // Finding 5: chain-appropriate freshness reference required
+    if (isStellar) {
+      if (!body.currentLedgerSeq) {
+        return FAIL;
+      }
+    } else {
+      if (!body.currentBlockNumber) {
+        return FAIL;
+      }
+    }
 
     const freshness = checkSimulationFreshness(
       simulationDetail,
@@ -91,17 +117,19 @@ function simulateConfirmRoute(body: {
       return FAIL;
     }
 
-    const currentCalldataHash = body.currentCalldata
-      ? hashCalldata(body.currentCalldata)
-      : undefined;
+    // Finding 4: EVM requires calldata (no fallback)
+    if (!isStellar) {
+      if (!body.currentCalldata) {
+        return FAIL;
+      }
 
-    const calldataMatch = checkCalldataMatch(
-      simulationDetail,
-      currentCalldataHash ?? sim.calldataHash,
-    );
+      const currentCalldataHash = hashCalldata(body.currentCalldata);
 
-    if (!calldataMatch) {
-      return FAIL;
+      const calldataMatch = checkCalldataMatch(simulationDetail, currentCalldataHash);
+
+      if (!calldataMatch) {
+        return FAIL;
+      }
     }
 
     const paramsMatch = checkParamsMatch(simulationDetail, {
@@ -126,6 +154,7 @@ function buildSim(overrides: Partial<SimulationResultDetail> = {}): SimulationRe
     status: "passed",
     checks: ["Approval simulation", "Sell/swap simulation"],
     detail: "Simulation passed.",
+    simulatedTxHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
     simulatedAt: new Date().toISOString(),
     blockNumber: 1000,
     fromAmount: "100",
@@ -182,6 +211,7 @@ function runConfirmationPathTests() {
     ...highRiskBody,
     simulation: buildSim(),
     currentBlockNumber: 1000,
+    currentCalldata: "0xdeadbeef",
     currentFromAmount: "200",
     currentRoute: ["USDC", "ETH"],
     currentSlippageBps: 100,
@@ -195,6 +225,7 @@ function runConfirmationPathTests() {
     ...highRiskBody,
     simulation: buildSim(),
     currentBlockNumber: 1000,
+    currentCalldata: "0xdeadbeef",
     currentFromAmount: "100",
     currentRoute: ["USDC", "BTC"],
     currentSlippageBps: 100,
@@ -208,6 +239,7 @@ function runConfirmationPathTests() {
     ...highRiskBody,
     simulation: buildSim(),
     currentBlockNumber: 1000,
+    currentCalldata: "0xdeadbeef",
     currentFromAmount: "100",
     currentRoute: ["USDC", "ETH"],
     currentSlippageBps: 200,
@@ -221,6 +253,7 @@ function runConfirmationPathTests() {
     ...highRiskBody,
     simulation: buildSim(),
     currentBlockNumber: 1000,
+    currentCalldata: "0xdeadbeef",
     currentFromAmount: "100",
     currentRoute: ["USDC", "ETH"],
     currentSlippageBps: 100,
@@ -234,6 +267,7 @@ function runConfirmationPathTests() {
     ...highRiskBody,
     simulation: buildSim(),
     currentBlockNumber: 1000,
+    currentCalldata: "0xdeadbeef",
     currentFromAmount: "100",
     currentRoute: ["USDC", "ETH"],
     currentSlippageBps: 100,
@@ -323,6 +357,7 @@ function runConfirmationPathTests() {
     ...highRiskBody,
     simulation: buildSim(),
     currentBlockNumber: 1000,
+    currentCalldata: "0xdeadbeef",
     currentFromAmount: "100",
     currentRoute: ["USDC", "ETH"],
     currentSlippageBps: 100,
@@ -336,6 +371,7 @@ function runConfirmationPathTests() {
     ...highRiskBody,
     simulation: buildSim({ fromAmount: "100" }),
     currentBlockNumber: 1000,
+    currentCalldata: "0xdeadbeef",
     currentFromAmount: undefined,
     currentRoute: ["USDC", "ETH"],
     currentSlippageBps: 100,
@@ -349,6 +385,7 @@ function runConfirmationPathTests() {
     ...highRiskBody,
     simulation: buildSim({ route: ["USDC", "ETH"] }),
     currentBlockNumber: 1000,
+    currentCalldata: "0xdeadbeef",
     currentFromAmount: "100",
     currentRoute: undefined,
     currentSlippageBps: 100,
@@ -362,6 +399,7 @@ function runConfirmationPathTests() {
     ...highRiskBody,
     simulation: buildSim({ fee: "0.005 ETH" }),
     currentBlockNumber: 1000,
+    currentCalldata: "0xdeadbeef",
     currentFromAmount: "100",
     currentRoute: ["USDC", "ETH"],
     currentSlippageBps: 100,
@@ -396,7 +434,112 @@ function runConfirmationPathTests() {
   });
   assert(r22.status === 403, "Missing simulation timestamp must return 403.");
 
-  console.log("All 22 confirmation-path tests passed.");
+  // 23. Mismatched txHash -> rejected (Finding 1)
+  const r23 = simulateConfirmRoute({
+    ...highRiskBody,
+    txHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    simulation: buildSim(),
+    currentBlockNumber: 1000,
+    currentFromAmount: "100",
+    currentRoute: ["USDC", "ETH"],
+    currentSlippageBps: 100,
+    currentSequenceNumber: 42,
+    currentFee: "0.005 ETH",
+  });
+  assert(r23.status === 403, "Mismatched txHash must return 403.");
+
+  // 24. Simulation missing a recorded param (e.g. no fromAmount) while current
+  //     params include one -> rejected, not silently passed (Finding 2)
+  const r24 = simulateConfirmRoute({
+    ...highRiskBody,
+    simulation: buildSim({ fromAmount: undefined }),
+    currentBlockNumber: 1000,
+    currentFromAmount: "100",
+    currentRoute: ["USDC", "ETH"],
+    currentSlippageBps: 100,
+    currentSequenceNumber: 42,
+    currentFee: "0.005 ETH",
+  });
+  assert(r24.status === 403, "Sim missing fromAmount while current has one -> must return 403 (fail-closed).");
+
+  // 25. Mismatched XDR on Stellar high-risk -> rejected (Finding 3)
+  const r25 = simulateConfirmRoute({
+    ...highRiskBody,
+    isStellar: true,
+    stellarEnvelopeXdr: "mismatched_xdr",
+    simulation: buildSim({ simulatedXdrHash: "expected_xdr" }),
+    currentLedgerSeq: 500,
+    currentFromAmount: "100",
+    currentRoute: ["USDC", "ETH"],
+    currentSlippageBps: 100,
+    currentSequenceNumber: 42,
+    currentFee: "0.005 ETH",
+  });
+  assert(r25.status === 403, "Mismatched XDR on Stellar high-risk must return 403.");
+
+  // 26. Stellar high-risk with XDR provided but simulation missing
+  //     simulatedXdrHash -> rejected (Finding 3)
+  const r26 = simulateConfirmRoute({
+    ...highRiskBody,
+    isStellar: true,
+    stellarEnvelopeXdr: "some_xdr",
+    simulation: buildSim({ simulatedXdrHash: undefined }),
+    currentLedgerSeq: 500,
+    currentFromAmount: "100",
+    currentRoute: ["USDC", "ETH"],
+    currentSlippageBps: 100,
+    currentSequenceNumber: 42,
+    currentFee: "0.005 ETH",
+  });
+  assert(r26.status === 403, "Stellar high-risk with XDR but sim missing simulatedXdrHash must return 403.");
+
+  // 27. Missing currentCalldata on EVM high-risk -> rejected, not silently
+  //     passed via self-comparison (Finding 4)
+  const r27 = simulateConfirmRoute({
+    ...highRiskBody,
+    simulation: buildSim(),
+    currentBlockNumber: 1000,
+    currentFromAmount: "100",
+    currentRoute: ["USDC", "ETH"],
+    currentSlippageBps: 100,
+    currentSequenceNumber: 42,
+    currentFee: "0.005 ETH",
+  });
+  assert(r27.status === 403, "Missing currentCalldata on EVM high-risk must return 403.");
+
+  // 28. Stellar transaction supplying only currentBlockNumber (no
+  //     currentLedgerSeq) -> rejected (Finding 5)
+  const r28 = simulateConfirmRoute({
+    ...highRiskBody,
+    isStellar: true,
+    simulation: buildSim({ ledgerSeq: 500 }),
+    currentBlockNumber: 1050,
+    currentLedgerSeq: undefined,
+    currentFromAmount: "100",
+    currentRoute: ["USDC", "ETH"],
+    currentSlippageBps: 100,
+    currentSequenceNumber: 42,
+    currentFee: "0.005 ETH",
+  });
+  assert(r28.status === 403, "Stellar with only currentBlockNumber must return 403.");
+
+  // 29. EVM transaction supplying only currentLedgerSeq (no
+  //     currentBlockNumber) -> rejected (Finding 5)
+  const r29 = simulateConfirmRoute({
+    ...highRiskBody,
+    isStellar: false,
+    simulation: buildSim({ blockNumber: 1000 }),
+    currentBlockNumber: undefined,
+    currentLedgerSeq: 1050,
+    currentFromAmount: "100",
+    currentRoute: ["USDC", "ETH"],
+    currentSlippageBps: 100,
+    currentSequenceNumber: 42,
+    currentFee: "0.005 ETH",
+  });
+  assert(r29.status === 403, "EVM with only currentLedgerSeq must return 403.");
+
+  console.log("All 29 confirmation-path tests passed.");
 }
 
 runConfirmationPathTests();
