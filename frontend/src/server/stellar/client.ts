@@ -9,6 +9,10 @@ import {
   type StellarNetworkConfig,
 } from "@/lib/stellar/config";
 import { executeWithFallback } from "@/lib/stellar/failover";
+import {
+  StellarRpcDataLayer,
+  type StellarDataLayerOptions,
+} from "@/server/stellar/dataLayer";
 
 export type StellarProviderMeta = {
   provider: "stellar_rpc" | "stellar_data_api";
@@ -50,6 +54,13 @@ export function createStellarRpcServers(value?: string) {
   return getStellarRpcUrls(network).map((providerUrl) => ({ network, providerUrl, server: rpcServer(providerUrl) }));
 }
 
+export function createStellarRpcDataLayer(
+  value?: string,
+  options: StellarDataLayerOptions = {},
+) {
+  return new StellarRpcDataLayer(requireStellarNetwork(value).id, options);
+}
+
 export async function withStellarRpcFallback<T>(value: string | undefined, operation: (server: rpc.Server, providerUrl: string) => Promise<T>) {
   const network = requireStellarNetwork(value);
   const result = await executeWithFallback(getStellarRpcUrls(network), (providerUrl) => operation(rpcServer(providerUrl), providerUrl));
@@ -69,31 +80,26 @@ export function createStellarDataServer(value?: string) {
 }
 
 export async function getStellarRpcHealth(value?: string) {
-  const startedAt = performance.now();
-  const result = await withStellarRpcFallback(value, async (server) => {
-    const [health, rpcNetwork, latestLedger] = await Promise.all([server.getHealth(), server.getNetwork(), server.getLatestLedger()]);
-    return { health, rpcNetwork, latestLedger };
-  });
-  const { network } = result;
-  const { health, rpcNetwork, latestLedger } = result.value;
-  const latencyMs = Math.round(performance.now() - startedAt);
-
-  if (rpcNetwork.passphrase !== network.networkPassphrase) {
-    throw new Error(`Stellar RPC passphrase mismatch for ${network.id}`);
-  }
-
+  const network = requireStellarNetwork(value);
+  const report = await new StellarRpcDataLayer(network.id).getHealth();
+  const preferred = report.providers.find((provider) => provider.healthy);
   return {
-    healthy: health.status === "healthy",
-    status: health.status,
+    healthy: report.healthy,
+    requestId: report.requestId,
+    status: report.healthy ? "healthy" : "degraded",
     network: network.id,
-    passphrase: rpcNetwork.passphrase,
-    protocolVersion: rpcNetwork.protocolVersion,
-    latestLedger: latestLedger.sequence,
-    closeTime: latestLedger.closeTime,
-    checkedAt: new Date().toISOString(),
-    latencyMs,
-    providerUrl: result.providerUrl,
-    fallbackUsed: result.fallbackUsed,
-    attempts: result.attempts,
+    passphrase: preferred?.passphrase,
+    protocolVersion: preferred?.protocolVersion,
+    latestLedger: report.highestObservedLedger,
+    checkedAt: report.checkedAt,
+    latencyMs: Math.max(0, ...report.providers.map((provider) => provider.latencyMs)),
+    providerUrl: preferred?.providerUrl,
+    fallbackUsed: preferred
+      ? report.providers.findIndex(
+          (provider) => provider.providerUrl === preferred.providerUrl,
+        ) > 0
+      : false,
+    providerDisagreement: report.providerDisagreement,
+    providers: report.providers,
   };
 }

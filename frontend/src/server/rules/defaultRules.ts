@@ -8,10 +8,14 @@ export function getDefaultRules(walletAddress = "0xDemoWallet"): UserRule {
     maxMemeExposurePercent: 10,
     maxDailyTransactionValueUsd: 1_000,
     maxSlippageBps: 100,
-    allowedChains: ["GOAT Network", "Base", "Ethereum", "Arbitrum", "Optimism", "Polygon", "BSC"],
+    minStableReservePercent: 15,
+    allowedChains: ["GOAT Network", "Base", "Ethereum", "Arbitrum", "Optimism", "Polygon", "BSC", "Stellar Testnet", "Stellar Pubnet"],
     blockedTokens: [],
+    blockedIssuers: [],
+    blockedCategories: [],
     allowedActions: ["hold", "watch", "reduce_exposure", "swap_to_stable", "prepare_transaction", "no_action"],
     autoExecute: false,
+    version: 1,
     createdAt: new Date().toISOString(),
   };
 }
