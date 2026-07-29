@@ -13,14 +13,17 @@
  *   node scripts/load-test-execution.mjs 10 200 http://localhost:3000
  *
  * This script exercises:
- *   - /api/execute (POST) — prepares execution
+ *   - /api/execute/prepare (POST) — prepares execution preview
  *   - /api/execute/confirm (POST) — confirms execution approval
- *   - /api/execute/status (GET) — checks status
+ *
+ * Argument order follows the documented/intended convention:
+ * concurrency, totalRequests, baseUrl — matching what a user would
+ * naturally expect when reading the usage line.
  */
 
-const BASE_URL = process.argv[3] || 'http://localhost:3000';
 const CONCURRENCY = parseInt(process.argv[2], 10) || 5;
-const TOTAL_REQUESTS = parseInt(process.argv[4], 10) || 50;
+const TOTAL_REQUESTS = parseInt(process.argv[3], 10) || 50;
+const BASE_URL = process.argv[4] || 'http://localhost:3000';
 
 const TIMEOUT_MS = 30_000;
 
@@ -43,19 +46,22 @@ function fetchWithTimeout(url, options = {}) {
 
 async function executeFlow() {
   const walletAddress = randomWallet();
-  const results = { prepare: null, confirm: null, status: null };
+  const results = { prepare: null, confirm: null };
 
   try {
-    // Step 1: Prepare execution
-    const prepareRes = await fetchWithTimeout(`${BASE_URL}/api/execute`, {
+    // Step 1: Prepare execution preview
+    // The /api/execute/prepare route accepts walletAddress, action, fromToken,
+    // toToken, riskScore, network, etc. (all optional per Zod bodySchema).
+    const prepareRes = await fetchWithTimeout(`${BASE_URL}/api/execute/prepare`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         walletAddress,
-        amount: '0.1',
-        tokenIn: 'USDC',
-        tokenOut: 'ETH',
-        chainId: 1,
+        action: 'reduce_exposure',
+        fromToken: 'USDC',
+        toToken: 'ETH',
+        riskScore: 70,
+        network: 'ethereum',
       }),
     });
     results.prepare = { status: prepareRes.status, ok: prepareRes.ok };
@@ -66,21 +72,29 @@ async function executeFlow() {
     const prepareData = await prepareRes.json();
 
     // Step 2: Confirm execution
+    // /api/execute/confirm requires: txHash, walletAddress, userApproved=true.
+    // Optional fields include simulation, currentBlockNumber, etc.
     const confirmRes = await fetchWithTimeout(`${BASE_URL}/api/execute/confirm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         walletAddress,
-        intentId: prepareData.intentId,
-        simulation: prepareData.simulation,
-        currentCalldata: prepareData.calldata,
+        txHash: '0x0000000000000000000000000000000000000000000000000000000000000001',
+        userApproved: true,
+        network: 'ethereum',
+        action: 'reduce_exposure',
+        riskScore: 70,
+        simulationStatus: prepareData.simulation?.status ?? 'pending',
+        simulation: prepareData.simulation ?? {
+          simulatedTxHash: '0x0000000000000000000000000000000000000000000000000000000000000001',
+          status: 'pending',
+          checks: [],
+          detail: 'Load-test placeholder',
+        },
+        currentBlockNumber: 1000,
       }),
     });
     results.confirm = { status: confirmRes.status, ok: confirmRes.ok };
-
-    // Step 3: Check status
-    const statusRes = await fetchWithTimeout(`${BASE_URL}/api/execute/status?walletAddress=${walletAddress}&intentId=${prepareData.intentId}`);
-    results.status = { status: statusRes.status, ok: statusRes.ok };
 
     return { walletAddress, results, error: null };
   } catch (err) {
@@ -117,7 +131,7 @@ async function main() {
   // Aggregate
   let totalOk = 0;
   let totalErr = 0;
-  let stepCounts = { prepare: { ok: 0, fail: 0 }, confirm: { ok: 0, fail: 0 }, status: { ok: 0, fail: 0 } };
+  let stepCounts = { prepare: { ok: 0, fail: 0 }, confirm: { ok: 0, fail: 0 } };
   const errors = [];
 
   for (const wr of allWorkerResults) {
@@ -132,8 +146,6 @@ async function main() {
       else stepCounts.prepare.fail++;
       if (r.results.confirm?.ok) stepCounts.confirm.ok++;
       else stepCounts.confirm.fail++;
-      if (r.results.status?.ok) stepCounts.status.ok++;
-      else stepCounts.status.fail++;
     }
   }
 
@@ -146,9 +158,8 @@ async function main() {
   console.log(`  Errors:         ${totalErr}`);
   console.log('');
   console.log('Step-level status:');
-  console.log(`  /api/execute          — OK: ${stepCounts.prepare.ok}, FAIL: ${stepCounts.prepare.fail}`);
+  console.log(`  /api/execute/prepare  — OK: ${stepCounts.prepare.ok}, FAIL: ${stepCounts.prepare.fail}`);
   console.log(`  /api/execute/confirm  — OK: ${stepCounts.confirm.ok}, FAIL: ${stepCounts.confirm.fail}`);
-  console.log(`  /api/execute/status   — OK: ${stepCounts.status.ok}, FAIL: ${stepCounts.status.fail}`);
   console.log('');
 
   if (errors.length > 0) {

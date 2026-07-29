@@ -39,6 +39,11 @@ const ARTIFACT_PATTERNS = [
   { name: 'Soroban Vault WASM', glob: 'soroban/target/wasm32-unknown-unknown/release/gold_raccoon_vault.wasm' },
   // Frontend build (try .next first, fallback to out/)
   { name: 'Frontend Build (dir)', glob: 'frontend/.next/BUILD_ID' },
+  // Compiler / build-system config (reproducible-build-critical)
+  { name: 'Soroban Rust Toolchain', glob: 'soroban/rust-toolchain.toml' },
+  { name: 'Soroban Cargo Manifest', glob: 'soroban/Cargo.toml' },
+  { name: 'Soroban Cargo Lock', glob: 'soroban/Cargo.lock' },
+  { name: 'EVM Hardhat Config', glob: 'backend/contracts/hardhat.config.ts' },
 ];
 
 function hashFile(filePath) {
@@ -114,6 +119,26 @@ function main() {
     try {
       manifest.commit = readFileSync(join(ROOT, '.git', 'HEAD'), 'utf8').trim();
     } catch { /* ignore */ }
+  }
+
+  // Fail if any artifact is missing (silently recording "missing" is unsafe)
+  const missing = manifest.artifacts.filter(a => a.status === 'missing');
+  const errors = manifest.artifacts.filter(a => a.status.startsWith('error:'));
+
+  if (missing.length > 0) {
+    console.error('ERROR: The following expected artifacts are missing:');
+    for (const a of missing) {
+      console.error(`  - ${a.name} (${a.path})`);
+    }
+    process.exit(1);
+  }
+
+  if (errors.length > 0) {
+    console.error('ERROR: The following artifacts could not be hashed:');
+    for (const a of errors) {
+      console.error(`  - ${a.name}: ${a.status}`);
+    }
+    process.exit(1);
   }
 
   // Output

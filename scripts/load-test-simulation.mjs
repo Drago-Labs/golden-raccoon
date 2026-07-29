@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
 /**
- * Load test script: /api/simulate and /api/simulate/status paths
+ * Load test script: simulation-adjacent endpoint (/api/execute/prepare)
+ *
+ * There is no standalone /api/simulate route in this repository.
+ * Simulation planning happens as part of /api/execute/prepare via
+ * buildExecutionPreviewFromPortfolio → getSimulationPlan. This script
+ * exercises that path under load.
  *
  * Usage:
  *   node scripts/load-test-simulation.mjs [concurrency] [totalRequests] [baseUrl]
@@ -11,11 +16,14 @@
  *
  * Example:
  *   node scripts/load-test-simulation.mjs 20 500 http://localhost:3000
+ *
+ * Argument order follows the documented/intended convention:
+ * concurrency, totalRequests, baseUrl.
  */
 
-const BASE_URL = process.argv[3] || 'http://localhost:3000';
 const CONCURRENCY = parseInt(process.argv[2], 10) || 10;
-const TOTAL_REQUESTS = parseInt(process.argv[4], 10) || 200;
+const TOTAL_REQUESTS = parseInt(process.argv[3], 10) || 200;
+const BASE_URL = process.argv[4] || 'http://localhost:3000';
 const TIMEOUT_MS = 60_000; // simulations can take longer
 
 const CHAINS = [
@@ -48,39 +56,40 @@ async function simulateFlow() {
   const tokens = randomChoice(TOKENS);
 
   try {
-    const simRes = await fetchWithTimeout(`${BASE_URL}/api/simulate`, {
+    // Simulation planning is part of /api/execute/prepare (there is no
+    // standalone /api/simulate route). The prepare endpoint calls
+    // buildExecutionPreviewFromPortfolio internally, which invokes
+    // getSimulationPlan for high-risk trade actions.
+    const prepareRes = await fetchWithTimeout(`${BASE_URL}/api/execute/prepare`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chainId: chain.chainId,
+        walletAddress: chain.network === 'soroban'
+          ? 'GBPL4BQKGYLNTNXYY4E76KMGY5BCYZYVGSZ4ED5RYH2YQK5T3GV2AAAA'
+          : '0x0000000000000000000000000000000000000000',
+        action: 'reduce_exposure',
+        fromToken: tokens.tokenIn,
+        toToken: tokens.tokenOut,
+        riskScore: 70,
         network: chain.network,
-        tokenIn: tokens.tokenIn,
-        tokenOut: tokens.tokenOut,
-        amount: tokens.amount,
-        userAddress: '0x0000000000000000000000000000000000000000',
+        estimatedValueUsd: parseFloat(tokens.amount) * 100,
+        slippageBps: 100,
+        simulationStatus: 'pending',
       }),
     });
 
-    if (!simRes.ok) {
-      return { error: `simulate failed: ${simRes.status}`, chain, tokens };
-    }
+    const latency = null; // server-side timing not available via this endpoint
+    const simData = await prepareRes.json().catch(() => ({}));
 
-    const simData = await simRes.json();
-    const simId = simData.simulationId || simData.id;
-
-    // Poll status a few times
-    if (simId) {
-      for (let i = 0; i < 5; i++) {
-        const statusRes = await fetchWithTimeout(
-          `${BASE_URL}/api/simulate/status?id=${simId}`
-        );
-        if (statusRes.ok) break;
-        await new Promise(r => setTimeout(r, 1000));
-      }
-    }
-
-    const latency = simData._latency || null;
-    return { ok: true, chain, tokens, latency, simDataSize: JSON.stringify(simData).length };
+    return {
+      ok: prepareRes.ok,
+      chain,
+      tokens,
+      latency,
+      status: prepareRes.status,
+      simDataSize: JSON.stringify(simData).length,
+      simulationStatus: simData.simulation?.status ?? 'unavailable',
+    };
   } catch (err) {
     return { error: err.message, chain, tokens };
   }
@@ -113,7 +122,6 @@ async function main() {
 
   let totalOk = 0;
   let totalErr = 0;
-  const latencies = [];
   const errors = [];
 
   for (const wr of allWorkerResults) {
@@ -123,7 +131,6 @@ async function main() {
         errors.push(r.error);
       } else {
         totalOk++;
-        if (r.latency) latencies.push(r.latency);
       }
     }
   }
@@ -131,25 +138,16 @@ async function main() {
   const rps = Math.round((TOTAL_REQUESTS / (elapsedMs / 1000)) * 100) / 100;
   const okRate = ((totalOk / TOTAL_REQUESTS) * 100).toFixed(1);
 
-  const sorted = [...latencies].sort((a, b) => a - b);
-  const p50 = sorted[Math.floor(sorted.length * 0.5)] || 0;
-  const p95 = sorted[Math.floor(sorted.length * 0.95)] || 0;
-  const p99 = sorted[Math.floor(sorted.length * 0.99)] || 0;
-  const avgLatency = latencies.length > 0
-    ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
-    : 0;
-
   console.log('=== Results ===');
   console.log(`  Elapsed:        ${elapsedMs}ms`);
   console.log(`  Throughput:     ${rps} req/s`);
   console.log(`  Success rate:   ${okRate}% (${totalOk}/${TOTAL_REQUESTS})`);
   console.log(`  Errors:         ${totalErr}`);
+
   console.log('');
-  console.log('Latency (ms):');
-  console.log(`  avg:  ${avgLatency}`);
-  console.log(`  p50:  ${p50}`);
-  console.log(`  p95:  ${p95}`);
-  console.log(`  p99:  ${p99}`);
+  console.log('Note: /api/execute/prepare exercises simulation planning (via');
+  console.log('buildExecutionPreviewFromPortfolio -> getSimulationPlan). There is');
+  console.log('no standalone /api/simulate route in this repository.');
 
   if (errors.length > 0) {
     console.log('');
