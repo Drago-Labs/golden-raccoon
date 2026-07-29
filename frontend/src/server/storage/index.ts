@@ -2,6 +2,7 @@ import type {
   AgentResult,
   AgentRunRecord,
   ChainFamily,
+  DiscoveryAlert,
   RecommendationRecord,
   StorageCounts,
   StorageHealth,
@@ -11,7 +12,14 @@ import type {
   TransactionRecord,
   UserApprovalRecord,
   UserRule,
+  WatchlistEntry,
+  WatchlistEntryInput,
+  WatchlistScanRun,
   X402PaymentReceipt,
+  AgentSource,
+  AgentMissingData,
+  DiscoveryClassification,
+  RiskLevel,
 } from "@/server/types";
 import { isTransactionHashForChain } from "@/lib/chainIdentity";
 import { getDefaultRules } from "@/server/rules/defaultRules";
@@ -40,6 +48,9 @@ export const storageSchemaContract = {
     "x402_payment_receipts",
     "token_identities",
     "source_snapshots",
+    "watchlist_entries",
+    "watchlist_scan_runs",
+    "discovery_alerts",
   ],
   adapterApi: [
     "listAgentRunRecords",
@@ -61,6 +72,16 @@ export const storageSchemaContract = {
     "createX402PaymentReceipt",
     "getUserRuleRecord",
     "upsertUserRuleRecord",
+    "listWatchlistEntries",
+    "getWatchlistEntry",
+    "addWatchlistEntry",
+    "removeWatchlistEntry",
+    "listWatchlistScanRuns",
+    "addWatchlistScanRun",
+    "listDiscoveryAlerts",
+    "acknowledgeDiscoveryAlert",
+    "createDiscoveryAlert",
+    "updateWatchlistEntryLatestScan",
   ],
   migration: "frontend/src/server/storage/schema.sql",
 };
@@ -73,6 +94,9 @@ const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonApprovals?: UserApprovalRecord[];
   __goldenRaccoonUserRules?: UserRule[];
   __goldenRaccoonX402PaymentReceipts?: X402PaymentReceipt[];
+  __goldenRaccoonWatchlistEntries?: WatchlistEntry[];
+  __goldenRaccoonWatchlistScanRuns?: WatchlistScanRun[];
+  __goldenRaccoonDiscoveryAlerts?: DiscoveryAlert[];
 };
 
 function getAgentRuns() {
@@ -133,6 +157,24 @@ function getX402PaymentReceipts() {
   memoryStore.__goldenRaccoonX402PaymentReceipts ??= [];
 
   return memoryStore.__goldenRaccoonX402PaymentReceipts;
+}
+
+function getWatchlistEntries() {
+  memoryStore.__goldenRaccoonWatchlistEntries ??= [];
+
+  return memoryStore.__goldenRaccoonWatchlistEntries;
+}
+
+function getWatchlistScanRuns() {
+  memoryStore.__goldenRaccoonWatchlistScanRuns ??= [];
+
+  return memoryStore.__goldenRaccoonWatchlistScanRuns;
+}
+
+function getDiscoveryAlerts() {
+  memoryStore.__goldenRaccoonDiscoveryAlerts ??= [];
+
+  return memoryStore.__goldenRaccoonDiscoveryAlerts;
 }
 
 function createId() {
@@ -492,4 +534,218 @@ export function getStorageCounts(): StorageCounts {
     userRules: getUserRules().length,
     x402PaymentReceipts: getX402PaymentReceipts().length,
   };
+}
+
+type CreateWatchlistInput = WatchlistEntryInput & {
+  identityKey: string;
+};
+
+export function listWatchlistEntries(walletAddress?: string) {
+  const normalizedWallet = walletAddress?.toLowerCase();
+
+  return getWatchlistEntries()
+    .filter((entry) => !normalizedWallet || entry.walletAddress.toLowerCase() === normalizedWallet)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+export function getWatchlistEntry(id: string) {
+  return getWatchlistEntries().find((entry) => entry.id === id);
+}
+
+export type AddWatchlistEntryResult = {
+  entry: WatchlistEntry;
+  alreadyExisted: boolean;
+};
+
+export function addWatchlistEntry(input: CreateWatchlistInput): AddWatchlistEntryResult {
+  const normalizedWallet = input.walletAddress.trim();
+  const existing = getWatchlistEntries().find(
+    (entry) =>
+      entry.walletAddress.toLowerCase() === normalizedWallet.toLowerCase() &&
+      entry.identityKey === input.identityKey,
+  );
+
+  if (existing) {
+    return { entry: existing, alreadyExisted: true };
+  }
+
+  const entry: WatchlistEntry = {
+    id: createRecordId("watch"),
+    walletAddress: normalizedWallet,
+    identityKey: input.identityKey,
+    chain: input.chain,
+    contractAddress: input.contractAddress,
+    pairAddress: input.pairAddress,
+    symbol: input.symbol,
+    tokenName: input.tokenName,
+    assetKey: input.assetKey,
+    issuer: input.issuer,
+    assetType: input.assetType,
+    source: input.source,
+    note: input.note,
+    createdAt: new Date().toISOString(),
+  };
+
+  getWatchlistEntries().unshift(entry);
+
+  return { entry, alreadyExisted: false };
+}
+
+export function removeWatchlistEntry(id: string) {
+  const store = getWatchlistEntries();
+  const remaining = store.filter((entry) => entry.id !== id);
+  const removed = store.length - remaining.length;
+
+  memoryStore.__goldenRaccoonWatchlistEntries = remaining;
+
+  const runs = getWatchlistScanRuns().filter((run) => run.entryId !== id);
+  memoryStore.__goldenRaccoonWatchlistScanRuns = runs;
+
+  const alerts = getDiscoveryAlerts().filter((alert) => alert.entryId !== id);
+  memoryStore.__goldenRaccoonDiscoveryAlerts = alerts;
+
+  return removed > 0;
+}
+
+type AddWatchlistScanRunInput = {
+  entryId: string;
+  walletAddress: string;
+  identityKey: string;
+  classification: DiscoveryClassification;
+  classificationReasons: string[];
+  confidence: number;
+  score: number;
+  sourceLineage: AgentSource[];
+  missingData: AgentMissingData[];
+  riskReport?: WatchlistScanRun["riskReport"];
+  agentRunId?: string;
+  status?: WatchlistScanRun["status"];
+};
+
+export function addWatchlistScanRun(input: AddWatchlistScanRunInput): WatchlistScanRun {
+  const previous = getWatchlistScanRuns()
+    .filter((run) => run.entryId === input.entryId)
+    .sort((left, right) => new Date(right.scannedAt).getTime() - new Date(left.scannedAt).getTime())[0];
+
+  const run: WatchlistScanRun = {
+    id: createRecordId("wscan"),
+    entryId: input.entryId,
+    walletAddress: input.walletAddress,
+    identityKey: input.identityKey,
+    agentRunId: input.agentRunId,
+    classification: input.classification,
+    classificationReasons: input.classificationReasons,
+    confidence: input.confidence,
+    score: input.score,
+    sourceLineage: input.sourceLineage,
+    missingData: input.missingData,
+    riskReport: input.riskReport,
+    status: input.status ?? "completed",
+    previousRunId: previous?.id,
+    scannedAt: new Date().toISOString(),
+  };
+
+  getWatchlistScanRuns().unshift(run);
+  updateWatchlistEntryLatestScan(input.entryId, {
+    scanRunId: run.id,
+    classification: run.classification,
+    score: run.score,
+    scannedAt: run.scannedAt,
+    status: run.status,
+  });
+
+  return run;
+}
+
+export function updateWatchlistEntryLatestScan(
+  id: string,
+  update: {
+    scanRunId: string;
+    classification: DiscoveryClassification;
+    score: number;
+    scannedAt: string;
+    status: WatchlistScanRun["status"];
+  },
+) {
+  const entry = getWatchlistEntries().find((candidate) => candidate.id === id);
+
+  if (!entry) {
+    return undefined;
+  }
+
+  entry.lastScannedAt = update.scannedAt;
+  entry.latestScanRunId = update.scanRunId;
+  entry.latestStatus = update.status === "failed" ? "stale" : update.status;
+
+  if (update.status === "failed") {
+    // Preserve last successful observation as the latest visible result.
+    const hasPriorSuccess = entry.successfulScanRunIds && entry.successfulScanRunIds.length > 0;
+
+    if (!hasPriorSuccess) {
+      entry.latestStatus = "stale";
+    }
+  } else {
+    entry.latestClassification = update.classification;
+    entry.latestScore = update.score;
+    entry.successfulScanRunIds = [update.scanRunId, ...(entry.successfulScanRunIds ?? [])].slice(0, 50);
+  }
+
+  return entry;
+}
+
+export function listWatchlistScanRuns(entryId?: string) {
+  return getWatchlistScanRuns()
+    .filter((run) => !entryId || run.entryId === entryId)
+    .sort((left, right) => new Date(right.scannedAt).getTime() - new Date(left.scannedAt).getTime());
+}
+
+type CreateDiscoveryAlertInput = {
+  walletAddress: string;
+  entryId?: string;
+  runId?: string;
+  kind: DiscoveryAlert["kind"];
+  title: string;
+  detail: string;
+  severity: RiskLevel;
+  sourceLabel?: string;
+};
+
+export function createDiscoveryAlert(input: CreateDiscoveryAlertInput): DiscoveryAlert {
+  const alert: DiscoveryAlert = {
+    id: createRecordId("alert"),
+    walletAddress: input.walletAddress,
+    entryId: input.entryId,
+    runId: input.runId,
+    kind: input.kind,
+    title: input.title,
+    detail: input.detail,
+    severity: input.severity,
+    sourceLabel: input.sourceLabel,
+    acknowledged: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  getDiscoveryAlerts().unshift(alert);
+
+  return alert;
+}
+
+export function listDiscoveryAlerts(walletAddress?: string) {
+  const normalizedWallet = walletAddress?.toLowerCase();
+
+  return getDiscoveryAlerts()
+    .filter((alert) => !normalizedWallet || alert.walletAddress.toLowerCase() === normalizedWallet)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+export function acknowledgeDiscoveryAlert(id: string) {
+  const alert = getDiscoveryAlerts().find((candidate) => candidate.id === id);
+
+  if (!alert) {
+    return undefined;
+  }
+
+  alert.acknowledged = true;
+
+  return alert;
 }

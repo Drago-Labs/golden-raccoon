@@ -85,7 +85,7 @@ export async function POST(request: Request) {
 
   const { portfolio } = await getPortfolioSnapshot(parsed.data.walletAddress);
   const rules = getUserRuleRecord(parsed.data.walletAddress ?? portfolio.walletAddress);
-  const preview = buildExecutionPreviewFromPortfolio(portfolio, { ...parsed.data, rules });
+  const preview = await buildExecutionPreviewFromPortfolio(portfolio, { ...parsed.data, rules });
 
   const walletAddress = parsed.data.walletAddress ?? portfolio.walletAddress;
   const network = parsed.data.network ?? preview.network ?? "Connected wallet";
