@@ -405,36 +405,46 @@ function verifyStellarEffects(response: StellarRpcGetResponse, expectation: Stel
         return { matched: false, detail: `${effect.kind} expected payment-style operation, observed ${operationsList.map((o) => String(o.type ?? "unknown"))}` };
       }
       if (effect.fromAddress || effect.toAddress) {
-        const opFrom = typeof paymentOp.from === "string" ? paymentOp.from : undefined;
+        // Stellar SDK decoded operations record the effective source under
+        // `source` (per-operation override or tx-level default), not `from`.
+        const opSource = typeof paymentOp.source === "string" ? paymentOp.source : undefined;
         const opTo = typeof paymentOp.to === "string" ? paymentOp.to : (typeof paymentOp.destination === "string" ? paymentOp.destination : undefined);
-        if (effect.fromAddress && (!opFrom || opFrom.toLowerCase() !== effect.fromAddress.toLowerCase())) {
-          return { matched: false, detail: `${effect.kind} expected fromAddress ${effect.fromAddress}, observed ${opFrom ?? "absent"}` };
+        if (effect.fromAddress && (!opSource || opSource.toLowerCase() !== effect.fromAddress.toLowerCase())) {
+          return { matched: false, detail: `${effect.kind} expected fromAddress ${effect.fromAddress}, observed ${opSource ?? "absent"}` };
         }
         if (effect.toAddress && (!opTo || opTo.toLowerCase() !== effect.toAddress.toLowerCase())) {
           return { matched: false, detail: `${effect.kind} expected toAddress ${effect.toAddress}, observed ${opTo ?? "absent"}` };
         }
       }
+      if (effect.assetKey) {
+        const opAsset = typeof paymentOp.asset === "string"
+          ? paymentOp.asset
+          : (paymentOp.asset as { code?: string; issuer?: string } | undefined)?.code;
+        if (opAsset && opAsset.toLowerCase() !== effect.assetKey.toLowerCase()) {
+          return { matched: false, detail: `${effect.kind} expected assetKey ${effect.assetKey}, observed ${opAsset}` };
+        }
+      }
       if (effect.amountBaseUnits || effect.amount) {
-        const opAmount = typeof paymentOp.amount === "string" ? paymentOp.amount : undefined;
-        // Prefer the pre-scaled base-units projection (lifecycle sets this via
-        // viem.parseUnits); it side-steps the BigInt("decimal-string") SyntaxError
-        // that would crash the poll path on human-readable decimal inputs. Fall
-        // back to effect.amount only when it is non-decimal so a malformed
-        // expectation surfaces as a clean mismatch instead of an uncaught throw.
+        const opAmountRaw = typeof paymentOp.amount === "string" ? paymentOp.amount : undefined;
+        // Stellar SDK returns amounts as decimal strings (e.g. "100.5000000").
+        // Convert to integer by removing the decimal separator and padding to the
+        // expected scale so the comparison with BigInt base-units works correctly.
+        const opAmountBaseUnits = opAmountRaw
+          ? BigInt(opAmountRaw.replace(".", "").replace(/^0+/, "") || "0")
+          : undefined;
         const expectedBaseUnits = effect.amountBaseUnits
           ?? (/^\d+$/.test(effect.amount ?? "") ? effect.amount : undefined);
         if (expectedBaseUnits) {
           try {
             const expectedBig = BigInt(expectedBaseUnits);
-            const opBig = opAmount !== undefined ? BigInt(opAmount) : undefined;
-            if (opBig === undefined || opBig !== expectedBig) {
-              return { matched: false, detail: `${effect.kind} expected amount ${expectedBaseUnits} base units, observed ${opAmount ?? "absent"}` };
+            if (opAmountBaseUnits !== expectedBig) {
+              return { matched: false, detail: `${effect.kind} expected amount ${expectedBaseUnits} base units, observed ${opAmountRaw ?? "absent"} (${String(opAmountBaseUnits ?? "N/A")} base units)` };
             }
           } catch (error) {
             return { matched: false, detail: `${effect.kind} amount comparison failed: ${error instanceof Error ? error.message : "unknown"}` };
           }
-        } else if (effect.amount && opAmount && opAmount !== effect.amount) {
-          return { matched: false, detail: `${effect.kind} expected amount ${effect.amount}, observed ${opAmount}` };
+        } else if (effect.amount && opAmountRaw && opAmountRaw !== effect.amount) {
+          return { matched: false, detail: `${effect.kind} expected amount ${effect.amount}, observed ${opAmountRaw}` };
         }
       }
       continue;

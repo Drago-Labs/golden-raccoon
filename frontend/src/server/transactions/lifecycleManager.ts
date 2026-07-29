@@ -22,6 +22,7 @@ import {
   getTransactionRecordByIdempotencyKey,
   isImmutableTerminal,
   listTransactionLifecycleEvents,
+  removeTransactionRecordByHash,
   updateTransactionRecord,
 } from "@/server/storage";
 import type {
@@ -85,6 +86,7 @@ type LifecycleStorageDependencies = {
   getByIdempotencyKey: typeof getTransactionRecordByIdempotencyKey;
   create: typeof createTransactionRecord;
   update: typeof updateTransactionRecord;
+  removeByHash: (hash: string) => boolean;
   appendEvent: typeof appendLifecycleEventByName;
   listEvents: typeof listTransactionLifecycleEvents;
 };
@@ -94,6 +96,7 @@ const defaultStorage: LifecycleStorageDependencies = {
   getByIdempotencyKey: getTransactionRecordByIdempotencyKey,
   create: createTransactionRecord,
   update: updateTransactionRecord,
+  removeByHash: removeTransactionRecordByHash,
   appendEvent: appendLifecycleEventByName,
   listEvents: listTransactionLifecycleEvents,
 };
@@ -265,6 +268,13 @@ export async function submitTransaction(input: SubmitTransactionInput): Promise<
         lifecycle: storage.listEvents(existingByHash.hash),
       },
     };
+  }
+
+  if (existingByKey) {
+    // A prepared placeholder exists with the same idempotency key. Remove it so
+    // the real record below can use the same key without violating the unique
+    // (wallet_address, idempotency_key) index.
+    storage.removeByHash(existingByKey.hash);
   }
 
   const base = buildBaseRecord(input, normalizedHash);

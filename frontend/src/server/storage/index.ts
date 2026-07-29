@@ -1112,3 +1112,11 @@ export function acknowledgeDiscoveryAlert(id: string) {
 
   return alert;
 }
+
+export function removeTransactionRecordByHash(hash: string): boolean {
+  const records = getTransactions();
+  const index = records.findIndex((r) => r.hash.toLowerCase() === hash.toLowerCase());
+  if (index < 0) return false;
+  records.splice(index, 1);
+  return true;
+}

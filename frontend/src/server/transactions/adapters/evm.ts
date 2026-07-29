@@ -447,14 +447,19 @@ export function getEvmChainAdapter(options: EvmAdapterOptions): {
           matchedEffects: true,
         };
       } catch (error) {
+        const message = error instanceof Error ? error.message : "EVM RPC polling failed.";
+        // Transient errors (timeout, connection refused, etc.) must not produce
+        // an immutable terminal "failed" — return "pending" so the lifecycle
+        // manager can retry later.
+        const isTransient = /timeout|ETIMEDOUT|ECONNREFUSED|ECONNRESET|network|fetch.*fail|abort/i.test(message);
         return {
           hash,
           family,
           network,
-          status: "failed",
+          status: isTransient ? "pending" : "failed",
           providerUrl,
           polledAt,
-          revertReason: error instanceof Error ? error.message : "EVM RPC polling failed.",
+          revertReason: message,
         };
       }
     },
