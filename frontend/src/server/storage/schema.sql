@@ -199,6 +199,52 @@ create table if not exists user_rules (
   created_at timestamptz not null default now()
 );
 
+-- V3 auto-mode onboarding is deliberately isolated from mutable V2 rules.
+-- Missing policy/authorization fields remain null so a migrated row can
+-- never become eligible through server defaults.
+create table if not exists auto_mode_policies (
+  wallet_address text primary key,
+  policy_version integer not null check (policy_version > 0),
+  policy jsonb not null,
+  policy_hash text,
+  requested_enabled boolean not null default false,
+  effective_enabled boolean not null default false,
+  explanation_accepted_at timestamptz,
+  authorization_status text not null default 'pending'
+    check (authorization_status in ('pending', 'authorized', 'cancelled', 'rejected', 'expired')),
+  authorization_policy_hash text,
+  authorization_proof_id text,
+  signed_payload_hash text,
+  authorized_at timestamptz,
+  authorization_expires_at timestamptz,
+  allowance_usd numeric,
+  contract_address text,
+  contract_network text,
+  contract_policy_version text,
+  contract_verified boolean not null default false,
+  contract_verification_id text,
+  contract_checked_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists auto_mode_authorization_events (
+  id text primary key,
+  wallet_address text not null references auto_mode_policies(wallet_address) on delete cascade,
+  event text not null
+    check (event in ('policy_saved', 'expansion_confirmed', 'authorization_requested', 'authorized', 'cancelled', 'rejected', 'expired')),
+  policy_hash text,
+  detail jsonb not null default '{}'::jsonb,
+  occurred_at timestamptz not null default now()
+);
+
+create index if not exists auto_mode_authorization_events_wallet_occurred_idx
+  on auto_mode_authorization_events(wallet_address, occurred_at desc);
+
+-- Legacy strategy rows are never an auto-mode authorization. Applying this
+-- additive migration is intentionally fail-closed for all pre-V3 users.
+update user_rules set auto_execute = false where auto_execute is distinct from false;
+
 create index if not exists agent_runs_wallet_created_idx on agent_runs(wallet_address, created_at desc);
 create index if not exists agent_results_run_agent_idx on agent_results(run_id, agent);
 create index if not exists source_snapshots_run_agent_idx on source_snapshots(run_id, agent);
