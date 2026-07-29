@@ -1,0 +1,131 @@
+name: Feature / scope request
+description: Propose a new feature, enhancement, or scope of work
+title: "#N "
+labels: ["enhancement"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not start work before a maintainer assigns this issue to you.**
+        See [CONTRIBUTING.md](../../CONTRIBUTING.md) for the full contributor workflow.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One-line description of the feature.
+      placeholder: "V2: Implement real quote adapters for Stellar and configured EVM routes"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this feature solve? Why is it needed?
+      placeholder: |
+        The execution agent currently uses "planned" placeholders for swap quotes.
+        Without a real quote provider, the server cannot verify route, price, or
+        slippage before presenting a trade plan to the user.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Exactly what should be built, changed, or documented.
+      placeholder: |
+        - Define a chain-aware quote request/result contract.
+        - Implement Stellar classic-asset path quotes using Horizon path finding.
+        - Implement an EVM quote adapter behind the same interface.
+        - Add timeout, bounded retry for transient failures, and structured errors.
+        - Verify the quote matches requested wallet, network, assets, and amount.
+        - Never mark a plan executable from client-supplied quote fields.
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: Explicitly what is NOT included in this issue.
+      placeholder: |
+        - Wallet signing, submission, or automatic execution.
+        - Inventing a fallback quote.
+        - Supporting every DEX or Soroban token.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: Measurable conditions that define Done. Prefix each with a checkbox.
+      placeholder: |
+        - [ ] Real Stellar and configured EVM quotes map to one typed contract.
+        - [ ] Amounts use integer/decimal-safe representations (strings), not floating point.
+        - [ ] Expired, mismatched, malformed, and unavailable quotes block execution.
+        - [ ] Provider credentials remain server-only.
+        - [ ] Fixtures cover success, no route, timeout, rate limit, mismatch, stale, and malformed.
+        - [ ] Existing recommendation-only flows still work without a quote.
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: How will a reviewer confirm this is Done?
+      placeholder: |
+        - Run `npm run quality:gate` — must pass.
+        - Run quote adapter unit tests against fixture scenarios.
+        - Open a Stellar trade preview and confirm real quote fields are populated.
+        - Open an EVM trade preview and confirm DexScreener quote is populated.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Does this block or depend on another issue? List issue numbers.
+      placeholder: "Depends on #29 (Stellar execution parity). Blocks #42."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: chain_impact
+    attributes:
+      label: Chain impact
+      description: Which chain families are affected by this change?
+      options:
+        - EVM only
+        - Stellar only
+        - Both EVM and Stellar
+        - Neither (infrastructure / documentation)
+    validations:
+      required: true
+
+  - type: textarea
+    id: security
+    attributes:
+      label: Security considerations
+      description: Does this change affect trust boundaries, key handling, or approval flow?
+      placeholder: |
+        - No user keys are handled server-side.
+        - Quote provider responses are verified before marking a plan as executable.
+        - Client-supplied quote fields never make a plan executable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: roadmap
+    attributes:
+      label: Roadmap coverage
+      description: Which V1/V2 roadmap items does this address?
+      placeholder: "V2-035 through V2-040 and V2-070"
+    validations:
+      required: false
