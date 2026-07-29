@@ -723,6 +723,20 @@ impl PolicyContract {
             .unwrap_or(false)
     }
 
+    pub fn get_intent_user(env: Env, intent_hash: BytesN<32>) -> Address {
+        let intent_key = DataKey::Intent(intent_hash.clone());
+        let intent: Intent = match env.storage().persistent().get(&intent_key) {
+            Some(i) => i,
+            None => panic_with_error!(&env, PolicyError::UnknownIntent),
+        };
+        let decision_key = DataKey::PolicyDecision(intent.policy_commitment.clone());
+        let decision: PolicyDecision = match env.storage().persistent().get(&decision_key) {
+            Some(d) => d,
+            None => panic_with_error!(&env, PolicyError::UnknownDecision),
+        };
+        decision.user
+    }
+
     pub fn get_intent_validity(
         env: Env,
         intent_hash: BytesN<32>,

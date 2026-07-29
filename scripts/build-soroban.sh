@@ -11,22 +11,25 @@ echo ""
 
 cd "$(dirname "$0")/../soroban"
 
-cargo build --release -p golden-raccoon-policy
+cargo build --release --target wasm32-unknown-unknown -p golden-raccoon-policy
 
 WASM="target/wasm32-unknown-unknown/release/golden_raccoon_policy.wasm"
-if [ -f "$WASM" ]; then
-  if command -v sha256sum &> /dev/null; then
-    HASH=$(sha256sum "$WASM" | cut -d' ' -f1)
-  else
-    HASH=$(python3 -c "import hashlib; print(hashlib.sha256(open('$WASM','rb').read()).hexdigest())")
-  fi
-  echo "=== Build Verification ==="
-  echo "GoldenRaccoonPolicy WASM hash: $HASH"
-  echo ""
-  echo "To verify reproducibility:"
-  echo "  1. git checkout <commit>"
-  echo "  2. ./scripts/build-soroban.sh"
-  echo "  3. Compare WASM hash with CI/reference build"
+if [ ! -f "$WASM" ]; then
+  echo "ERROR: WASM file not found after build: $WASM" >&2
+  exit 1
 fi
+
+if command -v sha256sum &> /dev/null; then
+  HASH=$(sha256sum "$WASM" | cut -d' ' -f1)
+else
+  HASH=$(python3 -c "import hashlib; print(hashlib.sha256(open('$WASM','rb').read()).hexdigest())")
+fi
+echo "=== Build Verification ==="
+echo "GoldenRaccoonPolicy WASM hash: $HASH"
+echo ""
+echo "To verify reproducibility:"
+echo "  1. git checkout <commit>"
+echo "  2. ./scripts/build-soroban.sh"
+echo "  3. Compare WASM hash with CI/reference build"
 
 echo "Build complete."
