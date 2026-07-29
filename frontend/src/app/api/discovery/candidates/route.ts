@@ -1,65 +1,46 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { withCacheHeaders } from "@/server/cache/strategy";
 import { checkRateLimit } from "@/server/security/rateLimit";
-import { getDiscoveredCandidates, getDiscoveredCandidatesByProvider, getDiscoveredCandidatesByChain, getDiscoveryServiceHealth } from "@/server/discovery";
+import { listDiscoveryCandidates } from "@/server/discovery/pipeline";
+import { fetchLiveDiscoveryCandidates, isOfflineSnapshot } from "@/server/discovery/sources";
 
-const querySchema = z.object({
-  provider: z.enum(["dexscreener_new_pairs", "stellar_market"]).optional(),
-  chain: z.string().min(1).max(40).optional(),
-  includeHealth: z.coerce.boolean().optional(),
+const bodySchema = z.object({
+  chain: z.string().min(1).max(64).optional(),
+  provider: z.enum(["dexscreener", "stellar_market", "manual"]).default("manual"),
 });
 
-export const dynamic = "force-dynamic";
-
-export async function GET(request: Request) {
-  const rateLimited = checkRateLimit(request, { namespace: "discovery:candidates", limit: 60, windowMs: 60_000 });
+export async function POST(request: Request) {
+  const rateLimited = checkRateLimit(request, { namespace: "discovery:candidates", limit: 30, windowMs: 60_000 });
 
   if (rateLimited) {
     return rateLimited;
   }
 
-  const params = new URL(request.url).searchParams;
-  const parsed = querySchema.safeParse({
-    provider: params.get("provider") ?? undefined,
-    chain: params.get("chain") ?? undefined,
-    includeHealth: params.get("includeHealth") === "true" ? true : undefined,
-  });
+  const body = await request.json().catch(() => ({}));
+  const parsed = bodySchema.safeParse(body);
 
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  try {
-    let candidates;
+  const candidates = await listDiscoveryCandidates(parsed.data.chain, {
+    listCandidates: async (chain) => {
+      const live = await fetchLiveDiscoveryCandidates(chain);
+      const filteredByProvider = parsed.data.provider === "manual"
+        ? live.candidates
+        : live.candidates.filter((candidate) => candidate.source === parsed.data.provider);
 
-    if (parsed.data.provider) {
-      candidates = getDiscoveredCandidatesByProvider(parsed.data.provider);
-    } else if (parsed.data.chain) {
-      candidates = getDiscoveredCandidatesByChain(parsed.data.chain);
-    } else {
-      candidates = getDiscoveredCandidates();
-    }
+      return filteredByProvider;
+    },
+  });
 
-    const response: Record<string, unknown> = {
-      ok: true,
-      count: candidates.length,
-      candidates,
-      checkedAt: new Date().toISOString(),
-    };
-
-    if (parsed.data.includeHealth) {
-      response.health = getDiscoveryServiceHealth();
-    }
-
-    return withCacheHeaders(NextResponse.json(response), "scan");
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Discovery service error",
-      },
-      { status: 500 },
-    );
-  }
+  return NextResponse.json({
+    candidates,
+    origin: {
+      source: candidates.some((candidate) => isOfflineSnapshot(candidate))
+        ? "offline_snapshot"
+        : "live_provider",
+      fetchedAt: new Date().toISOString(),
+    },
+  });
 }
