@@ -82,7 +82,7 @@ export async function getRiskPublicationPreview(
   // Extract footprint from the transaction's soroban data after preparation
   let readOnlyCount = 0;
   let readWriteCount = 0;
-  let hasRestoreEntry = false;
+  const hasRestoreEntry = false;
   let minResourceFee: string | undefined;
 
   try {

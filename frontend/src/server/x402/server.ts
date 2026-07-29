@@ -1,8 +1,8 @@
 import { createFacilitatorConfig } from "@coinbase/x402";
 import { HTTPFacilitatorClient, x402ResourceServer } from "@x402/core/server";
-import { ExactEvmScheme } from "@x402/evm/exact/server";
 import type { Network } from "@x402/core/types";
 import { getX402RuntimeConfig, validateX402RuntimeConfig } from "@/server/x402/config";
+import { getRegisteredSchemes } from "@/server/x402/schemes";
 
 export function createX402ResourceServer() {
   const config = getX402RuntimeConfig();
@@ -18,5 +18,12 @@ export function createX402ResourceServer() {
       : { url: config.facilitatorUrl },
   );
 
-  return new x402ResourceServer(facilitatorClient).register(config.network as Network, new ExactEvmScheme());
+  const server = new x402ResourceServer(facilitatorClient);
+  const schemes = getRegisteredSchemes(config);
+
+  for (const registered of schemes) {
+    server.register(config.network as Network, registered.scheme);
+  }
+
+  return server;
 }
