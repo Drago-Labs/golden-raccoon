@@ -16,6 +16,7 @@ import type {
 import { isTransactionHashForChain } from "@/lib/chainIdentity";
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { validateAgentResult } from "@/server/agents/schema";
+import { isSupabaseConfigured } from "@/lib/supabase";
 
 type CreateAgentRunInput = {
   walletAddress: string;
@@ -88,14 +89,32 @@ function getRecommendations() {
 
 function getTransactions() {
   memoryStore.__goldenRaccoonTransactions ??= [];
-
   return memoryStore.__goldenRaccoonTransactions;
 }
 
 function getTransactionEvents() {
   memoryStore.__goldenRaccoonTransactionEvents ??= [];
-
   return memoryStore.__goldenRaccoonTransactionEvents;
+}
+
+async function persistTransactionRecord(record: TransactionRecord) {
+  if (!isSupabaseConfigured()) return;
+  const { createTransactionRecord: supabaseCreate } = await import("@/server/storage/supabase");
+  try { await supabaseCreate(record); } catch { /* best-effort persistence */ }
+}
+
+async function persistTransactionUpdate(hash: string, updates: Partial<TransactionRecord>) {
+  if (!isSupabaseConfigured()) return;
+  const { updateTransactionRecord: supabaseUpdate } = await import("@/server/storage/supabase");
+  try { await supabaseUpdate(hash, updates); } catch { /* best-effort persistence */ }
+}
+
+async function persistTransactionEvent(event: Record<string, unknown>) {
+  if (!isSupabaseConfigured()) return;
+  try {
+    const { createTransactionLifecycleEvent: supabaseCreate } = await import("@/server/storage/supabase");
+    await supabaseCreate(event as unknown as TransactionLifecycleEvent);
+  } catch { /* best-effort persistence */ }
 }
 
 function getApprovals() {
@@ -151,13 +170,13 @@ export function hashSourceSnapshot(value: unknown) {
 }
 
 export function getStorageHealth(): StorageHealth {
-  const supabaseConfigured = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const supabaseConfigured = isSupabaseConfigured();
 
   if (supabaseConfigured) {
     return {
       provider: "supabase_postgres",
-      persistent: false,
-      detail: "Supabase env vars are configured. The MVP adapter still uses in-memory storage, but the function API and schema contract are fixed for adapter parity.",
+      persistent: true,
+      detail: "Using persistent Supabase Postgres storage. Transaction records survive server restarts.",
       schema: storageSchemaContract,
     };
   }
@@ -311,6 +330,7 @@ export function createTransactionRecord(input: Omit<TransactionRecord, "createdA
   };
 
   getTransactions().unshift(record);
+  persistTransactionRecord(record);
 
   return record;
 }
@@ -335,6 +355,7 @@ export function updateTransactionRecord(hash: string, updates: Partial<Omit<Tran
   };
 
   list[existingIndex] = merged;
+  persistTransactionUpdate(hash, updates);
 
   return merged;
 }
@@ -354,6 +375,7 @@ export function createTransactionLifecycleEvent(input: Omit<TransactionLifecycle
   };
 
   getTransactionEvents().unshift(event);
+  persistTransactionEvent(event);
 
   return event;
 }

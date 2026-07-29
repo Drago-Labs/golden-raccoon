@@ -153,20 +153,20 @@ export function getStellarChainAdapter(options: StellarAdapterOptions): {
     return transaction;
   }
 
+  const config = requireConfig();
+  const networkPassphrase = config.networkPassphrase;
+
   return {
     family,
     network,
     deriveHash(payload: string) {
-      requireConfig();
-      const simulator = getStellarSimulator(family, options.network);
-      if (simulator || isPreHashInput(payload)) {
+      if (getStellarSimulator(family, options.network) || isPreHashInput(payload)) {
         return computeSimulatedHash(payload, options.network);
       }
-      const transaction = TransactionBuilder.fromXDR(payload, requireConfig().networkPassphrase);
+      const transaction = TransactionBuilder.fromXDR(payload, networkPassphrase);
       return transaction.hash().toString("hex");
     },
     async submit(payload, overrides) {
-      const config = requireConfig();
       const simulator = getStellarSimulator(family, options.network);
       const outcome = overrides?.simulate ?? simulator?.submitOutcome;
       const expectation: StellarVerificationExpectation = {
@@ -197,7 +197,7 @@ export function getStellarChainAdapter(options: StellarAdapterOptions): {
       }
 
       const submitted = !simulator && !outcome && !useSimulatedHash
-        ? await safeSendTransaction(payload, config.networkPassphrase, providerUrl).catch(() => undefined)
+        ? await safeSendTransaction(payload, networkPassphrase, providerUrl).catch(() => undefined)
         : undefined;
 
       if (!simulator && !outcome && !useSimulatedHash && !submitted) {
@@ -229,8 +229,6 @@ export function getStellarChainAdapter(options: StellarAdapterOptions): {
       if (outcome === "failed") return { hash, family, network, status: "failed", providerUrl, polledAt, revertReason: "Simulated revert reason (fixture coverage)." };
       if (outcome === "pending") return { hash, family, network, status: "pending", providerUrl, polledAt };
 
-      // Simulator is configured with an explicit outcome: honour it and skip the
-      // real RPC so fixtures don't get clobbered by not-found responses.
       if (simulator) {
         return {
           hash,
@@ -249,13 +247,16 @@ export function getStellarChainAdapter(options: StellarAdapterOptions): {
       if (!real) {
         return { hash, family, network, status: "pending", providerUrl, polledAt };
       }
-      const mapped = mapStellarPollResponse(real, hash, family, network, providerUrl, polledAt);
+
+      const decodedSource = decodeStellarEnvelopeSource(real, networkPassphrase);
+      const mapped = mapStellarPollResponse(real, hash, family, network, providerUrl, polledAt, decodedSource);
 
       if (mapped.status === "pending") {
         return mapped;
       }
 
-      const effectsCheck = verifyStellarEffects(real, overrides?.expectation);
+      const decodedOps = decodeStellarEnvelopeOperations(real, networkPassphrase);
+      const effectsCheck = verifyStellarEffects(real, overrides?.expectation, decodedSource, decodedOps);
       if (!effectsCheck.matched) {
         return {
           ...mapped,
@@ -309,13 +310,48 @@ async function safeGetTransaction(hash: string, providerUrl: string): Promise<St
   }
 }
 
-function mapStellarPollResponse(response: StellarRpcGetResponse, hash: string, family: ChainFamily, network: StellarNetworkId, providerUrl: string, polledAt: string): StellarPollResult {
+function decodeStellarEnvelopeSource(response: StellarRpcGetResponse, networkPassphrase: string): string | undefined {
+  const record = response as unknown as Record<string, unknown>;
+  const envelope = typeof record.envelopeXdr === "string" ? record.envelopeXdr : undefined;
+  if (!envelope) return undefined;
+  try {
+    const transaction = TransactionBuilder.fromXDR(envelope, networkPassphrase);
+    if ("innerTransaction" in transaction) return undefined;
+    return (transaction as unknown as Record<string, unknown>).source as string | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function decodeStellarEnvelopeOperations(response: StellarRpcGetResponse, networkPassphrase: string): Array<Record<string, unknown>> {
+  const record = response as unknown as Record<string, unknown>;
+  const envelope = typeof record.envelopeXdr === "string" ? record.envelopeXdr : undefined;
+  if (!envelope) return [];
+  try {
+    const transaction = TransactionBuilder.fromXDR(envelope, networkPassphrase);
+    if ("innerTransaction" in transaction) return [];
+    const txSource = (transaction as unknown as Record<string, unknown>).source as string | undefined;
+    return transaction.operations.map((op) => {
+      const opRecord: Record<string, unknown> = { type: op.type };
+      if ("to" in op) opRecord.to = (op as unknown as Record<string, unknown>).to;
+      if ("from" in op) opRecord.from = (op as unknown as Record<string, unknown>).from;
+      if ("destination" in op) opRecord.destination = (op as unknown as Record<string, unknown>).destination;
+      if ("amount" in op) opRecord.amount = (op as unknown as Record<string, unknown>).amount;
+      if ("source" in op) opRecord.source = (op as unknown as Record<string, unknown>).source ?? txSource;
+      return opRecord;
+    });
+  } catch {
+    return [];
+  }
+}
+
+function mapStellarPollResponse(response: StellarRpcGetResponse, hash: string, family: ChainFamily, network: StellarNetworkId, providerUrl: string, polledAt: string, decodedSource?: string): StellarPollResult {
   const status = response.status;
   const record = response as unknown as Record<string, unknown>;
   const ledger = toLedgerNumber(record.ledger);
   const createdAt = typeof record.createdAt === "string" ? record.createdAt : undefined;
   const resultXdr = typeof record.resultXdr === "string" ? record.resultXdr : undefined;
-  const sourceAccount = typeof record.sourceAccount === "string" ? record.sourceAccount : undefined;
+  const sourceAccount = decodedSource ?? (typeof record.sourceAccount === "string" ? record.sourceAccount : undefined);
 
   if (status === "SUCCESS") {
     return { hash, family, network, status: "confirmed", providerUrl, polledAt, ledger, createdAt, resultXdr, sourceAccount };
@@ -334,11 +370,11 @@ function toLedgerNumber(value: unknown): number | undefined {
   return undefined;
 }
 
-function verifyStellarEffects(response: StellarRpcGetResponse, expectation: StellarVerificationExpectation | undefined) {
+function verifyStellarEffects(response: StellarRpcGetResponse, expectation: StellarVerificationExpectation | undefined, decodedSource?: string, decodedOps?: Array<Record<string, unknown>>) {
   if (!expectation) return { matched: true, detail: undefined as string | undefined };
 
   const responseRecord = response as unknown as Record<string, unknown>;
-  const observedSource = typeof responseRecord.sourceAccount === "string" ? responseRecord.sourceAccount : undefined;
+  const observedSource = decodedSource ?? (typeof responseRecord.sourceAccount === "string" ? responseRecord.sourceAccount : undefined);
   const expectedSource = expectation.sourceAccount ?? expectation.walletAddress;
 
   if (expectedSource) {
@@ -350,8 +386,7 @@ function verifyStellarEffects(response: StellarRpcGetResponse, expectation: Stel
     }
   }
 
-  const operations = responseRecord.operations;
-  const operationsList = Array.isArray(operations) ? operations as Array<Record<string, unknown>> : undefined;
+  const operationsList = decodedOps ?? undefined;
 
   for (const effect of expectation.expectedEffects ?? []) {
     if (effect.kind === "publish_risk") {

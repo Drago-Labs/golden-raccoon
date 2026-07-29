@@ -1566,6 +1566,47 @@ async function runTransactionLifecycleChecks() {
   appendLifecycleEventByName(`0x${"f".repeat(64)}`, "user_rejected", { reason: "User clicked reject in wallet." });
   assert(listTransactionLifecycleEvents(`0x${"f".repeat(64)}`).some((event) => event.event === "user_rejected"), "Lifecycle event store must keep manual user_rejected events.");
 
+  // ---- EVM signed-payload submit exercises real payload path, not pre-hash shortcut ----
+  const evmSignedPayload = `0x${"f".repeat(300)}`;
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const evmSignedResult = await submitTransaction({
+    chainFamily: "evm",
+    network: "GOAT Network",
+    walletAddress: "0xabc",
+    sourceAccount: "0xabc",
+    asset: "MEME",
+    userApproved: true,
+    signedPayload: evmSignedPayload,
+    idempotencyKey: "idem_evm_signed_payload",
+  });
+  assert(evmSignedResult.outcome === "submitted", "EVM signed-payload submit must produce a submitted lifecycle.");
+  assert(evmSignedResult.transaction.lifecycleStatus === "submitted", "EVM signed-payload submit must reach submitted status.");
+  const evmSignedHash = evmSignedResult.transaction.hash;
+  assert(listTransactionLifecycleEvents(evmSignedHash).some((event) => event.event === "prepared"), "EVM signed-payload submit must append a prepared lifecycle event.");
+  const evmSignedPoll = await pollTransaction(evmSignedHash);
+  assert(evmSignedPoll.transaction.lifecycleStatus === "confirmed", "EVM signed-payload transaction must confirm via poll.");
+  configureEvmSimulator("evm", "GOAT Network", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
+  // ---- Stellar signed-payload submit exercises real payload path, not pre-hash shortcut ----
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+  const stellarSignedPayload = "AAAAAgAAAABh" + `${"a".repeat(100)}`;
+  const stellarSignedResult = await submitTransaction({
+    chainFamily: "stellar",
+    network: "stellar-testnet",
+    walletAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    sourceAccount: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    asset: "GOAT",
+    userApproved: true,
+    signedPayload: stellarSignedPayload,
+    idempotencyKey: "idem_stellar_signed_payload",
+  });
+  assert(stellarSignedResult.outcome === "submitted", "Stellar signed-payload submit must produce a submitted lifecycle.");
+  assert(stellarSignedResult.transaction.lifecycleStatus === "submitted", "Stellar signed-payload submit must reach submitted status.");
+  const stellarSignedHash = stellarSignedResult.transaction.hash;
+  const stellarSignedPoll = await pollTransaction(stellarSignedHash);
+  assert(stellarSignedPoll.transaction.lifecycleStatus === "confirmed", "Stellar signed-payload transaction must confirm via poll.");
+  configureStellarSimulator("stellar", "stellar-testnet", { submitOutcome: "submitted", pollOutcome: "confirmed" });
+
   // ---- Stellar terminal user_rejected E2E integration coverage ----
   const stellarRejectedPayload = `${"a".repeat(63)}b`;
   const stellarRejectedWallet = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";

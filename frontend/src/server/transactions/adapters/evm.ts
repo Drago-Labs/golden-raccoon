@@ -1,6 +1,7 @@
 import { createPublicClient, decodeEventLog, http, parseAbiItem, recoverTransactionAddress, toFunctionSelector, type Hash, type PublicClient } from "viem";
 import type { ChainFamily } from "@/lib/chainIdentity";
 import { isTransactionHashForChain } from "@/lib/chainIdentity";
+import { resolveEvmRpcUrl, resolveEvmChainId } from "@/lib/evm/config";
 
 export type EvmTerminalStatus = "confirmed" | "failed" | "replaced" | "expired" | "pending" | "submitted";
 
@@ -107,10 +108,7 @@ function getEvmSimulator(family: ChainFamily, network: string) {
 }
 
 function getEvmRpcUrl(options: EvmAdapterOptions): string {
-  const fromEnv = options.network === "goat"
-    ? process.env.GOAT_RPC_URL ?? process.env.NEXT_PUBLIC_GOAT_RPC_URL
-    : undefined;
-  return options.rpcUrl ?? fromEnv ?? process.env.GOAT_RPC_URL ?? process.env.NEXT_PUBLIC_GOAT_RPC_URL ?? "https://rpc.goat.network";
+  return resolveEvmRpcUrl(options.network, options.rpcUrl);
 }
 
 export function createEvmPublicClient(options: EvmAdapterOptions): PublicClient | null {
@@ -120,6 +118,31 @@ export function createEvmPublicClient(options: EvmAdapterOptions): PublicClient 
     transport: http(rpcUrl, { batch: true, timeout: 8_000 }),
     chain: undefined,
   });
+}
+
+async function assertChainIdMatches(options: EvmAdapterOptions): Promise<void> {
+  const client = createEvmPublicClient(options);
+  if (!client) return;
+
+  const expectedChainId = options.chainId ?? resolveEvmChainId(options.network);
+  if (expectedChainId === undefined) return;
+
+  try {
+    const actualChainId = await client.getChainId();
+    if (actualChainId !== expectedChainId) {
+      throw new Error(
+        `EVM chain ID mismatch: RPC reported ${actualChainId} but network "${options.network}" expects ${expectedChainId}. `
+        + `Connected to the wrong network.`
+      );
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("EVM chain ID mismatch")) {
+      throw error;
+    }
+    throw new Error(
+      `EVM RPC chain ID verification failed for ${options.network}: ${error instanceof Error ? error.message : "unknown error"}`
+    );
+  }
 }
 
 export async function deriveEvmTransactionHash(signedPayload: string): Promise<Hash> {
@@ -267,23 +290,25 @@ export function getEvmChainAdapter(options: EvmAdapterOptions): {
       }
 
       const trimmed = payload.trim();
-      const hash = trimmed.startsWith("0x") && isTransactionHashForChain(trimmed, "evm")
-        ? (trimmed as Hash)
-        : await deriveEvmTransactionHash(payload);
-
-      // When no simulator is configured and the payload is a real signed raw transaction,
-      // attempt to broadcast through the configured RPC provider. Hashes already in canonical
-      // form bypass this and are treated as submitted externally.
       const isPreHash = isTransactionHashForChain(trimmed, "evm");
-      if (!simulator && !outcome && !isPreHash) {
+      let hash: Hash;
+
+      if (isPreHash) {
+        hash = trimmed as Hash;
+      } else if (!simulator && !outcome) {
+        await assertChainIdMatches(options);
+        const client = createEvmPublicClient(options);
+        if (!client) {
+          throw new Error("EVM RPC client could not be created for broadcast.");
+        }
         try {
-          const client = createEvmPublicClient(options);
-          if (client) {
-            await client.sendRawTransaction({ serializedTransaction: trimmed as never });
-          }
+          const txHash = await client.sendRawTransaction({ serializedTransaction: trimmed as never });
+          hash = txHash;
         } catch (error) {
           throw new Error(error instanceof Error ? `EVM RPC broadcast failed: ${error.message}` : "EVM RPC broadcast failed.");
         }
+      } else {
+        hash = await deriveEvmTransactionHash(payload);
       }
 
       return {
@@ -297,7 +322,7 @@ export function getEvmChainAdapter(options: EvmAdapterOptions): {
           ? `Simulated ${outcome} submit outcome for chain adapter tests.`
           : isPreHash
             ? "EVM transaction hash accepted as already broadcast (skip provider). "
-            : "EVM signed transaction submitted to provider RPC.",
+            : `EVM signed transaction submitted to provider RPC (hash: ${hash}).`,
       };
     },
     async poll(hash, overrides) {
@@ -351,6 +376,7 @@ export function getEvmChainAdapter(options: EvmAdapterOptions): {
       // No simulator: defer to the real provider. If the provider responds, perform
       // effects/wallet verification using the supplied expectation.
       try {
+        await assertChainIdMatches(options);
         const client = createEvmPublicClient(options);
         if (!client) {
           return { hash, family, network, status: "pending", providerUrl, polledAt };
