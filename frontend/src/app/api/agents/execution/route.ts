@@ -23,6 +23,13 @@ const bodySchema = z.object({
   expectedOutputAmount: z.number().min(0).optional(),
   simulationStatus: z.enum(["not_required", "pending", "passed", "failed", "unavailable"]).optional(),
   simulationRevertReason: z.string().optional(),
+  // Stellar-specific execution fields
+  stellarAssetCode: z.string().optional(),
+  stellarIssuer: z.string().optional(),
+  stellarFromIssuer: z.string().optional(),
+  stellarToIssuer: z.string().optional(),
+  stellarSwapAmount: z.number().min(0).optional(),
+  stellarQuoteStatus: z.enum(["fresh", "stale", "unavailable", "simulated"]).optional(),
 });
 
 export async function POST(request: Request) {
@@ -45,7 +52,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Execution policy failed" }, { status: 403 });
   }
 
-  const rules = getUserRuleRecord(parsed.data.walletAddress);
+  const rules = await getUserRuleRecord(parsed.data.walletAddress);
 
-  return withCacheHeaders(NextResponse.json(runExecutionAgent({ ...parsed.data, rules })), "execution");
+  const result = await runExecutionAgent({ ...parsed.data, rules });
+
+  return withCacheHeaders(NextResponse.json(result), "execution");
 }

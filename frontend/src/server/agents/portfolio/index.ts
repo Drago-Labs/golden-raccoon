@@ -4,6 +4,7 @@ import { buildAgentResult } from "@/server/agents/shared";
 import { getPortfolioRiskSignals } from "@/server/portfolio/riskScoring";
 import { getPortfolioHardeningReport } from "@/server/portfolio/hardening";
 import { getKnownTokenClass, isVerifiedStablecoin } from "@/server/portfolio/tokenRegistry";
+import { canonicalizeAddress, getChainFamily } from "@/lib/chainIdentity";
 
 function getProviderSources(): AgentSource[] {
   const health = getPortfolioProviderHealth();
@@ -58,12 +59,13 @@ function getRecommendedAction(portfolio: PortfolioSnapshot, riskSignals: ReturnT
 }
 
 type PortfolioTargetToken = {
+  discovery?: import("@/server/types").DiscoveryAgentContext;
   contractAddress?: string;
   symbol?: string;
 };
 
 function findTargetHolding(portfolio: PortfolioSnapshot, target?: PortfolioTargetToken) {
-  const contractAddress = target?.contractAddress?.toLowerCase();
+  const contractAddress = target?.contractAddress;
   const symbol = target?.symbol?.toUpperCase();
 
   if (!contractAddress && !symbol) {
@@ -71,7 +73,14 @@ function findTargetHolding(portfolio: PortfolioSnapshot, target?: PortfolioTarge
   }
 
   if (contractAddress) {
-    return portfolio.holdings.find((holding) => holding.tokenAddress.toLowerCase() === contractAddress);
+    return portfolio.holdings.find((holding) => {
+      const family = holding.chainFamily ?? getChainFamily(holding.network ?? holding.chainId ?? holding.chainName);
+
+      return (
+        canonicalizeAddress(holding.tokenAddress, family) ===
+        canonicalizeAddress(contractAddress, family)
+      );
+    });
   }
 
   return portfolio.holdings.find((holding) => Boolean(symbol && holding.symbol.toUpperCase() === symbol));

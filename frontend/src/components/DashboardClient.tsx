@@ -11,7 +11,9 @@ import { WalletPortfolioCard } from "@/components/WalletPortfolioCard";
 import { WalletConnectButton } from "@/components/WalletConnectButton";
 import { getScanNetwork, normalizeScanNetworkId, scanNetworks } from "@/lib/scanNetworks";
 import { useWalletSession } from "@/hooks/useWalletSession";
+import { ApprovalFlowClient } from "@/components/ApprovalFlowClient";
 import { StellarRiskPublishButton } from "@/components/StellarRiskPublishButton";
+import { LiveRegion } from "@/components/a11y/LiveRegion";
 
 const scanCheckLabels = ["Deployed", "Honeypot", "Sell tax", "Ownership", "Holders", "Liquidity", "LP lock", "Market"];
 
@@ -181,6 +183,14 @@ export function DashboardClient() {
   const scanStageIndexRef = useRef(0);
   const scanInFlightRef = useRef(false);
   const [isDashboardRunOpen, setIsDashboardRunOpen] = useState(false);
+  const [approvalFlowOpen, setApprovalFlowOpen] = useState(false);
+  const [approvalPrepareData, setApprovalPrepareData] = useState<{
+    idempotencyKey: string;
+    chainFamily: "evm" | "stellar";
+    network: string;
+    walletAddress: string;
+    sourceAccount?: string;
+  } | null>(null);
   const [isRunningAgents, setIsRunningAgents] = useState(false);
   const [dashboardRunSteps, setDashboardRunSteps] = useState<DashboardRunStep[]>(getInitialDashboardSteps);
   const [dashboardAgentResults, setDashboardAgentResults] = useState<AgentResult[]>([]);
@@ -241,15 +251,30 @@ export function DashboardClient() {
   }, [scanResult, visibleScanChecks]);
 
   if (!isConnected && !isConnecting) {
-    return <WalletRequiredState />;
+    return (
+      <>
+        <LiveRegion message="Wallet not connected. Connect a wallet to view your portfolio." />
+        <WalletRequiredState />
+      </>
+    );
   }
 
   if (isConnecting || isConnected && !portfolio && !portfolioFailed) {
-    return <PortfolioLoadingState />;
+    return (
+      <>
+        <LiveRegion message="Loading your portfolio…" />
+        <PortfolioLoadingState />
+      </>
+    );
   }
 
   if (!portfolio || portfolioFailed) {
-    return <NoDataState title="Provider unavailable" detail="Portfolio source has not returned a wallet snapshot yet." action="Not enough connected sources. No mock data used." />;
+    return (
+      <>
+        <LiveRegion message="Portfolio provider unavailable." politeness="assertive" />
+        <NoDataState title="Provider unavailable" detail="Portfolio source has not returned a wallet snapshot yet." action="Not enough connected sources. No mock data used." />
+      </>
+    );
   }
 
   const riskDrivers = getPortfolioRiskDrivers(portfolio);
@@ -456,8 +481,25 @@ export function DashboardClient() {
     }
   }
 
+  const scanStatusMessage = scanError
+    ? scanError
+    : isScanning
+      ? `Scanning token: ${scanCheckLabels[scanStageIndex]}…`
+      : scanResult && scanRevealComplete
+        ? `Scan complete. ${scanResult.symbol} risk ${scanResult.overallRiskScore} out of 100.`
+        : null;
+  const agentRunStatusMessage = dashboardRunSummary?.error
+    ? dashboardRunSummary.error
+    : isRunningAgents
+      ? "Running portfolio agents…"
+      : dashboardRunSummary?.final
+        ? `Agent run complete: ${dashboardRunSummary.final.verdict}.`
+        : null;
+
   return (
     <div className="space-y-5">
+      <LiveRegion message={scanStatusMessage} politeness={scanError ? "assertive" : "polite"} />
+      <LiveRegion message={agentRunStatusMessage} politeness={dashboardRunSummary?.error ? "assertive" : "polite"} />
       <section>
         <h1 className="text-3xl font-semibold tracking-tight">Portfolio</h1>
         <div className="mt-4 grid items-stretch gap-5 lg:grid-cols-[1.15fr_.85fr]">
@@ -822,6 +864,92 @@ export function DashboardClient() {
               </div>
             ) : null}
 
+            {dashboardRunSummary?.final && dashboardRunSummary.final.recommendedAction !== "no_action" && dashboardRunSummary.final.recommendedAction !== "manual_review" && dashboardRunSummary.final.recommendedAction !== "avoid" ? (
+              <div className="mt-5">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const riskyToken = dashboardRunSummary?.riskyToken;
+                    const holding = riskyToken
+                      ? portfolio?.holdings.find((h) => h.tokenAddress === riskyToken.tokenAddress)
+                      : undefined;
+                    const action = dashboardRunSummary?.final?.recommendedAction;
+                    const fromAddress = riskyToken?.tokenAddress;
+                    const toAddress = family === "stellar" ? "USDC" : undefined;
+                    const estimatedValue = holding?.valueUsd;
+
+                    // Build expected effects from the decision data so the
+                    // prepared transaction has meaningful metadata. The server
+                    // cross-validates these against its own execution preview.
+                    const expectedEffects = riskyToken
+                      ? [
+                          {
+                            kind: "swap" as const,
+                            fromToken: riskyToken.tokenAddress,
+                            toToken: toAddress ?? "USDC",
+                            fromAddress: address ?? undefined,
+                            toAddress: toAddress ?? undefined,
+                            amount: estimatedValue ? `${(estimatedValue * 0.3).toFixed(2)}` : undefined,
+                            contractAddress: fromAddress,
+                            // Generic method placeholder — the server validates
+                            // effects against its own preview data, not against
+                            // calldata selectors. A null/missing method causes
+                            // the selector check to skip gracefully.
+                            assetKey: riskyToken.symbol,
+                          },
+                        ]
+                      : undefined;
+
+                    try {
+                      const prepareResponse = await fetch("/api/execute/prepare", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          walletAddress: address,
+                          network: chain,
+                          chainFamily: (chain?.toLowerCase().startsWith("stellar") ? "stellar" : "evm") as "evm" | "stellar",
+                          action: action,
+                          fromToken: riskyToken?.tokenAddress,
+                          estimatedValueUsd: estimatedValue,
+                          expectedEffects,
+                          slippageBps: 100,
+                          idempotencyKey: `exec:${address}:${action ?? "unknown"}:${Date.now()}`,
+                        }),
+                      });
+
+                      if (!prepareResponse.ok) {
+                        const err = await prepareResponse.json().catch(() => ({}));
+                        throw new Error(err.error ?? (err.detail ?? "Prepare failed."));
+                      }
+
+                      const prepareResult = await prepareResponse.json();
+                      const key = prepareResult.lifecycle?.idempotencyKey;
+                      if (!key) throw new Error("No idempotency key returned from prepare.");
+
+                      setApprovalPrepareData({
+                        idempotencyKey: key,
+                        chainFamily: (chain?.toLowerCase().startsWith("stellar") ? "stellar" : "evm") as "evm" | "stellar",
+                        network: chain ?? "ethereum",
+                        walletAddress: address ?? "",
+                        sourceAccount: family === "stellar" ? address ?? undefined : undefined,
+                      });
+                      setApprovalFlowOpen(true);
+                    } catch (error) {
+                      console.error("Prepare failed:", error);
+                      setDashboardRunSummary((prev) =>
+                        prev
+                          ? { ...prev, error: error instanceof Error ? error.message : "Failed to prepare transaction." }
+                          : prev,
+                      );
+                    }
+                  }}
+                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-emerald-500/20 px-5 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/30"
+                >
+                  Prepare &amp; sign transaction
+                </button>
+              </div>
+            ) : null}
+
             {dashboardRunSummary?.saveStatus ? (
               <div className="mt-5 rounded-2xl border border-white/10 bg-white/6 p-4 text-sm text-white/52">
                 {dashboardRunSummary.saveStatus === "saving"
@@ -844,6 +972,48 @@ export function DashboardClient() {
               {dashboardAgentResults.map((result) => (
                 <AgentResultPanel key={result.agent} result={result} />
               ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {approvalFlowOpen && approvalPrepareData ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-5 backdrop-blur-sm">
+          <div className="max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-[28px] border border-white/10 bg-[#101010] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-sm uppercase tracking-[0.18em] text-[#d9a441]">Sign transaction</div>
+                <h2 className="mt-2 text-xl font-semibold">Wallet approval required</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setApprovalFlowOpen(false);
+                  setApprovalPrepareData(null);
+                }}
+                className="rounded-full border border-white/10 px-3 py-1 text-sm text-white/54 transition hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-5">
+              <ApprovalFlowClient
+                idempotencyKey={approvalPrepareData.idempotencyKey}
+                walletAddress={approvalPrepareData.walletAddress}
+                chainFamily={approvalPrepareData.chainFamily}
+                network={approvalPrepareData.network}
+                sourceAccount={approvalPrepareData.sourceAccount}
+                onComplete={(txHash) => {
+                  setApprovalFlowOpen(false);
+                  setApprovalPrepareData(null);
+                  setIsDashboardRunOpen(false);
+                  alert(`Transaction submitted! Hash: ${txHash}`);
+                }}
+                onDismiss={() => {
+                  setApprovalFlowOpen(false);
+                  setApprovalPrepareData(null);
+                }}
+              />
             </div>
           </div>
         </div>

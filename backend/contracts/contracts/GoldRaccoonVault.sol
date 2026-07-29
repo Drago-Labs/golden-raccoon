@@ -1,126 +1,66 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+interface IPolicyValidator {
+    function getIntentValidity(bytes32 intentHash, address token, uint256 amount) external view returns (bool valid, string memory reason);
+    function intents(bytes32 intentHash) external view returns (bytes32 intentHash_, bytes32 policyCommitment, address targetToken, uint256 amount, uint256 nonce, uint64 expiry, bool executed);
+    function policyDecisions(bytes32 decisionHash) external view returns (bytes32 decisionHash_, address user, address authorizedAgent, uint256 maxTransactionValue, uint256 maxSlippageBps, uint256 nonce, uint64 expiry, bool revoked);
+}
+
 contract GoldRaccoonVault {
-    address public owner;
-    address public agent;
-    uint256 public maxRiskScore;
-    uint256 public maxTradePercent;
+    using SafeERC20 for IERC20;
 
-    bytes32 public immutable POLICY_DOMAIN_SEPARATOR;
-    bytes32 public immutable INTENT_DOMAIN_SEPARATOR;
+    IPolicyValidator public immutable policy;
+    address public immutable agent;
 
-    mapping(address => uint256) public userNonce;
-    mapping(bytes32 => bool) public usedIntents;
-    mapping(address => bytes32) public userPolicyHash;
+    mapping(address => mapping(address => uint256)) public balances;
+    mapping(bytes32 => bool) public consumedIntents;
 
-    bytes32 private constant POLICY_TYPEHASH = keccak256(
-        "Policy(address wallet,string chain,uint256 policyVersion,uint256 maxRiskScore,uint256 maxTradePercent,uint256 maxMemeExposurePercent,uint256 maxDailyTransactionValueUsd,uint256 maxSlippageBps,string[] allowedChains,string[] blockedTokens,string[] allowedActions,uint256 nonce,uint256 expiry)"
-    );
+    event Deposited(address indexed user, address indexed token, uint256 amount);
+    event Withdrawn(address indexed user, address indexed token, uint256 amount, bytes32 indexed intentHash);
 
-    bytes32 private constant INTENT_TYPEHASH = keccak256(
-        "ExecutionIntent(address wallet,string chain,bytes32 policyHash,bytes32 decisionHash,string fromToken,string toToken,uint256 estimatedValueUsd,uint256 maxSlippageBps,uint256 nonce,uint256 expiry)"
-    );
-
-    event AgentApproved(address indexed owner, address indexed agent);
-    event RulesUpdated(address indexed owner, uint256 maxRiskScore, uint256 maxTradePercent);
-    event DecisionLogged(address indexed owner, address indexed agent, string decisionHash, uint256 riskScore);
-    event AgentRevoked(address indexed owner, address indexed previousAgent);
-    event PolicyRegistered(address indexed wallet, bytes32 indexed policyHash, uint256 nonce);
-    event IntentExecuted(address indexed wallet, bytes32 indexed intentHash, bytes32 indexed decisionHash, uint256 nonce);
-    event IntentRejected(address indexed wallet, bytes32 indexed intentHash, string reason);
-
-    modifier onlyOwner() { require(msg.sender == owner, "GR: owner"); _; }
-    modifier onlyAgent() { require(msg.sender == agent, "GR: agent"); _; }
-
-    constructor() {
-        owner = msg.sender;
-        POLICY_DOMAIN_SEPARATOR = keccak256(abi.encode(
-            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-            keccak256("GoldenRaccoonPolicy"), keccak256("1"), block.chainid, address(this)
-        ));
-        INTENT_DOMAIN_SEPARATOR = keccak256(abi.encode(
-            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-            keccak256("GoldenRaccoonExecutionIntent"), keccak256("1"), block.chainid, address(this)
-        ));
+    constructor(address _policy, address _agent) {
+        require(_policy != address(0), "Vault: zero policy");
+        require(_agent != address(0), "Vault: zero agent");
+        policy = IPolicyValidator(_policy);
+        agent = _agent;
     }
 
-    function _split(bytes memory sig) private pure returns (uint8 v, bytes32 r, bytes32 s) {
-        require(sig.length == 65, "GR: sig");
-        assembly {
-            r := mload(add(sig, 32))
-            s := mload(add(sig, 64))
-            v := byte(0, mload(add(sig, 96)))
-        }
-        if (v < 27) v += 27;
+    function deposit(address token, uint256 amount) external {
+        require(token != address(0), "Vault: zero token");
+        require(amount > 0, "Vault: zero amount");
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        balances[msg.sender][token] += amount;
+        emit Deposited(msg.sender, token, amount);
     }
 
-    function _verify(bytes32 ds, bytes32 sh, bytes memory sig, address signer) private view returns (bool) {
-        bytes32 d = keccak256(abi.encodePacked("\x19\x01", ds, sh));
-        (uint8 v, bytes32 r, bytes32 s) = _split(sig);
-        return ecrecover(d, v, r, s) == signer;
+    function withdraw(address token, uint256 amount, address recipient, bytes32 intentHash) external {
+        require(msg.sender == agent, "Vault: not agent");
+        require(recipient != address(0), "Vault: zero recipient");
+        require(token != address(0), "Vault: zero token");
+        require(amount > 0, "Vault: zero amount");
+        require(!consumedIntents[intentHash], "Vault: intent consumed");
+
+        (bool valid, string memory reason) = policy.getIntentValidity(intentHash, token, amount);
+        require(valid, reason);
+
+        consumedIntents[intentHash] = true;
+
+        (, bytes32 policyCommitment, , , , , ) = policy.intents(intentHash);
+        (, address decisionUser, , , , , , ) = policy.policyDecisions(policyCommitment);
+        require(decisionUser == recipient, "Vault: intent user mismatch");
+
+        require(balances[recipient][token] >= amount, "Vault: insufficient balance");
+        balances[recipient][token] -= amount;
+
+        IERC20(token).safeTransfer(recipient, amount);
+        emit Withdrawn(recipient, token, amount, intentHash);
     }
 
-    function _recoverSigner(bytes32 ds, bytes32 sh, bytes memory sig) private view returns (address) {
-        bytes32 d = keccak256(abi.encodePacked("\x19\x01", ds, sh));
-        (uint8 v, bytes32 r, bytes32 s) = _split(sig);
-        return ecrecover(d, v, r, s);
-    }
-
-    function registerPolicy(
-        bytes32 structHash, uint256 nonce, uint256 expiry, bytes calldata signature
-    ) external {
-        require(block.timestamp <= expiry, "GR: expiry");
-        address wallet = _recoverSigner(POLICY_DOMAIN_SEPARATOR, structHash, signature);
-        require(wallet != address(0), "GR: recover");
-        require(nonce == userNonce[wallet], "GR: nonce");
-        userNonce[wallet] = nonce + 1;
-        bytes32 ph = keccak256(abi.encode(POLICY_DOMAIN_SEPARATOR, structHash));
-        userPolicyHash[wallet] = ph;
-        emit PolicyRegistered(wallet, ph, nonce);
-    }
-
-    function executeIntent(
-        bytes32 structHash, uint256 nonce, uint256 expiry, bytes calldata signature
-    ) external onlyAgent {
-        require(block.timestamp <= expiry, "GR: expired");
-        address wallet = _recoverSigner(INTENT_DOMAIN_SEPARATOR, structHash, signature);
-        require(wallet != address(0), "GR: recover");
-        require(nonce == userNonce[wallet], "GR: nonce");
-        require(userPolicyHash[wallet] != bytes32(0), "GR: policy");
-        bytes32 ih = keccak256(abi.encode(INTENT_DOMAIN_SEPARATOR, structHash));
-        require(!usedIntents[ih], "GR: used");
-        usedIntents[ih] = true;
-        userNonce[wallet] = nonce + 1;
-        emit IntentExecuted(wallet, ih, bytes32(uint256(structHash)), nonce);
-    }
-
-    function rejectIntent(bytes32 ih, string calldata reason) external onlyAgent {
-        require(!usedIntents[ih], "GR: used");
-        usedIntents[ih] = true;
-        emit IntentRejected(address(0), ih, reason);
-    }
-
-    function setAgent(address a) external onlyOwner {
-        require(a != address(0), "GR: zero");
-        agent = a;
-        emit AgentApproved(msg.sender, a);
-    }
-
-    function setRules(uint256 rs, uint256 tp) external onlyOwner {
-        require(rs <= 100 && tp <= 100, "GR: bounds");
-        maxRiskScore = rs; maxTradePercent = tp;
-        emit RulesUpdated(msg.sender, rs, tp);
-    }
-
-    function logDecision(string calldata dh, uint256 rs) external onlyAgent {
-        require(bytes(dh).length > 0 && rs <= 100, "GR: input");
-        emit DecisionLogged(owner, msg.sender, dh, rs);
-    }
-
-    function revokeAgent() external onlyOwner {
-        address prev = agent;
-        agent = address(0);
-        emit AgentRevoked(msg.sender, prev);
+    function userBalance(address user, address token) external view returns (uint256) {
+        return balances[user][token];
     }
 }
