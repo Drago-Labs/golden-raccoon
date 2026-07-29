@@ -19,7 +19,7 @@ import { createAgentLog, redactSecrets } from "../src/server/observability/loggi
 import { evaluateAlertThresholds } from "../src/server/observability/alerts";
 import { getResultMetrics } from "../src/server/observability/metrics";
 import { goldenFixtureSuite, assertGoldenScore } from "../src/server/evaluation/goldenFixtures";
-import { compareReplaySnapshot, createReplaySnapshot } from "../src/server/evaluation/replay";
+import { compareReplaySnapshot, createReplaySnapshot, createStellarReplaySnapshot, stellarReplaySnapshots } from "../src/server/evaluation/replay";
 import { criticalFindingDoesNotLowerRisk, missingDataDoesNotIncreaseConfidence, noAgentResultRequiresManualReview, reliableSourcesDoNotLowerConfidence } from "../src/server/evaluation/properties";
 import { hashSourceSnapshot } from "../src/server/storage";
 import { rateLimitProfiles } from "../src/server/security/rateLimit";
@@ -1078,6 +1078,14 @@ async function runReadinessChecks() {
   const snapshotHash = hashSourceSnapshot({ sources: blueChipLikeResult().sources, rawSignals: blueChipLikeResult().rawSignals });
   const replaySnapshot = createReplaySnapshot(blueChipLikeResult(), snapshotHash);
   assert(compareReplaySnapshot(replaySnapshot, blueChipLikeResult()).compatible, "Replay snapshot must compare compatible deterministic results.");
+
+  // Verify Stellar replay snapshot registry has entries for all Stellar golden fixtures
+  const stellarGoldenFixtures = ["stellar_xlm", "stellar_known_classic", "stellar_restricted_asset", "stellar_sac", "stellar_sep41", "stellar_invalid_issuer", "stellar_unknown_contract", "stellar_unavailable_provider"];
+  for (const fixtureName of stellarGoldenFixtures) {
+    assert(stellarReplaySnapshots[fixtureName] !== undefined, `Stellar replay snapshot registry must include ${fixtureName}.`);
+    assert(stellarReplaySnapshots[fixtureName].chainFamily === "stellar", `Stellar replay snapshot ${fixtureName} must have chainFamily stellar.`);
+    assert(stellarReplaySnapshots[fixtureName].agent === "onchain", `Stellar replay snapshot ${fixtureName} must be for onchain agent.`);
+  }
 }
 
 async function runProviderReliabilityChecks() {
@@ -1214,6 +1222,22 @@ const wasmContractState = {
   latestLedger: 1234567,
 };
 
+function assertStellarReplay(fixtureName: string, result: AgentResult) {
+  const expected = stellarReplaySnapshots[fixtureName];
+  assert(expected !== undefined, `Stellar replay snapshot must exist for ${fixtureName}.`);
+  assert(expected.chainFamily === "stellar", `Stellar replay snapshot ${fixtureName} must have chainFamily stellar.`);
+  assert(result.agent === "onchain", `Stellar ${fixtureName} must be an onchain agent result.`);
+  assert(result.agent === expected.agent, `Stellar ${fixtureName} agent mismatch: expected ${expected.agent}, got ${result.agent}.`);
+  assert(result.recommendedAction === expected.recommendedAction, `Stellar ${fixtureName} recommendedAction drift: expected ${expected.recommendedAction}, got ${result.recommendedAction}.${expected.migrationNote ? ` Note: ${expected.migrationNote}` : ""}`);
+  assert(Math.abs(result.riskScore - expected.riskScore) <= 3, `Stellar ${fixtureName} riskScore drift: expected ${expected.riskScore}, got ${result.riskScore}.${expected.migrationNote ? ` Note: ${expected.migrationNote}` : ""}`);
+  // Also verify deterministic snapshot creation
+  const snapshotHash = hashSourceSnapshot({ sources: result.sources, rawSignals: result.rawSignals });
+  const replaySnapshot = createStellarReplaySnapshot(result, snapshotHash, fixtureName);
+  assert(replaySnapshot.chainFamily === "stellar", `Stellar replay snapshot must set chainFamily to stellar for ${fixtureName}.`);
+  const selfComparison = compareReplaySnapshot(replaySnapshot, result);
+  assert(selfComparison.compatible, `Stellar replay snapshot ${fixtureName} self-comparison failed: ${selfComparison.migrationNote}`);
+}
+
 async function runStellarOnchainChecks() {
   // 1. XLM (native)
   const xlmResult = await runStellarOnchainAgent(
@@ -1230,6 +1254,7 @@ async function runStellarOnchainChecks() {
   assert(!xlmResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "XLM report must not contain EVM-only checks.");
   assert(xlmResult.sources.some((s) => s.label === "Soroban contract state" && s.status === "unavailable"), "XLM report must show contract state as unavailable.");
   assert(assertGoldenScore("stellar_xlm", xlmResult.riskScore), "XLM fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_xlm", xlmResult);
 
   // 2. Known classic asset (USDC on Stellar, clean)
   const classicProviders: StellarOnchainProviders = {
@@ -1249,6 +1274,7 @@ async function runStellarOnchainChecks() {
   assert(classicResult.findings.some((f) => f.label === "Contract interface" && f.detail.includes("Stellar Asset Contract")), "Classic SAC report must mention SAC.");
   assert(!classicResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Classic report must not contain EVM-only checks.");
   assert(assertGoldenScore("stellar_known_classic", classicResult.riskScore), "Known classic fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_known_classic", classicResult);
 
   // 3. Restricted asset (auth_required + auth_revocable + clawback enabled)
   const restrictedProviders: StellarOnchainProviders = {
@@ -1285,6 +1311,7 @@ async function runStellarOnchainChecks() {
   assert(restrictedResult.findings.some((f) => f.label === "Issuer controls" && f.detail.includes("Authorization required: yes")), "Restricted asset report must show auth_required.");
   assert(!restrictedResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Restricted asset report must not contain EVM-only checks.");
   assert(assertGoldenScore("stellar_restricted_asset", restrictedResult.riskScore), "Restricted asset fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_restricted_asset", restrictedResult);
 
   // 4. SAC (Stellar Asset Contract, via contract address)
   const sacProviders: StellarOnchainProviders = {
@@ -1301,6 +1328,7 @@ async function runStellarOnchainChecks() {
   assert(sacResult.findings.some((f) => f.label === "Contract storage" && f.detail.includes("live until ledger")), "SAC report must show contract storage TTL.");
   assert(!sacResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "SAC report must not contain EVM-only checks.");
   assert(assertGoldenScore("stellar_sac", sacResult.riskScore), "SAC fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_sac", sacResult);
 
   // 5. SEP-41 (generic Soroban WASM contract)
   const sep41Providers: StellarOnchainProviders = {
@@ -1318,6 +1346,7 @@ async function runStellarOnchainChecks() {
   assert(sep41Result.confidence < 0.84, "SEP-41 WASM contract (no issuer) must have reduced confidence.");
   assert(!sep41Result.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "SEP-41 report must not contain EVM-only checks.");
   assert(assertGoldenScore("stellar_sep41", sep41Result.riskScore), "SEP-41 fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_sep41", sep41Result);
 
   // 6. Invalid issuer (CODE:ISSUER where issuer doesn't exist)
   const invalidIssuerProviders: StellarOnchainProviders = {
@@ -1336,6 +1365,7 @@ async function runStellarOnchainChecks() {
   assert(invalidIssuerResult.findings.some((f) => f.label === "Asset identity" && f.detail.includes("could not be confirmed")), "Invalid issuer report must state identity not confirmed.");
   assert(!invalidIssuerResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Invalid issuer report must not contain EVM-only checks.");
   assert(assertGoldenScore("stellar_invalid_issuer", invalidIssuerResult.riskScore), "Invalid issuer fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_invalid_issuer", invalidIssuerResult);
 
   // 7. Unknown contract (contract address with no deployed code)
   const unknownContractProviders: StellarOnchainProviders = {
@@ -1353,6 +1383,7 @@ async function runStellarOnchainChecks() {
   assert(unknownContractResult.findings.some((f) => f.label === "Contract storage" && f.detail.includes("was unavailable")), "Unknown contract report must state storage unavailable.");
   assert(!unknownContractResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Unknown contract report must not contain EVM-only checks.");
   assert(assertGoldenScore("stellar_unknown_contract", unknownContractResult.riskScore), "Unknown contract fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_unknown_contract", unknownContractResult);
 
   // 8. Unavailable provider (all RPC calls fail)
   const unavailableProviders: StellarOnchainProviders = {
@@ -1371,6 +1402,7 @@ async function runStellarOnchainChecks() {
   assert(unavailableResult.confidence < 0.5, "Unavailable provider fixture must have reduced confidence.");
   assert(!unavailableResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Unavailable provider report must not contain EVM-only checks.");
   assert(assertGoldenScore("stellar_unavailable_provider", unavailableResult.riskScore), "Unavailable provider fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_unavailable_provider", unavailableResult);
 }
 
 function runX402Checks() {

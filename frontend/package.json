@@ -10,6 +10,7 @@
     "lint": "eslint",
     "test:agents": "tsx --tsconfig tsconfig.json scripts/agent-fixture-check.ts",
     "test:stellar-config": "tsx --tsconfig tsconfig.json scripts/stellar-config-check.ts",
+    "test:stellar-providers": "tsx --tsconfig tsconfig.json scripts/stellar-provider-injection-test.ts",
     "verify": "npm run test:agents && npm run lint && npm run build"
   },
   "dependencies": {
