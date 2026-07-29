@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getScanNetwork } from "@/lib/scanNetworks";
 import { listWatchlistEntries } from "@/server/storage";
 import { listWatchlistScanRuns } from "@/server/storage";
-import { WatchlistAddForm, WatchlistRemoveButton } from "@/components/WatchlistClient";
+import { WatchlistAddForm, WatchlistRemoveButton, WatchlistRescanButton } from "@/components/WatchlistClient";
 import type { DiscoveryClassification, RiskLevel, WatchlistEntry, WatchlistScanRun } from "@/server/types";
 
 export const dynamic = "force-dynamic";
@@ -168,9 +168,6 @@ export default async function WatchlistPage({
         </p>
         <WatchlistAddForm wallet={wallet} />
       </section>
-
-      {/* Remove confirmation */}
-      {params.removed ? (
 
       {/* Watchlist entries */}
       <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
@@ -432,26 +429,7 @@ function WatchlistEntryCard({
 
       {/* Actions */}
       <div className="flex items-center gap-2">
-        <Link
-          href={{
-            pathname: "/discovery/scan",
-            query: {
-              entryId: entry.id,
-              chain: entry.chain,
-              address: entry.contractAddress ?? "",
-              assetKey: entry.assetKey ?? "",
-              symbol: entry.symbol ?? "",
-              name: entry.tokenName ?? "",
-              source: entry.source ?? "manual",
-              issuer: entry.issuer ?? "",
-              wallet,
-              rescan: "1",
-            },
-          }}
-          className="flex-1 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-1.5 text-center text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-500/15"
-        >
-          {isStaleOrFailed ? "Retry rescan" : "Rescan"}
-        </Link>
+        <WatchlistRescanButton entryId={entry.id} wallet={wallet} />
         <WatchlistRemoveButton entryId={entry.id} wallet={wallet} />
       </div>
     </div>

@@ -22,6 +22,7 @@ const addBodySchema = z.object({
 const removeBodySchema = z.object({
   action: z.literal("remove"),
   entryId: z.string().min(1).max(120),
+  walletAddress: z.string().min(1).max(80),
 });
 
 const listQuerySchema = z.object({
@@ -79,6 +80,14 @@ export async function POST(request: Request) {
   const parsedRemove = removeBodySchema.safeParse({ ...body, action: "remove" });
 
   if (parsedRemove.success) {
+    const { walletAddress } = parsedRemove.data;
+    const entries = listWatchlist(walletAddress);
+    const owned = entries.find((entry) => entry.id === parsedRemove.data.entryId);
+
+    if (!owned) {
+      return NextResponse.json({ error: "Entry not found or does not belong to this wallet." }, { status: 404 });
+    }
+
     const ok = await removeFromWatchlist(parsedRemove.data.entryId);
 
     return NextResponse.json({ ok });

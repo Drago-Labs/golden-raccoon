@@ -314,6 +314,35 @@ begin
     alter table alert_observations add column if not exists incomplete_data boolean default false;
   exception when others then null;
   end;
+  -- Widen watchlist table IDs from uuid to text to match in-memory string IDs
+  begin
+    alter table watchlist_entries alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries alter column latest_scan_run_id type text using latest_scan_run_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs alter column entry_id type text using entry_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs alter column previous_run_id type text using previous_run_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts alter column entry_id type text using entry_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts alter column run_id type text using run_id::text;
+  exception when others then null;
+  end;
 end $$;
 
 -- V3 alert engine contract.

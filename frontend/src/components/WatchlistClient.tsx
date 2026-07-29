@@ -194,6 +194,38 @@ export function WatchlistAddForm({ wallet }: { wallet: string }) {
   );
 }
 
+export function WatchlistRescanButton({ entryId, wallet }: { entryId: string; wallet: string }) {
+  const [scanning, setScanning] = useState(false);
+
+  async function handleRescan() {
+    if (scanning) return;
+    setScanning(true);
+    try {
+      const response = await fetch(`/api/watchlist/${encodeURIComponent(entryId)}/rescan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress: wallet }),
+      });
+      if (response.ok) {
+        window.location.href = `/watchlist?wallet=${encodeURIComponent(wallet)}`;
+      }
+      setScanning(false);
+    } catch {
+      setScanning(false);
+    }
+  }
+
+  return (
+    <button
+      onClick={handleRescan}
+      disabled={scanning}
+      className="flex-1 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-1.5 text-center text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-500/15 disabled:opacity-50"
+    >
+      {scanning ? "Scanning…" : "Rescan"}
+    </button>
+  );
+}
+
 export function WatchlistRemoveButton({ entryId, wallet }: { entryId: string; wallet: string }) {
   const [removing, setRemoving] = useState(false);
 
