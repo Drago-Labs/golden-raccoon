@@ -175,6 +175,7 @@ error Expired();
 error Replay();
 error InvalidFormat(string reason);
 error StaleIntent(uint64 expiry);
+error StalePolicy();                                // §5.3 logDecision step 2 triggers: caller-supplied policyHash != getPolicyHash(msg.sender)
 error InvalidRiskScore(uint16 actual);
 
 function version() external view returns (uint16 major, uint16 minor, uint16 patch, bytes32 buildHash);
@@ -228,6 +229,7 @@ function executeUpgrade() external;                                             
 | `InvalidRiskScore` | `riskScore > 100` | score schema |
 | `Replay` | `usedIntents[intentHash]` | replay guard |
 | `StaleIntent` | `block.timestamp > expiry` | stale intent |
+| `StalePolicy` | `logDecision` caller-supplied `policyHash != getPolicyHash(msg.sender)` | stale policy hash (introduced by §5.3 logDecision step 2 \u2014 the V2-062 on-chain linkage requires the caller to have called `setPolicy` immediately before `logDecision`) |
 | `InvalidFormat` | `policy` encoding is incorrect; `planId` exceeds 160 UTF-8 chars or contains `\u0000` | format validation. `decision_id` is NOT caller-supplied; it is contract-computed (§5.3 / §8). The validation rule that previously read "decisionId is not UTF-8" has been removed because the contract no longer accepts a caller-supplied decisionId. |
 
 ### 5.5 Replay, stale intent, zero-address, invalid hash, pause
@@ -422,6 +424,7 @@ pub fn is_paused(env: Env) -> bool;
 | `Publisher(addr)` | `PUBLISHER_TTL_THRESHOLD` (60 days) → `PUBLISHER_TTL_EXTEND_TO` (365 days) | bumped on `set_publisher` and `publish_risk` |
 | `PublisherTier(addr)` | same as `Publisher(addr)` | same |
 | `PublisherExpiry(addr)` | same as `Publisher(addr)` | same |
+| `PublisherCounter(addr)` | same as `Publisher(addr)` (`PUBLISHER_TTL_THRESHOLD` 60d → `PUBLISHER_TTL_EXTEND_TO` 365d) | bumped on `publish_risk` only. Drives §8 Soroban `decision_id` derivation; same TTL bucket as `Publisher(addr)` because eviction of the publisher bucket is the only thing that would invalidate the chain, so the counter cannot outlive the publisher. |
 | `Record(asset_id, network)` | `RECORD_TTL_THRESHOLD` (60 days) → `RECORD_TTL_EXTEND_TO` (365 days) | bumped on `publish_risk` and `get_risk` |
 
 `MAX_FUTURE_SECONDS` stays at 300. The new `UpgradePending` key uses `UPGRADE_TTL_THRESHOLD` (7 days) → `UPGRADE_TTL_EXTEND_TO` (60 days) so a pending upgrade can survive a temporary outage but cannot linger indefinitely.
