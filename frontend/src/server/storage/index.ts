@@ -164,7 +164,12 @@ async function persistTransactionRecord(record: TransactionRecord) {
 
 async function persistTransactionUpdate(hash: string, updates: Partial<TransactionRecord>) {
   if (!getPostgresStorageAdapter().isConfigured()) return;
-  try { await mirrorTransactionRecord({ hash, ...updates } as TransactionRecord); } catch { /* best-effort */ }
+  try {
+    const existing = getTransactions().find((r) => r.hash.toLowerCase() === hash.toLowerCase());
+    if (!existing) return;
+    const merged: TransactionRecord = { ...existing, ...updates, hash: existing.hash, createdAt: existing.createdAt };
+    await mirrorTransactionRecord(merged);
+  } catch { /* best-effort */ }
 }
 
 async function persistTransactionEvent(event: TransactionLifecycleEvent) {

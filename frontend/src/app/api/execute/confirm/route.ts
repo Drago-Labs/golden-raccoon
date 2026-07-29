@@ -213,10 +213,12 @@ export async function POST(request: Request) {
   }
 
   // Confirm through RPC before persistence (Stellar)
+  // NOT_FOUND means the transaction exists on the network but hasn't
+  // been included in a ledger yet — treat it as pending, not fatal.
   if (isStellar && parsed.data.network) {
     const onChainConfirmation = await confirmStellarTransactionOnChain(parsed.data.txHash, parsed.data.network);
 
-    if (!onChainConfirmation.ok) {
+    if (!onChainConfirmation.ok && onChainConfirmation.detail !== "Transaction not found on Stellar network." && onChainConfirmation.detail !== "Transaction has not yet been included in a Stellar ledger.") {
       return NextResponse.json({
         error: "stellar_rpc_confirmation_failed",
         detail: onChainConfirmation.detail,

@@ -417,10 +417,10 @@ function buildChainExpectation(
   if (!wallet && !(expectation.expectedEffects && expectation.expectedEffects.length > 0)) {
     return undefined;
   }
-  const effects = expectation.expectedEffects?.map((effect) => ({
-    kind: effect.kind,
-    fromAddress: effect.fromAddress ?? effect.fromToken,
-    toAddress: effect.toAddress ?? effect.toToken,
+   const effects = expectation.expectedEffects?.map((effect) => ({
+     kind: effect.kind,
+     fromAddress: effect.fromAddress,
+     toAddress: effect.toAddress,
     contractAddress: effect.contractAddress,
     method: effect.method,
     amount: effect.amount,
@@ -450,11 +450,12 @@ function buildChainExpectation(
   // Stellar verifier is symmetric with the EVM branch now: project amount
   // into amountBaseUnits via the same scaling helper so the adapter can do a
   // BigInt-safe comparison on integer-shaped base units. Asset identity
-  // (assetKey) is forwarded unchanged. Spread then augment so the inferred
+  // (assetKey) is forwarded unchanged. Stellar tokens use 7 decimal places
+  // rather than the EVM default of 18. Spread then augment so the inferred
   // type carries amountBaseUnits unambiguously without re-declaring every
   // field by hand.
   const stellarEffects = effects?.map((effect) => {
-    const baseUnits = scaleAmountToBaseUnits(effect.amount, effect);
+    const baseUnits = scaleAmountToBaseUnits(effect.amount, { ...effect, decimals: effect.decimals ?? 7 });
     return {
       ...effect,
       ...(baseUnits !== undefined ? { amountBaseUnits: baseUnits.toString() } : {}),

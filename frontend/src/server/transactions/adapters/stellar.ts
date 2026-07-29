@@ -337,8 +337,9 @@ function decodeStellarEnvelopeOperations(response: StellarRpcGetResponse, networ
       if ("from" in op) opRecord.from = (op as unknown as Record<string, unknown>).from;
       if ("destination" in op) opRecord.destination = (op as unknown as Record<string, unknown>).destination;
       if ("amount" in op) opRecord.amount = (op as unknown as Record<string, unknown>).amount;
-      if ("source" in op) opRecord.source = (op as unknown as Record<string, unknown>).source ?? txSource;
-      return opRecord;
+       if ("source" in op) opRecord.source = (op as unknown as Record<string, unknown>).source ?? txSource;
+       if ("asset" in op) opRecord.asset = (op as unknown as Record<string, unknown>).asset;
+       return opRecord;
     });
   } catch {
     return [];
