@@ -26,6 +26,11 @@ Record the commit SHA, deployment URL and provider mode with every run. A
 result without them is not evidence: the same suite passing in demo mode says
 nothing about live.
 
+`environment.workingTreeClean` in the evidence file is `false` on a normal run,
+because the runner writes that file into the tree it is describing. Treat it as
+meaningful only when it reports `false` for some *other* reason — check
+`git status` before trusting a run.
+
 ## Status vocabulary
 
 | Status | Meaning |

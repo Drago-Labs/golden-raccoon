@@ -1,0 +1,218 @@
+{
+  "matrix": "docs/V1_ACCEPTANCE_MATRIX.md",
+  "environment": {
+    "commit": "bc1eb075d26d7432acee1847ba0b51d7e483192c",
+    "branch": "issue-5-v1-acceptance-matrix",
+    "workingTreeClean": false,
+    "startedAt": "2026-07-29T03:55:39.111Z",
+    "platform": "linux x64",
+    "node": "v24.18.0",
+    "npm": "11.16.0",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+    "stellarCli": "unavailable",
+    "appMode": "unset (defaults to live)",
+    "smokeBaseUrl": "unset",
+    "vercelEnv": "unset"
+  },
+  "finishedAt": "2026-07-29T03:56:23.612Z",
+  "summary": {
+    "pass": 6,
+    "fail": 1,
+    "not_run": 18
+  },
+  "results": [
+    {
+      "id": "A1",
+      "title": "Deploy readiness and secret scan",
+      "status": "pass",
+      "command": "npm run deploy:check",
+      "exitCode": 0,
+      "durationMs": 580,
+      "stdoutTail": "\n> deploy:check\n> node scripts/check-deploy-readiness.mjs\n\ndeploy-readiness: ok",
+      "stderrTail": "",
+      "signal": null,
+      "spawnError": null
+    },
+    {
+      "id": "A2",
+      "title": "Stellar configuration check",
+      "status": "pass",
+      "command": "npm run test:stellar-config",
+      "exitCode": 0,
+      "durationMs": 3325,
+      "stdoutTail": "\n> test:stellar-config\n> npm --prefix frontend run test:stellar-config\n\n\n> frontend@0.1.0 test:stellar-config\n> tsx --tsconfig tsconfig.json scripts/stellar-config-check.ts\n\nStellar configuration checks passed.",
+      "stderrTail": "",
+      "signal": null,
+      "spawnError": null
+    },
+    {
+      "id": "A3",
+      "title": "Agent fixture and property suite",
+      "status": "pass",
+      "command": "npm run test:agents",
+      "exitCode": 0,
+      "durationMs": 4257,
+      "stdoutTail": "\n> test:agents\n> npm --prefix frontend run test:agents\n\n\n> frontend@0.1.0 test:agents\n> tsx --tsconfig tsconfig.json scripts/agent-fixture-check.ts\n\nAgent fixture checks passed.",
+      "stderrTail": "",
+      "signal": null,
+      "spawnError": null
+    },
+    {
+      "id": "A4",
+      "title": "Lint",
+      "status": "pass",
+      "command": "npm run lint",
+      "exitCode": 0,
+      "durationMs": 22652,
+      "stdoutTail": "\n> lint\n> npm --prefix frontend run lint\n\n\n> frontend@0.1.0 lint\n> eslint",
+      "stderrTail": "",
+      "signal": null,
+      "spawnError": null
+    },
+    {
+      "id": "A5",
+      "title": "Production build",
+      "status": "fail",
+      "command": "npm run build",
+      "exitCode": 135,
+      "durationMs": 8605,
+      "stdoutTail": "\n> build\n> npm --prefix frontend run build\n\n\n> frontend@0.1.0 build\n> next build",
+      "stderrTail": "Bus error (core dumped)",
+      "signal": null,
+      "spawnError": null
+    },
+    {
+      "id": "A6",
+      "title": "Soroban contract tests",
+      "status": "pass",
+      "command": "cargo test --manifest-path soroban/Cargo.toml",
+      "exitCode": 0,
+      "durationMs": 1750,
+      "stdoutTail": "\nrunning 3 tests\ntest test::admin_can_revoke_publisher ... ok\ntest test::authorized_publisher_can_publish_and_update ... ok\ntest test::rejects_unauthorized_invalid_and_stale_reports ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "stderrTail": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.50s\n     Running unittests src/lib.rs (soroban/target/debug/deps/golden_raccoon_risk_registry-905a835f24abfc3a)\n   Doc-tests golden_raccoon_risk_registry",
+      "signal": null,
+      "spawnError": null
+    },
+    {
+      "id": "A7",
+      "title": "EVM contract compile",
+      "status": "pass",
+      "command": "npx hardhat compile",
+      "exitCode": 0,
+      "durationMs": 2878,
+      "stdoutTail": "Nothing to compile\nNo need to generate any newer typings.",
+      "stderrTail": "",
+      "signal": null,
+      "spawnError": null
+    },
+    {
+      "id": "M1",
+      "title": "Contract-address input flow on desktop",
+      "status": "not_run",
+      "reason": "needs a browser against a deployed build"
+    },
+    {
+      "id": "M2",
+      "title": "DexScreener link input flow on desktop",
+      "status": "not_run",
+      "reason": "needs a browser against a deployed build"
+    },
+    {
+      "id": "M3",
+      "title": "Native XLM input",
+      "status": "not_run",
+      "reason": "needs a browser and live Stellar provider data"
+    },
+    {
+      "id": "M4",
+      "title": "Classic Stellar asset input",
+      "status": "not_run",
+      "reason": "needs a browser and live Stellar provider data"
+    },
+    {
+      "id": "M5",
+      "title": "Soroban contract asset input",
+      "status": "not_run",
+      "reason": "needs a browser and live Stellar provider data"
+    },
+    {
+      "id": "M6",
+      "title": "EVM wallet connected",
+      "status": "not_run",
+      "reason": "needs a real wallet extension and user signature"
+    },
+    {
+      "id": "M7",
+      "title": "EVM wallet disconnected",
+      "status": "not_run",
+      "reason": "needs a browser session"
+    },
+    {
+      "id": "M8",
+      "title": "Stellar wallet connected",
+      "status": "not_run",
+      "reason": "needs a real wallet and user signature"
+    },
+    {
+      "id": "M9",
+      "title": "Stellar wallet disconnected",
+      "status": "not_run",
+      "reason": "needs a browser session"
+    },
+    {
+      "id": "M10",
+      "title": "Report comprehension review",
+      "status": "not_run",
+      "reason": "human judgement on Buy Risk, confidence, verdict, reasons, sources, missing data, execution boundary"
+    },
+    {
+      "id": "M11",
+      "title": "Mobile viewport acceptance",
+      "status": "not_run",
+      "reason": "needs a real device or device emulation"
+    },
+    {
+      "id": "M12",
+      "title": "x402 payment-required (402) flow",
+      "status": "not_run",
+      "reason": "needs the deployed x402 route and a facilitator"
+    },
+    {
+      "id": "M13",
+      "title": "x402 verified payment flow",
+      "status": "not_run",
+      "reason": "needs a funded wallet on the payment network"
+    },
+    {
+      "id": "M14",
+      "title": "x402 failed payment flow",
+      "status": "not_run",
+      "reason": "needs a facilitator that can reject a payment"
+    },
+    {
+      "id": "M15",
+      "title": "x402 duplicate payment flow",
+      "status": "not_run",
+      "reason": "needs a replayed payment header against the deployed route"
+    },
+    {
+      "id": "M16",
+      "title": "Smoke suite against the deployment URL",
+      "status": "not_run",
+      "reason": "needs SMOKE_BASE_URL pointing at a running deployment"
+    },
+    {
+      "id": "M17",
+      "title": "Supabase migration applied to a clean database",
+      "status": "not_run",
+      "reason": "needs a database; blocked by #1"
+    },
+    {
+      "id": "M18",
+      "title": "No production path returns mock data",
+      "status": "not_run",
+      "reason": "needs live provider credentials to observe real responses"
+    }
+  ]
+}
