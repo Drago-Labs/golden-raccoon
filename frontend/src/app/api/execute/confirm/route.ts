@@ -3,7 +3,10 @@ import { z } from "zod";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { assertApprovalOnly } from "@/server/security/policy";
 import { checkRateLimit } from "@/server/security/rateLimit";
-import { createApprovalRecord, createTransactionRecord, getTransactionRecord } from "@/server/storage";
+import { createApprovalRecord, createTransactionRecord, getTransactionRecord, getSignedIntentByIntentHash, createSignedIntentRecord, updateSignedIntentStatus } from "@/server/storage";
+import { verifyExecutionIntentSignature, assertDomainMatch, assertNonceUnique } from "@/server/security/eip712";
+import { assertStellarAuthorization, verifyStellarAuthorizationNotExpired } from "@/server/security/stellarAuth";
+import type { ExecutionIntent } from "@/server/types";
 
 const bodySchema = z.object({
   decisionId: z.string().optional(),
@@ -19,7 +22,12 @@ const bodySchema = z.object({
   simulationStatus: z.enum(["not_required", "pending", "passed", "failed", "unavailable"]).optional(),
   policyAllowed: z.boolean().optional(),
   policyViolations: z.array(z.string()).optional(),
+  intentHash: z.string().optional(),
+  executionIntent: z.unknown().optional(),
+  stellarAuth: z.unknown().optional(),
 });
+
+const usedNonces = new Map<string, Set<number>>();
 
 export async function POST(request: Request) {
   const rateLimited = checkRateLimit(request, { namespace: "execute:confirm", limit: 20, windowMs: 60_000 });
@@ -63,6 +71,74 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "duplicate_tx_hash", detail: "This transaction hash is already recorded." }, { status: 409 });
   }
 
+  // Verify EIP-712 execution intent if provided
+  let intentRecordId: string | undefined;
+  if (parsed.data.executionIntent) {
+    try {
+      const intent = parsed.data.executionIntent as ExecutionIntent;
+      const intentHash = await verifyExecutionIntentSignature(intent);
+
+      assertNonceUnique(intent.payload.nonce, usedNonces, intent.payload.wallet);
+
+      if (intent.payload.wallet.toLowerCase() !== parsed.data.walletAddress.toLowerCase()) {
+        return NextResponse.json({ error: "intent_wallet_mismatch", detail: "Signed intent wallet does not match request wallet." }, { status: 403 });
+      }
+
+      const existing = getSignedIntentByIntentHash(intentHash);
+      if (existing) {
+        return NextResponse.json({ error: "duplicate_intent", detail: "This intent hash was already submitted." }, { status: 409 });
+      }
+
+      const record = createSignedIntentRecord({
+        walletAddress: intent.payload.wallet,
+        family: "evm",
+        policyHash: intent.payload.policyHash,
+        intentHash,
+        decisionHash: intent.payload.decisionHash,
+        domainChain: `${intent.domain.chainId}`,
+        nonce: intent.payload.nonce,
+        expiry: intent.payload.expiry,
+        status: "approved",
+        signature: intent.signature,
+      });
+
+      intentRecordId = record.id;
+    } catch (error) {
+      return NextResponse.json({ error: "intent_verification_failed", detail: error instanceof Error ? error.message : "Invalid execution intent." }, { status: 403 });
+    }
+  }
+
+  // Verify Stellar authorization if provided
+  if (parsed.data.stellarAuth) {
+    try {
+      const auth = parsed.data.stellarAuth as any;
+      assertStellarAuthorization(auth, auth.networkPassphrase);
+      verifyStellarAuthorizationNotExpired(auth);
+
+      const existing = getSignedIntentByIntentHash(auth.intentHash);
+      if (existing) {
+        return NextResponse.json({ error: "duplicate_intent", detail: "This Stellar intent hash was already submitted." }, { status: 409 });
+      }
+
+      const record = createSignedIntentRecord({
+        walletAddress: auth.sourceAccount,
+        family: "stellar",
+        policyHash: auth.intentHash,
+        intentHash: auth.intentHash,
+        decisionHash: auth.intentHash,
+        domainChain: auth.networkPassphrase,
+        nonce: 0,
+        expiry: auth.timeBounds.maxTime,
+        status: "approved",
+        stellarAuth: auth,
+      });
+
+      intentRecordId = record.id;
+    } catch (error) {
+      return NextResponse.json({ error: "stellar_auth_failed", detail: error instanceof Error ? error.message : "Invalid Stellar authorization." }, { status: 403 });
+    }
+  }
+
   const approval = createApprovalRecord({
     walletAddress: parsed.data.walletAddress,
     decisionId: parsed.data.decisionId,
@@ -71,6 +147,7 @@ export async function POST(request: Request) {
     action: parsed.data.action,
     asset: parsed.data.asset ?? "Wallet approval",
     valueUsd: parsed.data.valueUsd ?? 0,
+    intentId: intentRecordId,
   });
   const transaction = createTransactionRecord({
     hash: parsed.data.txHash,
@@ -94,6 +171,8 @@ export async function POST(request: Request) {
     ...parsed.data,
     status: "confirmed",
     autoExecuted: false,
+    intentVerified: Boolean(parsed.data.executionIntent || parsed.data.stellarAuth),
+    intentRecordId,
     approval,
     transaction,
     confirmedAt: new Date().toISOString(),

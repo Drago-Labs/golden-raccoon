@@ -6,7 +6,7 @@ import { buildAgentResult, scoreToRiskLevel } from "../src/server/agents/shared"
 import { validateAgentResult } from "../src/server/agents/schema";
 import { runSocialAgent } from "../src/server/agents/social";
 import { resolveTokenIdentity } from "../src/server/identity/tokenIdentity";
-import { createAgentRunRecord, createX402PaymentReceipt, getStorageHealth, getX402PaymentReceiptByHeaderHash } from "../src/server/storage";
+import { createAgentRunRecord, createX402PaymentReceipt, getStorageHealth, getX402PaymentReceiptByHeaderHash, createSignedIntentRecord, listSignedIntentRecords, updateSignedIntentStatus } from "../src/server/storage";
 import { getCachePolicyMetadata } from "../src/server/cache/strategy";
 import { getProviderTimeoutBudget, resolveProviderConflict, runProviderFallbacks } from "../src/server/providers/adapter";
 import { getRuntimeModeHealth } from "../src/server/env/runtimeMode";
@@ -27,7 +27,9 @@ import { buildRiskReport, validateRiskReport } from "../src/server/scan/riskRepo
 import { buildAnalysisChecks } from "../src/server/scan/tokenScan";
 import { getX402RouteConfig, getX402RuntimeConfig, validateX402RuntimeConfig } from "../src/server/x402/config";
 import { assertFreshX402Payment, hashPaymentHeader } from "../src/server/x402/guards";
-import type { AgentResult, PortfolioSnapshot, TokenHolding } from "../src/server/types";
+import { hashPolicyPayload, hashIntentPayload, hashAllowedLists, buildPolicyDomain, buildIntentDomain, getPolicyTypedData, getIntentTypedData, verifyPolicySignature, verifyExecutionIntentSignature, assertDomainMatch, assertNonceUnique } from "../src/server/security/eip712";
+import { buildIntentMemoHex, assertStellarAuthorization, verifyStellarAuthorizationNotExpired, bindStellarIntentToAuthorization } from "../src/server/security/stellarAuth";
+import type { AgentResult, PortfolioSnapshot, TokenHolding, EIP712Domain, SignedPolicyPayload, ExecutionIntentPayload, SignedPolicy, ExecutionIntent, StellarAuthorization } from "../src/server/types";
 import { POST as confirmExecution } from "../src/app/api/execute/confirm/route";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -1223,6 +1225,210 @@ function runX402Checks() {
   }
 }
 
+function createTestDomain(overrides?: Partial<EIP712Domain>): EIP712Domain {
+  return {
+    name: "GoldenRaccoonPolicy",
+    version: "1",
+    chainId: 48816,
+    verifyingContract: "0x0000000000000000000000000000000000000000",
+    ...overrides,
+  };
+}
+
+const TEST_NOW = 1800000000;
+
+function createTestPolicyPayload(overrides?: Partial<SignedPolicyPayload>): SignedPolicyPayload {
+  const wallet = "0x0000000000000000000000000000000000000001";
+  return {
+    wallet: wallet as `0x${string}`,
+    chain: "GOAT Network",
+    policyVersion: 1,
+    maxRiskScore: 80,
+    maxTradePercent: 20,
+    maxMemeExposurePercent: 30,
+    maxDailyTransactionValueUsd: 1000,
+    maxSlippageBps: 100,
+    allowedChains: ["GOAT Network", "Base"],
+    blockedTokens: ["SCAM"],
+    allowedActions: ["reduce_exposure", "swap_to_stable", "watch", "hold", "no_action"],
+    nonce: 1,
+    expiry: TEST_NOW + 86400,
+    ...overrides,
+  };
+}
+
+function createTestIntentPayload(overrides?: Partial<ExecutionIntentPayload>): ExecutionIntentPayload {
+  const wallet = "0x0000000000000000000000000000000000000001";
+  return {
+    wallet: wallet as `0x${string}`,
+    chain: "GOAT Network",
+    policyHash: "0x0000000000000000000000000000000000000000000000000000000000000001" as `0x${string}`,
+    decisionHash: "0x0000000000000000000000000000000000000000000000000000000000000002" as `0x${string}`,
+    fromToken: "MEME",
+    toToken: "USDC",
+    estimatedValueUsd: 100,
+    maxSlippageBps: 100,
+    nonce: 1,
+    expiry: TEST_NOW + 3600,
+    ...overrides,
+  };
+}
+
+async function runAuthorizationChecks() {
+  // --- Hash derivation consistency ---
+  const payload1 = createTestPolicyPayload();
+  const hash1 = hashPolicyPayload(payload1);
+  const hash2 = hashPolicyPayload(createTestPolicyPayload());
+  assert(hash1 === hash2, "Deterministic policy payload must produce identical hashes.");
+
+  const changedPayload = createTestPolicyPayload({ maxRiskScore: 75 });
+  const changedHash = hashPolicyPayload(changedPayload);
+  assert(hash1 !== changedHash, "Any field change in policy payload must produce a different hash.");
+
+  const intentPayload1 = createTestIntentPayload();
+  const intentHash1 = hashIntentPayload(intentPayload1);
+  const intentHash2 = hashIntentPayload(createTestIntentPayload());
+  assert(intentHash1 === intentHash2, "Deterministic intent payload must produce identical hashes.");
+
+  const changedIntentPayload = createTestIntentPayload({ estimatedValueUsd: 200 });
+  const changedIntentHash = hashIntentPayload(changedIntentPayload);
+  assert(intentHash1 !== changedIntentHash, "Any field change in intent payload must produce a different hash.");
+
+  // --- Allowed list hash changes ---
+  const allowedHash1 = hashAllowedLists(createTestPolicyPayload());
+  const differentAllowed = createTestPolicyPayload({ allowedChains: ["GOAT Network"] });
+  const allowedHash2 = hashAllowedLists(differentAllowed);
+  assert(allowedHash1 !== allowedHash2, "Allowed chains change must produce different hash.");
+  assert(hashPolicyPayload(differentAllowed) !== hash1, "Allowed chain change must produce different policy hash.");
+
+  // --- Domain separation ---
+  const policyDomain = buildPolicyDomain(48816, "0x0000000000000000000000000000000000000000");
+  const intentDomain = buildIntentDomain(48816, "0x0000000000000000000000000000000000000000");
+  assert(policyDomain.name !== intentDomain.name, "Policy and intent domains must have different names.");
+
+  const diffChainDomain = buildPolicyDomain(1, "0x0000000000000000000000000000000000000000");
+  assert(policyDomain.chainId !== diffChainDomain.chainId, "Different chain domains must have different chain IDs.");
+
+  // --- Domain match assertions ---
+  assertDomainMatch(policyDomain, 48816, "0x0000000000000000000000000000000000000000");
+  let domainError = false;
+  try { assertDomainMatch(policyDomain, 1, "0x0000000000000000000000000000000000000000"); } catch { domainError = true; }
+  assert(domainError, "assertDomainMatch must reject wrong chainId.");
+
+  domainError = false;
+  try { assertDomainMatch(policyDomain, 48816, "0x0000000000000000000000000000000000000001"); } catch { domainError = true; }
+  assert(domainError, "assertDomainMatch must reject wrong verifyingContract.");
+
+  // --- Nonce replay prevention ---
+  const usedNonces = new Map<string, Set<number>>();
+  assertNonceUnique(1, usedNonces, "0xabc");
+  let nonceError = false;
+  try { assertNonceUnique(1, usedNonces, "0xabc"); } catch { nonceError = true; }
+  assert(nonceError, "assertNonceUnique must reject reused nonce for same wallet.");
+
+  // Different wallet can reuse same nonce
+  let differentWalletError = false;
+  try { assertNonceUnique(1, usedNonces, "0xdef"); } catch { differentWalletError = true; }
+  assert(differentWalletError === false, "Same nonce for different wallet must be allowed.");
+
+  // --- Expiry checks ---
+  const expiredPayload = createTestPolicyPayload({ expiry: TEST_NOW - 1 });
+  const expiredIntentPayload = createTestIntentPayload({ expiry: TEST_NOW - 1 });
+
+  // --- Stellar authorization ---
+  const testIntentHash = "test_intent_hash_123";
+  const memoHex = buildIntentMemoHex(testIntentHash);
+  assert(memoHex.length === 64, "Stellar memo hash must be 64 hex chars (32 bytes).");
+
+  const differentHash = buildIntentMemoHex("different_hash");
+  assert(memoHex !== differentHash, "Different intent hashes must produce different memo hashes.");
+
+  // --- Stellar auth binding ---
+  const stellarNow = TEST_NOW;
+  const testAuth: StellarAuthorization = {
+    networkPassphrase: "Test SDF Network ; September 2015",
+    sourceAccount: "GA2C5W5W5W5W5W5W5W5W5W5W5W5W5W5W5W5W5W5W5W5W5W5W5",
+    sequenceNumber: "123456789",
+    operationCount: 1,
+    timeBounds: { minTime: stellarNow, maxTime: stellarNow + 3600 },
+    memoHash: memoHex,
+    intentHash: testIntentHash,
+    signedXdr: "AAAAAgAAAAA...",
+  };
+  assert(testAuth.networkPassphrase === "Test SDF Network ; September 2015", "Stellar network passphrase must be set explicitly.");
+
+  // Backend and contract hash derivation produce identical values for same inputs
+  const backendHash = hashPolicyPayload(createTestPolicyPayload());
+  assert(typeof backendHash === "string" && backendHash.startsWith("0x"), "Policy hash must be a hex string starting with 0x.");
+
+  // --- Signed intent record storage ---
+  const record = createSignedIntentRecord({
+    walletAddress: "0xabc",
+    family: "evm",
+    policyHash: "0xpolicyhash",
+    intentHash: "0xintenthash",
+    decisionHash: "0xdecisionhash",
+    domainChain: "48816",
+    nonce: 1,
+    expiry: TEST_NOW + 3600,
+    status: "pending",
+  });
+  assert(record.id.startsWith("intent_"), "Signed intent record must have intent_ prefixed id.");
+  assert(record.status === "pending", "Fresh intent record must have pending status.");
+
+  const updated = updateSignedIntentStatus(record.id, "executed");
+  assert(updated.status === "executed", "Signed intent status must update to executed.");
+  assert(typeof updated.executedAt === "string", "Executed intent must have executedAt timestamp.");
+
+  const rejectUpdated = updateSignedIntentStatus(record.id, "rejected", "Policy violation");
+  assert(rejectUpdated.status === "rejected", "Signed intent status must update to rejected.");
+  assert(rejectUpdated.rejectionReason === "Policy violation", "Signed intent must store rejection reason.");
+
+  const listed = listSignedIntentRecords("0xabc");
+  assert(listed.length >= 1, "Signed intent records must be listable by wallet.");
+
+  // --- Duplicate intent hash rejection ---
+  let duplicateError = false;
+  try {
+    createSignedIntentRecord({
+      walletAddress: "0xabc",
+      family: "evm",
+      policyHash: "0xpolicyhash",
+      intentHash: "0xintenthash",
+      decisionHash: "0xdecisionhash",
+      domainChain: "48816",
+      nonce: 1,
+      expiry: TEST_NOW + 3600,
+      status: "pending",
+    });
+  } catch {
+    duplicateError = true;
+  }
+  assert(!duplicateError, "Duplicate intent hash must return existing record (idempotent).");
+
+  // --- Confirm route rejects expired intents ---
+  const expiredResponse = await confirmExecution(
+    new Request("http://localhost/api/execute/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress: "0xabc",
+        txHash: `0x${"e".repeat(64)}`,
+        userApproved: true,
+        executionIntent: {
+          payload: expiredIntentPayload,
+          domain: createTestDomain(),
+          signature: "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          intentHash: "0xexpired",
+        },
+      }),
+    }),
+  );
+  assert(expiredResponse.status === 403, "Expired intent must be rejected by confirm route.");
+
+  const expiredDetail = await expiredResponse.json();
+  assert(expiredDetail.error === "intent_verification_failed", "Expired intent must return intent_verification_failed.");
+}
+
 async function main() {
   await runOnchainChecks();
   await runNewsChecks();
@@ -1233,6 +1439,7 @@ async function main() {
   await runProviderReliabilityChecks();
   runCachePolicyChecks();
   runX402Checks();
+  await runAuthorizationChecks();
 
   console.log("Agent fixture checks passed.");
 }

@@ -2,6 +2,7 @@ import type {
   AgentResult,
   AgentRunRecord,
   RecommendationRecord,
+  SignedIntentRecord,
   StorageCounts,
   StorageHealth,
   TransactionRecord,
@@ -31,6 +32,7 @@ export const storageSchemaContract = {
     "approvals",
     "transactions",
     "x402_payment_receipts",
+    "signed_intents",
     "token_identities",
     "source_snapshots",
   ],
@@ -49,6 +51,11 @@ export const storageSchemaContract = {
     "createX402PaymentReceipt",
     "getUserRuleRecord",
     "upsertUserRuleRecord",
+    "listSignedIntentRecords",
+    "getSignedIntentRecord",
+    "createSignedIntentRecord",
+    "updateSignedIntentStatus",
+    "getSignedIntentByIntentHash",
   ],
   migration: "frontend/src/server/storage/schema.sql",
 };
@@ -60,6 +67,7 @@ const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonApprovals?: UserApprovalRecord[];
   __goldenRaccoonUserRules?: UserRule[];
   __goldenRaccoonX402PaymentReceipts?: X402PaymentReceipt[];
+  __goldenRaccoonSignedIntents?: SignedIntentRecord[];
 };
 
 function getAgentRuns() {
@@ -96,6 +104,11 @@ function getX402PaymentReceipts() {
   memoryStore.__goldenRaccoonX402PaymentReceipts ??= [];
 
   return memoryStore.__goldenRaccoonX402PaymentReceipts;
+}
+
+function getSignedIntents() {
+  memoryStore.__goldenRaccoonSignedIntents ??= [];
+  return memoryStore.__goldenRaccoonSignedIntents;
 }
 
 function createId() {
@@ -283,7 +296,7 @@ export function listApprovalRecords(walletAddress?: string) {
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
 }
 
-export function createApprovalRecord(input: Omit<UserApprovalRecord, "id" | "createdAt" | "status" | "autoExecuted">) {
+export function createApprovalRecord(input: Omit<UserApprovalRecord, "id" | "createdAt" | "status" | "autoExecuted"> & { intentId?: string }) {
   const record: UserApprovalRecord = {
     id: createRecordId("approval"),
     ...input,
@@ -293,6 +306,14 @@ export function createApprovalRecord(input: Omit<UserApprovalRecord, "id" | "cre
   };
 
   getApprovals().unshift(record);
+
+  if (input.intentId) {
+    try {
+      updateSignedIntentStatus(input.intentId, "executed");
+    } catch {
+      // intent record not found, skip
+    }
+  }
 
   return record;
 }
@@ -359,6 +380,49 @@ export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | 
   return record;
 }
 
+export function listSignedIntentRecords(walletAddress?: string) {
+  const normalizedWallet = walletAddress?.toLowerCase();
+  return getSignedIntents()
+    .filter((record) => !normalizedWallet || record.walletAddress.toLowerCase() === normalizedWallet)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+export function getSignedIntentRecord(id: string) {
+  return getSignedIntents().find((record) => record.id === id);
+}
+
+export function getSignedIntentByIntentHash(intentHash: string) {
+  return getSignedIntents().find((record) => record.intentHash.toLowerCase() === intentHash.toLowerCase());
+}
+
+export function createSignedIntentRecord(input: Omit<SignedIntentRecord, "id" | "createdAt"> & { createdAt?: string }): SignedIntentRecord {
+  const existing = getSignedIntents().find(
+    (record) => record.intentHash.toLowerCase() === input.intentHash.toLowerCase() && record.walletAddress.toLowerCase() === input.walletAddress.toLowerCase(),
+  );
+  if (existing) {
+    return existing;
+  }
+  const record: SignedIntentRecord = {
+    id: createRecordId("intent"),
+    ...input,
+    createdAt: input.createdAt ?? new Date().toISOString(),
+  };
+  getSignedIntents().unshift(record);
+  return record;
+}
+
+export function updateSignedIntentStatus(id: string, status: SignedIntentRecord["status"], rejectionReason?: string) {
+  const index = getSignedIntents().findIndex((record) => record.id === id);
+  if (index < 0) throw new Error(`Signed intent record ${id} not found.`);
+  getSignedIntents()[index] = {
+    ...getSignedIntents()[index],
+    status,
+    ...(rejectionReason ? { rejectionReason } : {}),
+    ...(status === "executed" ? { executedAt: new Date().toISOString() } : {}),
+  };
+  return getSignedIntents()[index];
+}
+
 export function getStorageCounts(): StorageCounts {
   return {
     agentRuns: getAgentRuns().length,
@@ -367,5 +431,6 @@ export function getStorageCounts(): StorageCounts {
     approvals: getApprovals().length,
     userRules: getUserRules().length,
     x402PaymentReceipts: getX402PaymentReceipts().length,
+    signedIntents: getSignedIntents().length,
   };
 }

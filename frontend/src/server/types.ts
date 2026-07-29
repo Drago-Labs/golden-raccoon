@@ -555,6 +555,85 @@ export type UserApprovalRecord = {
   createdAt: string;
 };
 
+export type EIP712Domain = {
+  name: string;
+  version: string;
+  chainId: number;
+  verifyingContract: `0x${string}`;
+};
+
+export type SignedPolicyPayload = {
+  wallet: `0x${string}`;
+  chain: string;
+  policyVersion: number;
+  maxRiskScore: number;
+  maxTradePercent: number;
+  maxMemeExposurePercent: number;
+  maxDailyTransactionValueUsd: number;
+  maxSlippageBps: number;
+  allowedChains: string[];
+  blockedTokens: string[];
+  allowedActions: string[];
+  nonce: number;
+  expiry: number;
+};
+
+export type SignedPolicy = {
+  payload: SignedPolicyPayload;
+  domain: EIP712Domain;
+  signature: `0x${string}`;
+  policyHash: string;
+};
+
+export type ExecutionIntentPayload = {
+  wallet: `0x${string}`;
+  chain: string;
+  policyHash: `0x${string}`;
+  decisionHash: `0x${string}`;
+  fromToken: string;
+  toToken: string;
+  estimatedValueUsd: number;
+  maxSlippageBps: number;
+  nonce: number;
+  expiry: number;
+};
+
+export type ExecutionIntent = {
+  payload: ExecutionIntentPayload;
+  domain: EIP712Domain;
+  signature: `0x${string}`;
+  intentHash: string;
+};
+
+export type StellarAuthorization = {
+  networkPassphrase: string;
+  sourceAccount: string;
+  sequenceNumber: string;
+  operationCount: number;
+  timeBounds: { minTime: number; maxTime: number };
+  memoHash: string;
+  intentHash: string;
+  signedXdr: string;
+};
+
+export type SignedIntentRecord = {
+  id: string;
+  walletAddress: string;
+  family: "evm" | "stellar";
+  policyHash: string;
+  intentHash: string;
+  decisionHash: string;
+  domainChain: string;
+  nonce: number;
+  expiry: number;
+  status: "pending" | "approved" | "rejected" | "executed" | "expired";
+  rejectionReason?: string;
+  signature?: `0x${string}`;
+  stellarAuth?: StellarAuthorization;
+  createdAt: string;
+  executedAt?: string;
+};
+
 export type StorageCounts = {
   agentRuns: number;
   recommendations: number;
@@ -562,4 +641,5 @@ export type StorageCounts = {
   approvals: number;
   userRules: number;
   x402PaymentReceipts: number;
+  signedIntents: number;
 };
