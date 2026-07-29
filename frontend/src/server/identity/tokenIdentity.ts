@@ -1,7 +1,9 @@
 import type { AgentInputIdentity, ResolvedTokenIdentity } from "@/server/types";
 import { buildTokenIdentityGraph } from "@/server/identity/identityGraph";
-import { createContractIdentity, getChainFamily, resolveChainContext } from "@/lib/chainIdentity";
 
+import { StrKey } from "@stellar/stellar-sdk";
+
+const evmAddressPattern = /^0x[a-fA-F0-9]{40}$/;
 const genericSymbols = new Set(["AI", "GOAT", "MOON", "PEPE", "MEME", "DOGE", "CAT", "BTC", "ETH"]);
 
 function normalizeUrl(value?: string) {
@@ -21,21 +23,12 @@ function normalizeChain(value?: string) {
   return value?.trim().toLowerCase();
 }
 
-function normalizeAddress(value?: string, chain?: string) {
+function normalizeAddress(value?: string) {
   if (!value) return undefined;
-
-  try {
-    const chainFamily = getChainFamily(chain);
-    const context = resolveChainContext({
-      chainFamily,
-      network: chain ?? (chainFamily === "evm" ? "legacy-evm" : undefined),
-      identifier: value,
-    });
-
-    return createContractIdentity({ ...context, address: value }).address;
-  } catch {
-    return undefined;
-  }
+  const trimmed = value.trim();
+  if (evmAddressPattern.test(trimmed)) return trimmed.toLowerCase();
+  if (StrKey.isValidContract(trimmed) || StrKey.isValidEd25519PublicKey(trimmed)) return trimmed.toUpperCase();
+  return undefined;
 }
 
 function getConfidenceLabel(confidence: number): ResolvedTokenIdentity["confidenceLabel"] {
@@ -45,7 +38,7 @@ function getConfidenceLabel(confidence: number): ResolvedTokenIdentity["confiden
 }
 
 export function resolveTokenIdentity(input: AgentInputIdentity): ResolvedTokenIdentity {
-  const contractAddress = normalizeAddress(input.contractAddress, input.chain);
+  const contractAddress = normalizeAddress(input.contractAddress);
   const chain = normalizeChain(input.chain);
   const symbol = input.symbol?.trim().toUpperCase();
   const tokenName = input.tokenName?.trim();
@@ -62,7 +55,7 @@ export function resolveTokenIdentity(input: AgentInputIdentity): ResolvedTokenId
     confidence += 0.38;
     matchReasons.push("contract address");
   } else if (input.contractAddress) {
-    warnings.push("contract address is not a valid EVM address");
+    warnings.push("contract address is not a valid address");
   }
 
   if (chain) {
@@ -132,10 +125,12 @@ export function resolveTokenIdentity(input: AgentInputIdentity): ResolvedTokenId
   const boundedConfidence = Math.min(0.96, Math.max(0.08, confidence));
   const identityKey =
     contractAddress && chain
-      ? `${getChainFamily(chain)}:${chain}:${contractAddress}`
+      ? `${chain}:${contractAddress}`
       : contractAddress
         ? contractAddress
-        : [symbol, tokenName, websiteUrl, input.coingeckoId].filter(Boolean).join(":").toLowerCase() || "unknown-token";
+        : input.assetKey && chain
+          ? `${chain}:${input.assetKey}`
+          : [symbol, tokenName, websiteUrl, input.coingeckoId].filter(Boolean).join(":").toLowerCase() || "unknown-token";
 
   return {
     ...input,

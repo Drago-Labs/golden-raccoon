@@ -7,14 +7,17 @@
     "start": "npm --prefix frontend run start",
     "deploy:check": "node scripts/check-deploy-readiness.mjs",
     "test:agents": "npm --prefix frontend run test:agents",
-    "test:chain-identity": "npm --prefix frontend run test:chain-identity",
+    "test:auto-mode": "npm --prefix frontend run test:auto-mode",
     "test:stellar-config": "npm --prefix frontend run test:stellar-config",
+    "test:recovery": "npm --prefix frontend run test:recovery",
     "test:stellar-rpc": "node scripts/check-stellar-rpc.mjs",
+    "test:a11y": "npm --prefix frontend run test:a11y",
     "smoke": "node scripts/smoke-api.mjs",
     "monitor:production": "node scripts/monitor-production.mjs",
-    "quality:gate": "npm run deploy:check && npm run test:stellar-config && npm run test:chain-identity && npm run test:agents && npm run lint && npm run build",
+    "quality:gate": "npm run deploy:check && npm run test:stellar-config && npm run test:auto-mode && npm run test:agents && npm run test:a11y && npm run lint && npm run build",
     "quality:gate:full": "npm run quality:gate && npm run smoke",
-    "verify": "npm run quality:gate"
+    "verify": "npm run quality:gate",
+    "acceptance": "node scripts/acceptance-matrix.mjs"
   },
   "dependencies": {
     "next": "16.2.9",

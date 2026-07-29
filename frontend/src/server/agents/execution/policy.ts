@@ -1,5 +1,19 @@
-import type { AgentRecommendedAction, UserRule } from "@/server/types";
+import type { AgentRecommendedAction, StrategyPolicyResult, UserRule } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
+import { evaluateStrategy, type StrategyEnforcerContext } from "@/server/agents/strategy";
+import { getChainFamily } from "@/lib/chainIdentity";
+import {
+  evaluateImmutableBuyBlockers,
+  type ImmutableBuySafetySignals,
+} from "@/server/autoMode/policy";
+
+export type StellarPolicyOverrides = {
+  allowedIssuers?: string[];
+  blockClawbackIssuers: boolean;
+  blockRevocableIssuers: boolean;
+  maxTrustlineReserveXlm: number;
+  minXlmReserve: number;
+};
 
 export type ExecutionPolicy = {
   autoExecute: false;
@@ -12,6 +26,7 @@ export type ExecutionPolicy = {
   blockedTokens: string[];
   allowedActions: Set<AgentRecommendedAction>;
   walletAddress: string;
+  stellar: StellarPolicyOverrides;
 };
 
 export type ExecutionPolicyInput = {
@@ -24,10 +39,29 @@ export type ExecutionPolicyInput = {
   estimatedValueUsd?: number;
   slippageBps?: number;
   simulationStatus?: "not_required" | "pending" | "passed" | "failed" | "unavailable";
+  autoModeBuy?: boolean;
+  autoModeBuySafetySignals?: ImmutableBuySafetySignals;
+  // Stellar-specific trustline fields
+  stellarIssuer?: string;
+  stellarIssuerClawback?: boolean;
+  stellarIssuerRevocable?: boolean;
+  stellarReserveRequiredXlm?: number;
+  stellarCurrentXlmBalance?: number;
+  stellarQuoteStatus?: "fresh" | "stale" | "unavailable" | "simulated";
 };
 
 function uniqueStrings(values: string[] | undefined, fallback: string[]) {
   return Array.from(new Set((values?.length ? values : fallback).map((value) => value.trim()).filter(Boolean)));
+}
+
+function getDefaultStellarPolicy(): StellarPolicyOverrides {
+  return {
+    allowedIssuers: undefined,
+    blockClawbackIssuers: true,
+    blockRevocableIssuers: true,
+    maxTrustlineReserveXlm: 5,
+    minXlmReserve: 1.5,
+  };
 }
 
 export function buildExecutionPolicy(rules?: UserRule): ExecutionPolicy {
@@ -43,8 +77,12 @@ export function buildExecutionPolicy(rules?: UserRule): ExecutionPolicy {
     maxSlippageBps: safeRules.maxSlippageBps ?? defaultRules.maxSlippageBps ?? 100,
     allowedChains: uniqueStrings(safeRules.allowedChains, defaultRules.allowedChains ?? ["GOAT Network"]),
     blockedTokens: uniqueStrings(safeRules.blockedTokens, []),
-    allowedActions: new Set(safeRules.allowedActions ?? defaultRules.allowedActions ?? ["reduce_exposure", "swap_to_stable", "prepare_transaction", "watch", "hold", "no_action"]),
+    allowedActions: new Set(safeRules.allowedActions ?? defaultRules.allowedActions ?? ["reduce_exposure", "swap_to_stable", "prepare_transaction", "create_trustline", "watch", "hold", "no_action"]),
     walletAddress: safeRules.walletAddress,
+    stellar: {
+      ...getDefaultStellarPolicy(),
+      allowedIssuers: safeRules.blockedIssuers?.length ? undefined : getDefaultStellarPolicy().allowedIssuers,
+    },
   };
 }
 
@@ -52,59 +90,89 @@ function normalized(value?: string) {
   return value?.trim().toLowerCase();
 }
 
-export function evaluateExecutionPolicy(input: ExecutionPolicyInput, policy: ExecutionPolicy) {
-  const violations: string[] = [];
-  const tradeAction = input.action === "swap_to_stable" || input.action === "reduce_exposure" || input.action === "prepare_transaction";
+function isStellarChain(chain?: string) {
+  return getChainFamily(chain) === "stellar";
+}
 
-  if (policy.autoExecute) {
-    violations.push("Auto-execute is disabled. User wallet approval is mandatory.");
-  }
+/**
+ * Evaluate execution policy using the shared strategy enforcer as the
+ * primary enforcement engine, plus execution-specific checks for
+ * immutable auto-buy blockers and Stellar issuer/XLM reserve limits.
+ */
+export function evaluateExecutionPolicy(
+  input: ExecutionPolicyInput,
+  policy: ExecutionPolicy,
+  rules?: UserRule,
+): StrategyPolicyResult {
+  // 1. Run the shared strategy enforcer for all standard rule checks
+  const context: StrategyEnforcerContext = {
+    action: input.action,
+    riskScore: input.riskScore,
+    percent: input.percent,
+    estimatedValueUsd: input.estimatedValueUsd,
+    network: input.network,
+    fromToken: input.fromToken,
+    toToken: input.toToken,
+    slippageBps: input.slippageBps,
+    simulationStatus: input.simulationStatus,
+    stellarIssuer: input.stellarIssuer,
+    stellarIssuerClawback: input.stellarIssuerClawback,
+    stellarIssuerRevocable: input.stellarIssuerRevocable,
+    stellarReserveRequiredXlm: input.stellarReserveRequiredXlm,
+    stellarCurrentXlmBalance: input.stellarCurrentXlmBalance,
+    stellarQuoteStatus: input.stellarQuoteStatus,
+    phase: "execution",
+  };
 
-  if (!policy.allowedActions.has(input.action)) {
-    violations.push(`Action ${input.action} is not allowed by execution policy.`);
-  }
+  const result = evaluateStrategy(context, rules);
 
-  if (input.action === "avoid" || input.action === "manual_review") {
-    violations.push(`Action ${input.action.replaceAll("_", " ")} cannot prepare a transaction until the user reviews the risk.`);
-  }
+  // 2. Append immutable auto-buy blockers (not covered by shared enforcer)
+  const immutableBuyBlockers = input.autoModeBuy
+    ? evaluateImmutableBuyBlockers(input.autoModeBuySafetySignals)
+    : [];
 
-  if (input.percent > policy.maxTradePercent) {
-    violations.push(`Requested ${input.percent}% exceeds max trade percent ${policy.maxTradePercent}%.`);
-  }
+  // 3. Append additional Stellar-specific checks not in the shared enforcer
+  //    (allowed-issuer list, XLM reserve minimum)
+  const extraViolations: typeof result.violations = [];
+  const extraMessages: string[] = [];
 
-  if (tradeAction && input.riskScore > policy.maxRiskScoreForTrade) {
-    violations.push(`Risk score ${input.riskScore} exceeds max trade risk threshold ${policy.maxRiskScoreForTrade}.`);
-  }
+  if (isStellarChain(input.network)) {
+    // Allowed-issuer list check
+    if (input.action === "create_trustline" && typeof input.stellarIssuer === "string") {
+      const allowedIssuers = policy.stellar.allowedIssuers;
+      if (allowedIssuers && allowedIssuers.length > 0) {
+        const normalizedIssuer = input.stellarIssuer.trim().toUpperCase();
+        if (!allowedIssuers.map((i) => i.trim().toUpperCase()).includes(normalizedIssuer)) {
+          extraMessages.push(`Issuer ${input.stellarIssuer} is not in the allowed issuer list.`);
+        }
+      }
 
-  if (typeof input.estimatedValueUsd === "number" && input.estimatedValueUsd > policy.maxDailyTransactionValueUsd) {
-    violations.push(`Estimated value $${Math.round(input.estimatedValueUsd).toLocaleString("en-US")} exceeds daily transaction value limit $${policy.maxDailyTransactionValueUsd.toLocaleString("en-US")}.`);
-  }
-
-  if (typeof input.slippageBps === "number" && input.slippageBps > policy.maxSlippageBps) {
-    violations.push(`Slippage ${input.slippageBps} bps exceeds max slippage ${policy.maxSlippageBps} bps.`);
-  }
-
-  if (input.network && policy.allowedChains.length > 0 && !policy.allowedChains.map(normalized).includes(normalized(input.network))) {
-    violations.push(`Network ${input.network} is not in allowed chains.`);
-  }
-
-  const blockedTokens = policy.blockedTokens.map(normalized);
-  for (const token of [input.fromToken, input.toToken]) {
-    if (token && blockedTokens.includes(normalized(token))) {
-      violations.push(`Token ${token} is blocked by user policy.`);
+      // XLM reserve minimum check
+      if (
+        typeof input.stellarReserveRequiredXlm === "number" &&
+        typeof input.stellarCurrentXlmBalance === "number"
+      ) {
+        const availableXlm = input.stellarCurrentXlmBalance - input.stellarReserveRequiredXlm;
+        if (availableXlm < policy.stellar.minXlmReserve) {
+          extraMessages.push(
+            `Insufficient XLM reserve: ${availableXlm.toFixed(2)} XLM available after trustline, needs at least ${policy.stellar.minXlmReserve} XLM.`,
+          );
+        }
+      }
     }
   }
 
-  if (input.simulationStatus === "failed") {
-    violations.push("Simulation failed. Confirmation is blocked until the issue is resolved.");
+  for (const blocker of immutableBuyBlockers) {
+    extraMessages.push(`Immutable auto-buy blocker: ${blocker.replaceAll("_", " ")}.`);
   }
 
   return {
-    allowed: violations.length === 0,
-    violations,
+    allowed: result.allowed && extraMessages.length === 0,
+    violations: result.violations,
+    passed: result.passed,
+    warnings: result.warnings,
+    ruleVersion: result.ruleVersion,
+    ruleWalletAddress: result.ruleWalletAddress,
+    violationMessages: [...result.violationMessages, ...extraMessages],
   };
-}
-
-export function getBlockedReason(action: AgentRecommendedAction, percent: number, riskScore: number, policy: ExecutionPolicy) {
-  return evaluateExecutionPolicy({ action, percent, riskScore }, policy).violations[0];
 }

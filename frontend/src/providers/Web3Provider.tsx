@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react";
 import { WagmiProvider } from "wagmi";
 import { wagmiConfig } from "@/lib/wagmi";
 import { StellarWalletProvider } from "@/providers/StellarWalletProvider";
+import { WalletSessionProvider } from "@/providers/WalletSessionProvider";
 
 export function Web3Provider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
@@ -22,7 +23,9 @@ export function Web3Provider({ children }: { children: ReactNode }) {
             overlayBlur: "small",
           })}
         >
-          <StellarWalletProvider>{children}</StellarWalletProvider>
+          <StellarWalletProvider>
+            <WalletSessionProvider>{children}</WalletSessionProvider>
+          </StellarWalletProvider>
         </RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>

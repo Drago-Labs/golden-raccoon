@@ -5,14 +5,8 @@ import { runExecutionAgent } from "@/server/agents/execution";
 import { assertApprovalOnly } from "@/server/security/policy";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { getUserRuleRecord } from "@/server/storage";
-import {
-  chainFamilySchema,
-  networkSchema,
-  validateChainScopedWallet,
-} from "@/server/security/inputValidation";
 
 const bodySchema = z.object({
-  chainFamily: chainFamilySchema.optional(),
   action: z.string().optional(),
   walletAddress: z.string().optional(),
   decisionId: z.string().optional(),
@@ -21,7 +15,7 @@ const bodySchema = z.object({
   percent: z.number().min(0).max(100).optional(),
   riskScore: z.number().min(0).max(100).optional(),
   estimatedValueUsd: z.number().min(0).optional(),
-  network: networkSchema.optional(),
+  network: z.string().optional(),
   slippageBps: z.number().min(0).max(10_000).optional(),
   priceImpactBps: z.number().min(0).optional(),
   gasEstimateUsd: z.number().min(0).optional(),
@@ -29,18 +23,13 @@ const bodySchema = z.object({
   expectedOutputAmount: z.number().min(0).optional(),
   simulationStatus: z.enum(["not_required", "pending", "passed", "failed", "unavailable"]).optional(),
   simulationRevertReason: z.string().optional(),
-}).superRefine((value, context) => {
-  if (value.walletAddress && !validateChainScopedWallet({
-    chainFamily: value.chainFamily,
-    network: value.network,
-    walletAddress: value.walletAddress,
-  })) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["walletAddress"],
-      message: "Wallet address does not match chainFamily/network.",
-    });
-  }
+  // Stellar-specific execution fields
+  stellarAssetCode: z.string().optional(),
+  stellarIssuer: z.string().optional(),
+  stellarFromIssuer: z.string().optional(),
+  stellarToIssuer: z.string().optional(),
+  stellarSwapAmount: z.number().min(0).optional(),
+  stellarQuoteStatus: z.enum(["fresh", "stale", "unavailable", "simulated"]).optional(),
 });
 
 export async function POST(request: Request) {
@@ -63,10 +52,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Execution policy failed" }, { status: 403 });
   }
 
-  const rules = getUserRuleRecord(parsed.data.walletAddress, {
-    chainFamily: parsed.data.chainFamily,
-    network: parsed.data.network,
-  });
+  const rules = await getUserRuleRecord(parsed.data.walletAddress);
 
-  return withCacheHeaders(NextResponse.json(runExecutionAgent({ ...parsed.data, rules })), "execution");
+  const result = await runExecutionAgent({ ...parsed.data, rules });
+
+  return withCacheHeaders(NextResponse.json(result), "execution");
 }

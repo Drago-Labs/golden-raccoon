@@ -1,6 +1,7 @@
 import type { TransactionRecord } from "../types";
 
 export function getMockTransactions(): TransactionRecord[] {
+  const now = Date.now();
   return [
     {
       chainFamily: "evm",
@@ -9,8 +10,10 @@ export function getMockTransactions(): TransactionRecord[] {
       asset: "MEME",
       valueUsd: 183,
       status: "confirmed",
+      lifecycleStatus: "confirmed",
+      chainFamily: "evm",
       network: "GOAT Network",
-      createdAt: new Date(Date.now() - 1000 * 60 * 38).toISOString(),
+      createdAt: new Date(now - 1000 * 60 * 38).toISOString(),
     },
     {
       chainFamily: "evm",
@@ -19,8 +22,10 @@ export function getMockTransactions(): TransactionRecord[] {
       asset: "USDC",
       valueUsd: 0,
       status: "confirmed",
+      lifecycleStatus: "confirmed",
+      chainFamily: "evm",
       network: "GOAT Network",
-      createdAt: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
+      createdAt: new Date(now - 1000 * 60 * 90).toISOString(),
     },
     {
       chainFamily: "evm",
@@ -29,8 +34,10 @@ export function getMockTransactions(): TransactionRecord[] {
       asset: "GOAT",
       valueUsd: 86,
       status: "confirmed",
+      lifecycleStatus: "confirmed",
+      chainFamily: "evm",
       network: "GOAT Network",
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 8).toISOString(),
+      createdAt: new Date(now - 1000 * 60 * 60 * 8).toISOString(),
     },
   ];
 }

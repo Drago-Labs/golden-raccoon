@@ -3,11 +3,13 @@ import { listAgentRunRecords, listApprovalRecords, listRecommendationRecords, li
 
 export const dynamic = "force-dynamic";
 
-export default function HistoryPage() {
-  const agentRuns = listAgentRunRecords();
-  const recommendations = listRecommendationRecords();
-  const approvals = listApprovalRecords();
-  const transactions = listTransactionRecords();
+export default async function HistoryPage() {
+  const [agentRuns, recommendations, approvals, transactions] = await Promise.all([
+    listAgentRunRecords(),
+    listRecommendationRecords(),
+    listApprovalRecords(),
+    listTransactionRecords(),
+  ]);
 
   return (
     <AppShell>

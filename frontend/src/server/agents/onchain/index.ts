@@ -12,7 +12,8 @@ type OnchainAgentInput = {
   symbol?: string;
   issuer?: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "sac" | "sep41" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  discovery?: import("@/server/types").DiscoveryAgentContext;
 };
 
 type GoPlusTokenSecurity = Record<string, unknown>;
@@ -135,6 +136,8 @@ type OnchainAgentProviders = {
   ) => Promise<CreatorActivity | undefined>;
   fetchContractCode?: (rpcUrl: string, contractAddress: string) => Promise<ContractCodeCheck>;
 };
+
+export type { OnchainAgentProviders };
 
 function normalizeChain(chain?: string) {
   return normalizeScanNetworkId(chain || "goat");

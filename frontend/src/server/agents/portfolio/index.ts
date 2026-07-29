@@ -59,6 +59,7 @@ function getRecommendedAction(portfolio: PortfolioSnapshot, riskSignals: ReturnT
 }
 
 type PortfolioTargetToken = {
+  discovery?: import("@/server/types").DiscoveryAgentContext;
   contractAddress?: string;
   symbol?: string;
 };

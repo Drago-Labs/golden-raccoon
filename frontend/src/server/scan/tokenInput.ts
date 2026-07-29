@@ -9,7 +9,7 @@ export type NormalizedTokenInput = {
   chain: string;
   contractAddress: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "sac" | "sep41" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "deterministic_sac" | "sep41_token" | "unsupported_contract";
   issuer?: string;
   pairAddress?: string;
   symbol?: string;
@@ -223,9 +223,10 @@ export async function normalizeTokenInput(query: string, chain?: string): Promis
   const trimmed = query.trim();
   const evmAddress = isAddress(trimmed);
   const dexScreenerUrl = parseDexScreenerUrl(trimmed);
+  const isStellarUrl = trimmed.includes("stellar") || trimmed.includes("lumenscan");
   const stellarNetwork = !evmAddress && !dexScreenerUrl
     ? normalizeStellarNetworkId(chain)
-      ?? (StrKey.isValidContract(trimmed) || StrKey.isValidEd25519PublicKey(trimmed) || trimmed.includes(":") || ["xlm", "native"].includes(trimmed.toLowerCase())
+      ?? (StrKey.isValidContract(trimmed) || StrKey.isValidEd25519PublicKey(trimmed) || trimmed.includes(":") || ["xlm", "native"].includes(trimmed.toLowerCase()) || isStellarUrl
         ? getDefaultStellarNetwork().id
         : null)
     : null;
@@ -239,11 +240,11 @@ export async function normalizeTokenInput(query: string, chain?: string): Promis
       chain: stellarNetwork,
       contractAddress: "contractId" in identity ? identity.contractId : identity.issuer,
       assetKey: identity.assetKey,
-      assetType: identity.type,
+      assetType: identity.type as NormalizedTokenInput["assetType"],
       issuer: "issuer" in identity ? identity.issuer : undefined,
       symbol: "symbol" in identity ? identity.symbol : undefined,
       name: "name" in identity ? identity.name : identity.type === "issuer_account" ? "Stellar issuer account" : "Soroban contract token",
-      source: identity.type === "issuer_account" ? "stellar_issuer" : identity.type === "sac" || identity.type === "sep41" ? "contract_address" : "stellar_asset",
+      source: identity.type === "issuer_account" ? "stellar_issuer" : identity.type === "classic" || identity.type === "native" ? "stellar_asset" : "contract_address",
     };
   }
 
