@@ -97,6 +97,8 @@ The contracts emit normalized events whose parameter names line up with the fron
 | `ExecutionIntentLogged` | EVM | owner logs a signed intent | `wallet`, `intentHash` | `planId` (string, frontend UUIDv4 — optional, mirrors the `planId` from the matching `DecisionLogged`), `decisionHash`, `expiry`, `nonce` |
 | `ExecutionIntentReplayed` | EVM | owner surfaces a replay attempt via `surfaceReplay(intentHash)` (§5.3) | `intentHash`, `wallet` | `at`. **Not** emitted on the reverted `logExecutionIntent` call: Solidity reverts consume all in-call events, so the indexer learns replay failures via `vm.revert_reason` on the failed receipt. The surface call exposes the attempt for `transaction_lifecycle_events` correlation. |
 | `ExecutionIntentExpired` | EVM | owner surfaces a stale intent via `surfaceStale(intentHash, expiry, observedTs)` (§5.3) | `wallet`, `intentHash` | `expiry`, `observedTs`. **Not** emitted on the reverted `logExecutionIntent` call: surface it via `surfaceStale` or via the off-chain indexer reading `vm.revert_reason`. |
+| `GuardianAdded` | EVM | owner adds a guardian | `wallet`, `guardian` | `addedAt` |
+| `GuardianRemoved` | EVM | owner removes a guardian | `wallet`, `guardian` | `removedAt`, `reason` |
 | `EmergencyPauseSet` | EVM | pause toggled | `wallet` | `paused`, `pausedAt`, `reason` |
 | `PublisherAuthorizationChanged` | Soroban | admin toggles publisher | `publisher` | `authorized`, `tier`, `changedAt` |
 | `PublisherExpired` | Soroban | publisher TTL elapses | `publisher` | `expiredAt`, `lastSeenAt` |
@@ -131,10 +133,12 @@ address public implementation; // UUPS-style proxy (deployed separately)
 // state
 address public owner;             // wallet-bound owner
 mapping(address => uint256) public agentExpiries; // agent => unix seconds; 0 = unset
+mapping(address => address)  public agentOwner;   // agent => owning wallet; set in addAgent. Used by logDecision to resolve the owning wallet for policy lookups, counter increments, and event attribution.
 mapping(address => bytes32) public policyHash;   // wallet => canonical policy hash
 mapping(bytes32 => bool)    public usedIntents;  // intentHash => already submitted
 mapping(address => uint256) public nonces;       // wallet => monotonic nonce
 mapping(address => uint256) public decisionCounter; // wallet => monotonic; pre-incremented on each successful logDecision. Drives §8 decision_id derivation. View accessor `decisionCounters(address wallet) external view returns (uint256)` surfaces the current counter for off-chain indexers.
+mapping(address => bool) public guardians;  // address => is guardian; set via addGuardian / removeGuardian
 bool public paused;
 
 // role bit
@@ -149,7 +153,7 @@ uint256 public constant ROLE_AGENT = 1;
 | --- | --- | --- | --- |
 | `owner` | constructor | single address | no — ownership transfer via dedicated two-step `transferOwnership` |
 | `agent` | owner | per-address with expiry | yes — owner can add and remove |
-| `guardian` | owner (subset) | optional pause authority | yes |
+| `guardian` | `addGuardian` / `removeGuardian` (owner) | per-address, stored in `guardians` mapping | yes — owner can add and remove |
 
 ### 5.3 Functions
 
@@ -163,6 +167,8 @@ event DecisionLogged(address indexed wallet, address indexed agent, bytes32 inde
 event ExecutionIntentLogged(address indexed wallet, bytes32 indexed intentHash, bytes32 decisionHash, string planId, uint64 expiry, uint256 nonce);
 event ExecutionIntentReplayed(bytes32 indexed intentHash, address indexed wallet, uint64 at);
 event ExecutionIntentExpired(address indexed wallet, bytes32 indexed intentHash, uint64 expiry, uint64 observedTs);
+event GuardianAdded(address indexed wallet, address indexed guardian, uint64 addedAt);
+event GuardianRemoved(address indexed wallet, address indexed guardian, uint64 removedAt, string reason);
 event EmergencyPauseSet(address indexed wallet, bool paused, uint64 pausedAt, string reason);
 
 error NotOwner();
@@ -175,28 +181,33 @@ error Expired();
 error Replay();
 error InvalidFormat(string reason);
 error StaleIntent(uint64 expiry);
-error PolicyMismatch();                            // §5.3 logDecision step 2 triggers: caller-supplied policyHash != getPolicyHash(msg.sender)
+error PolicyMismatch();                            // §5.3 logDecision step 3 triggers: caller-supplied policyHash != getPolicyHash(owner)
 error InvalidRiskScore(uint16 actual);
 
 function version() external view returns (uint16 major, uint16 minor, uint16 patch, bytes32 buildHash);
 
-function addAgent(address agent, uint64 expiry) external;                       // onlyOwner
-function removeAgent(address agent, string reason) external;                    // onlyOwner
-function rotateAgent(address previous, address next, uint64 expiry) external;     // onlyOwner
+function addAgent(address agent, uint64 expiry) external;                       // onlyOwner; sets agentOwner[agent] = msg.sender
+function removeAgent(address agent, string reason) external;                    // onlyOwner; clears agentOwner[agent]
+function rotateAgent(address previous, address next, uint64 expiry) external;     // onlyOwner; re-points agentOwner from previous to next
 function setPolicy(bytes calldata policy) external returns (bytes32 policyHash); // onlyOwner; canonical encoding
 function getPolicyHash(address wallet) external view returns (bytes32 policyHash);
+
+function addGuardian(address guardian) external;                                   // onlyOwner
+function removeGuardian(address guardian, string reason) external;                  // onlyOwner
+function isGuardian(address candidate) external view returns (bool);                // view
 
 function logDecision(bytes32 decisionHash, bytes32 policyHash, uint16 riskScore, string calldata planId) external; // onlyAgent
 //   flow:
 //     1. onlyAgent check (`agentExpiries[msg.sender] > block.timestamp`).
-//     2. policyHash must equal `getPolicyHash(msg.sender)` (revert `PolicyMismatch` if not); this is the V2-062 linkage.
-//     3. decisionHash must NOT be bytes32(0) (revert `ZeroHash` if so).
-//     4. riskScore must be `<= 100` (revert `InvalidRiskScore(riskScore)` if not).
-//     5. planId must be `1..160` utf-8 chars and must not contain `\u0000` (revert `InvalidFormat("plan_id ...")` otherwise).
-//     6. decisionId = keccak256(abi.encode(uint256(block.chainid), msg.sender, ++decisionCounter[msg.sender])); // pre-increment.
-//     7. createdAt = uint64(block.timestamp); this DID NOT appear in the §8 decision_hash formula in the previous draft; the formula now binds against (decisionId, policyHash, msg.sender, createdAt) only. See §8 row.
-//     8. emit DecisionLogged(wallet=msg.sender, agent=msg.sender, decisionHash, decisionId, policyHash, planId, riskScore, createdAt).
-//   Note: the contract does NOT verify that decisionHash matches keccak256(decisionId, policyHash, agent, createdAt) at logDecision time; decisionHash is caller-supplied and audit-side. The §8 row documents the canonical formula an off-chain auditor uses to re-derive decisionHash from the on-chain event payload. The contract's invariants are: policyHash equals the current wallet policy, decisionHash is non-zero, and decisionId is the formula above.
+//     2. owner = agentOwner[msg.sender]; (revert if owner == address(0) — the agent must be linked to a wallet first).
+//     3. policyHash must equal `getPolicyHash(owner)` (revert `PolicyMismatch` if not); this is the V2-062 linkage. Policy lookup is owner-keyed, not agent-keyed, because setPolicy is onlyOwner and stores against the owner wallet.
+//     4. decisionHash must NOT be bytes32(0) (revert `ZeroHash` if so).
+//     5. riskScore must be `<= 100` (revert `InvalidRiskScore(riskScore)` if not).
+//     6. planId must be `1..160` utf-8 chars and must not contain `\u0000` (revert `InvalidFormat("plan_id ...")` otherwise).
+//     7. decisionId = keccak256(abi.encode(uint256(block.chainid), owner, ++decisionCounter[owner])); // pre-increment on the owner wallet.
+//     8. createdAt = uint64(block.timestamp); this DID NOT appear in the §8 decision_hash formula in the previous draft; the formula now binds against (decisionId, policyHash, msg.sender, createdAt) only. See §8 row.
+//     9. emit DecisionLogged(wallet=owner, agent=msg.sender, decisionHash, decisionId, policyHash, planId, riskScore, createdAt). wallet is the owning wallet; agent is the caller.
+//   Note: the contract does NOT verify that decisionHash matches keccak256(decisionId, policyHash, agent, createdAt) at logDecision time; decisionHash is caller-supplied and audit-side. The §8 row documents the canonical formula an off-chain auditor uses to re-derive decisionHash from the on-chain event payload. The contract's invariants are: policyHash equals the owner's wallet policy, decisionHash is non-zero, and decisionId is the formula above.
 function logExecutionIntent(bytes32 intentHash, bytes32 decisionHash, uint64 expiry, string calldata planId) external; // onlyOwner
 //   surfaces the calling owner's `planId` for the matching `DecisionLogged` so the indexer can join without a separate lookup.
 
@@ -229,7 +240,7 @@ function executeUpgrade() external;                                             
 | `InvalidRiskScore` | `riskScore > 100` | score schema |
 | `Replay` | `usedIntents[intentHash]` | replay guard |
 | `StaleIntent` | `block.timestamp > expiry` | stale intent |
-| `PolicyMismatch` | `logDecision` caller-supplied `policyHash != getPolicyHash(msg.sender)` | policy hash mismatch at call time. Introduced by §5.3 logDecision step 2 \u2014 the V2-062 on-chain linkage requires the caller's `policyHash` arg to equal `getPolicyHash(msg.sender)` at the moment of call. (The policy may have been set hours earlier; `PolicyMismatch` only checks current equality.) |
+| `PolicyMismatch` | `logDecision` caller-supplied `policyHash != getPolicyHash(agentOwner[msg.sender])` | policy hash mismatch at call time. Introduced by §5.3 logDecision step 3 — the V2-062 on-chain linkage requires the agent-supplied `policyHash` arg to equal `getPolicyHash(owner)` at the moment of call. The policy lookup is owner-keyed, not agent-keyed, because `setPolicy` is `onlyOwner` and stores against the owner wallet. |
 | `InvalidFormat` | `policy` encoding is incorrect; `planId` exceeds 160 UTF-8 chars or contains `\u0000` | format validation. `decision_id` is NOT caller-supplied; it is contract-computed (§5.3 / §8). The validation rule that previously read "decisionId is not UTF-8" has been removed because the contract no longer accepts a caller-supplied decisionId. |
 
 ### 5.5 Replay, stale intent, zero-address, invalid hash, pause
@@ -276,7 +287,7 @@ pub enum DataKey {
     Paused,
     PauseReason,
     PublisherCounter(Address),                 // monotonic per publisher; pre-incremented on each successful publish_risk. Drives §8 decision_id derivation for RiskPublished correlation.
-    PublisherCounterNonce(Address),            // RESERVED for V2-066 — NOT YET INITIALIZED. Per-publisher monotonic nonce; storage slot is declared today so a future implementation cannot drift from the spec, but the variant carries no semantic runtime value until V2-066 lands. See §6.5. The deliberately-distinct name (`PublisherCounterNonce`, NOT `PublisherNonce`) avoids the §6.6 collision with `PublisherCounter(Address)`.
+    PublisherCounterNonce(Address),            // Per-publisher monotonic nonce; pre-incremented on each successful publish_risk. Enforces replay protection: a duplicate (publisher, nonce) pair emits `ReplayProtection` and reverts. The deliberately-distinct name (`PublisherCounterNonce`, NOT `PublisherNonce`) avoids the §6.6 collision with `PublisherCounter(Address)`.
     UpgradePending { new_wasm_hash: BytesN<32>, effective_at: u64, proposer: Address },
     UpgradeDelaySec,
     Publisher(Address),
@@ -368,7 +379,14 @@ pub enum RegistryError {
 
 pub fn initialize(env: Env, admin: Address, publishers: Vec<Address>, tiers: Vec<Symbol>, expiries: Vec<u64>, version: (u32, u32, u32, BytesN<32>));
 pub fn set_publisher(env: Env, publisher: Address, authorized: bool, tier: Symbol, expiry: u64);
-pub fn publish_risk(env: Env, publisher: Address, asset_id: BytesN<32>, network: Symbol, asset_label: String, score: u32, verdict: Symbol, report_hash: BytesN<32>, evidence_uri: String, updated_at: u64) -> Result<RiskRecord, RegistryError>;
+pub fn publish_risk(env: Env, publisher: Address, asset_id: BytesN<32>, network: Symbol, asset_label: String, score: u32, verdict: Symbol, report_hash: BytesN<32>, evidence_uri: String, updated_at: u64, nonce: u64) -> Result<RiskRecord, RegistryError>;
+//   flow:
+//     1. Standard auth and validation (publisher, expiry, score, timestamps).
+//     2. Replay protection: let previous = env.storage().get(&DataKey::PublisherCounterNonce(publisher.clone()));
+//        if previous.is_some() && nonce <= previous.unwrap() { return Err(RegistryError::ReplayProtection); }
+//     3. Increment nonce: env.storage().set(&DataKey::PublisherCounterNonce(publisher.clone()), &nonce);
+//     4. Continue with existing record creation logic.
+//     5. Emit RiskPublished event with the caller-supplied nonce.
 pub fn revoke_risk(env: Env, asset_id: BytesN<32>, network: Symbol, reason: String) -> Result<(), RegistryError>;
 pub fn get_risk(env: Env, asset_id: BytesN<32>, network: Symbol) -> Option<RiskRecord>;
 pub fn is_publisher(env: Env, publisher: Address) -> bool;
@@ -402,7 +420,7 @@ pub fn is_paused(env: Env) -> bool;
 | `ZeroHash` | `asset_id` or `report_hash` is `BytesN<32>::from_array([0;32])` | sentinel |
 | `InvalidTier` | tier symbol length > 32 or numeric | serialization |
 | `Paused` | `publish_risk` while `is_paused()` | emergency gate |
-| `ReplayProtection` | reserved for future per-publisher nonce on `publish_risk` (V2-066 prerequisite) | see §6.5 |
+| `ReplayProtection` | duplicate `(publisher, nonce)` pair in `publish_risk` | per-publisher monotonic nonce enforced; the caller-supplied `nonce` must exceed the stored `PublisherCounterNonce(publisher)` value. |
 | `InvalidUpgradeDelay` | `delay_sec < 24 * 3600` or `> 30 * 86400` | upgrade window |
 | `UpgradeNotPending` | `execute_upgrade` / `cancel_upgrade` without pending upgrade | state guard |
 | `UpgradeNotReady` | `execute_upgrade` before `effective_at` | timelock |
@@ -411,7 +429,7 @@ pub fn is_paused(env: Env) -> bool;
 
 ### 6.5 Replay, stale, zero-address, invalid hash, pause
 
-- **Replay**: `publish_risk` checks `updated_at > existing.updated_at`. The V2-066 prerequisite adds a per-publisher monotonic nonce key (`PublisherCounterNonce(Address)`, reserved today in §6.1 enum) that complements `updated_at`. The nonce is checked against `report_hash` in `publish_risk` so a duplicated (publisher, nonce) pair reverts `ReplayProtection`. **Disambiguation**: `PublisherCounterNonce(Address)` (V2-066 future replay protection) is a separate `DataKey` from `PublisherCounter(Address)` (§6.6, this PR's §8 decision_id derivation). Both are per-publisher and both bump on `publish_risk` only when their respective processors fire; their purposes are different (replay protection vs decision_id fan-out) and an implementation MUST NOT collapse them. The deliberately distinct name (`PublisherCounterNonce`, NOT `PublisherNonce`) is the §6.6 collision guard.
+- **Replay**: `publish_risk` checks both (a) `updated_at > existing.updated_at` (monotonic guard) and (b) a per-publisher monotonic nonce (`PublisherCounterNonce(Address)`). The caller supplies a `nonce: u64` that must exceed the stored `PublisherCounterNonce(publisher)` value; if it does not, the call reverts `ReplayProtection`. On success, the contract stores the caller-supplied nonce. **Disambiguation**: `PublisherCounterNonce(Address)` (active replay protection) is a separate `DataKey` from `PublisherCounter(Address)` (§6.6, §8 decision_id derivation). Both are per-publisher and both bump on `publish_risk`; their purposes are different (replay protection vs decision_id fan-out) and an implementation MUST NOT collapse them. The deliberately distinct name (`PublisherCounterNonce`, NOT `PublisherNonce`) is the §6.6 collision guard.
 - **Stale**: `StaleReport` is already enforced for `publish_risk`. The new `revoke_risk` adds a `revoked_at` and rejects re-revocation with `StaleReport`.
 - **Zero address / zero hash**: `ZeroAddress` / `ZeroHash` for the publisher parameter and the `asset_id` / `report_hash` parameters. `revoke_risk` reverts `ZeroHash` on the asset_id.
 - **Invalid hash**: `asset_id` and `report_hash` are `BytesN<32>`; zero is rejected. `report_hash` must additionally be `!= sha256(canonicalReportJson) == 0` (effectively a non-zero digit check).
