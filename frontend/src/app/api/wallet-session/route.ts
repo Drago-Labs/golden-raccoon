@@ -30,7 +30,7 @@ function notConfigured() {
     {
       error: "wallet_session_disabled",
       detail:
-        "Set ALLOW_WALLET_SESSION_COOKIE=1 in this deployment to enable server-side wallet scoping for alert APIs.",
+        "Set ALLOW_WALLET_SESSION_COOKIE=1 and a random WALLET_SESSION_COOKIE_SECRET of at least 32 characters to enable signed wallet sessions.",
     },
     { status: 503 },
   );
