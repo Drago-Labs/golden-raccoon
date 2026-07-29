@@ -1,5 +1,6 @@
 import type { TransactionPreview as Preview } from "@/server/types";
 import { formatUsd } from "@/lib/format";
+import { SimulationResultPanel } from "@/components/SimulationResultPanel";
 
 export function TransactionPreview({ preview }: { preview: Preview }) {
   return (
@@ -105,6 +106,11 @@ export function TransactionPreview({ preview }: { preview: Preview }) {
       {preview.audit ? (
         <div className="mt-3 rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white/48">
           Server cannot sign transactions. {preview.audit.approvalRequired ? "User wallet approval required before broadcast." : "No user wallet approval is required for this non-executable action."}
+        </div>
+      ) : null}
+      {preview.simulation ? (
+        <div className="mt-5">
+          <SimulationResultPanel simulation={preview.simulation} />
         </div>
       ) : null}
     </section>

@@ -1,5 +1,6 @@
 import { runNewsAgent } from "../src/server/agents/news";
 import { runOnchainAgent } from "../src/server/agents/onchain";
+import { runStellarOnchainAgent, type StellarOnchainProviders } from "../src/server/agents/onchain/stellar";
 import { runDecisionAgent } from "../src/server/agents/decision";
 import { buildExecutionPreview, runExecutionAgent } from "../src/server/agents/execution";
 import { buildAgentResult, scoreToRiskLevel } from "../src/server/agents/shared";
@@ -10,7 +11,9 @@ import { createAgentRunRecord, createX402PaymentReceipt, getStorageHealth, getX4
 import { getCachePolicyMetadata } from "../src/server/cache/strategy";
 import { getProviderTimeoutBudget, resolveProviderConflict, runProviderFallbacks } from "../src/server/providers/adapter";
 import { getRuntimeModeHealth } from "../src/server/env/runtimeMode";
-import { assertExternalFetchAllowed, evaluateUrlSafety } from "../src/server/security/urlSafety";
+import { assertExternalFetchAllowed, assertSep1FetchAllowed, evaluateUrlSafety, isPrivateOrLocalHost } from "../src/server/security/urlSafety";
+import { parseStellarAssetInput, parseSep1Toml, deriveStellarSacContractId, type StellarAssetIdentity } from "../src/server/stellar/assetIdentity";
+import { stellarNetworks } from "../src/lib/stellar/config";
 import { getPortfolioHardeningReport } from "../src/server/portfolio/hardening";
 import { getPortfolioRiskSignals } from "../src/server/portfolio/riskScoring";
 import { createAgentRunId, getRunPartialStatus, markRunCancelled } from "../src/server/agents/orchestrationState";
@@ -18,7 +21,7 @@ import { createAgentLog, redactSecrets } from "../src/server/observability/loggi
 import { evaluateAlertThresholds } from "../src/server/observability/alerts";
 import { getResultMetrics } from "../src/server/observability/metrics";
 import { goldenFixtureSuite, assertGoldenScore } from "../src/server/evaluation/goldenFixtures";
-import { compareReplaySnapshot, createReplaySnapshot } from "../src/server/evaluation/replay";
+import { compareReplaySnapshot, createReplaySnapshot, createStellarReplaySnapshot, stellarReplaySnapshots } from "../src/server/evaluation/replay";
 import { criticalFindingDoesNotLowerRisk, missingDataDoesNotIncreaseConfidence, noAgentResultRequiresManualReview, reliableSourcesDoNotLowerConfidence } from "../src/server/evaluation/properties";
 import { hashSourceSnapshot } from "../src/server/storage";
 import { rateLimitProfiles } from "../src/server/security/rateLimit";
@@ -773,7 +776,7 @@ async function runExecutionChecks() {
     new Request("http://localhost/api/execute/confirm", {
       method: "POST",
       body: JSON.stringify({
-        walletAddress: "0xabc",
+        walletAddress: "0x1111111111111111111111111111111111111111",
         txHash: `0x${"a".repeat(64)}`,
         userApproved: true,
         simulationStatus: "failed",
@@ -786,7 +789,7 @@ async function runExecutionChecks() {
     new Request("http://localhost/api/execute/confirm", {
       method: "POST",
       body: JSON.stringify({
-        walletAddress: "0xabc",
+        walletAddress: "0x1111111111111111111111111111111111111111",
         txHash: `0x${"c".repeat(64)}`,
         userApproved: true,
         action: "reduce_exposure",
@@ -801,8 +804,8 @@ async function runExecutionChecks() {
     new Request("http://localhost/api/execute/confirm", {
       method: "POST",
       body: JSON.stringify({
-        decisionWalletAddress: "0xabc",
-        walletAddress: "0xdef",
+        decisionWalletAddress: "0x1111111111111111111111111111111111111111",
+        walletAddress: "0x2222222222222222222222222222222222222222",
         txHash: `0x${"d".repeat(64)}`,
         userApproved: true,
       }),
@@ -814,7 +817,7 @@ async function runExecutionChecks() {
     new Request("http://localhost/api/execute/confirm", {
       method: "POST",
       body: JSON.stringify({
-        walletAddress: "0xabc",
+        walletAddress: "0x1111111111111111111111111111111111111111",
         txHash: "not-a-tx",
         userApproved: true,
       }),
@@ -827,7 +830,7 @@ async function runExecutionChecks() {
       method: "POST",
       body: JSON.stringify({
         decisionId: "decision_fixture",
-        walletAddress: "0xabc",
+        walletAddress: "0x1111111111111111111111111111111111111111",
         txHash: `0x${"b".repeat(64)}`,
         userApproved: true,
         network: "GOAT Network",
@@ -846,9 +849,10 @@ async function runExecutionChecks() {
       method: "POST",
       body: JSON.stringify({
         decisionId: "decision_fixture",
-        walletAddress: "0xabc",
+        walletAddress: "0x1111111111111111111111111111111111111111",
         txHash: `0x${"b".repeat(64)}`,
         userApproved: true,
+        network: "GOAT Network",
       }),
     }),
   );
@@ -857,7 +861,7 @@ async function runExecutionChecks() {
   assert(duplicateConfirmJson.pendingVerification === true, "Re-confirming an externally-broadcast hash must report pendingVerification until on-chain verification succeeds.");
 
   const runRecord = createAgentRunRecord({
-    walletAddress: "0xabc",
+    walletAddress: "0x1111111111111111111111111111111111111111",
     mode: "token_scan",
     inputSnapshot: { symbol: "MEME", chain: "base" },
     targetToken: { symbol: "MEME", chain: "base", riskScore: 60 },
@@ -1089,6 +1093,14 @@ async function runReadinessChecks() {
 
   assert(goldenFixtureSuite.includes("honeypot"), "Golden fixture suite must include honeypot case.");
   assert(assertGoldenScore("honeypot", 88), "Regression snapshot must accept expected honeypot score range.");
+  assert(goldenFixtureSuite.includes("stellar_xlm"), "Golden fixture suite must include stellar XLM case.");
+  assert(goldenFixtureSuite.includes("stellar_known_classic"), "Golden fixture suite must include stellar known classic case.");
+  assert(goldenFixtureSuite.includes("stellar_restricted_asset"), "Golden fixture suite must include stellar restricted asset case.");
+  assert(goldenFixtureSuite.includes("stellar_sac"), "Golden fixture suite must include stellar SAC case.");
+  assert(goldenFixtureSuite.includes("stellar_sep41"), "Golden fixture suite must include stellar SEP-41 case.");
+  assert(goldenFixtureSuite.includes("stellar_invalid_issuer"), "Golden fixture suite must include stellar invalid issuer case.");
+  assert(goldenFixtureSuite.includes("stellar_unknown_contract"), "Golden fixture suite must include stellar unknown contract case.");
+  assert(goldenFixtureSuite.includes("stellar_unavailable_provider"), "Golden fixture suite must include stellar unavailable provider case.");
   assert(noAgentResultRequiresManualReview(), "Property test must enforce no result -> manual_review.");
   assert(criticalFindingDoesNotLowerRisk(blueChipLikeResult(), agentResult({
     agent: "onchain",
@@ -1104,6 +1116,14 @@ async function runReadinessChecks() {
   const snapshotHash = hashSourceSnapshot({ sources: blueChipLikeResult().sources, rawSignals: blueChipLikeResult().rawSignals });
   const replaySnapshot = createReplaySnapshot(blueChipLikeResult(), snapshotHash);
   assert(compareReplaySnapshot(replaySnapshot, blueChipLikeResult()).compatible, "Replay snapshot must compare compatible deterministic results.");
+
+  // Verify Stellar replay snapshot registry has entries for all Stellar golden fixtures
+  const stellarGoldenFixtures = ["stellar_xlm", "stellar_known_classic", "stellar_restricted_asset", "stellar_sac", "stellar_sep41", "stellar_invalid_issuer", "stellar_unknown_contract", "stellar_unavailable_provider"];
+  for (const fixtureName of stellarGoldenFixtures) {
+    assert(stellarReplaySnapshots[fixtureName] !== undefined, `Stellar replay snapshot registry must include ${fixtureName}.`);
+    assert(stellarReplaySnapshots[fixtureName].chainFamily === "stellar", `Stellar replay snapshot ${fixtureName} must have chainFamily stellar.`);
+    assert(stellarReplaySnapshots[fixtureName].agent === "onchain", `Stellar replay snapshot ${fixtureName} must be for onchain agent.`);
+  }
 }
 
 async function runTransactionLifecycleChecks() {
@@ -1854,12 +1874,266 @@ function runCachePolicyChecks() {
   assert(execution.scope === "no-store", "Execution planning must not be shared-cacheable.");
 }
 
+function stellarRpcHealthConnected() {
+  return Promise.resolve({
+    healthy: true,
+    status: "healthy",
+    network: "stellar-testnet",
+    passphrase: "Test SDF Network ; September 2015",
+    protocolVersion: 27,
+    latestLedger: 1234567,
+    closeTime: Math.floor(Date.now() / 1000),
+    checkedAt: now.toISOString(),
+    latencyMs: 42,
+    providerUrl: "https://soroban-testnet.stellar.org",
+    fallbackUsed: false,
+    attempts: 1,
+  });
+}
+
+const classicAssetRecordFactory = (overrides: Record<string, unknown> = {}) => ({
+  asset_code: "USDC",
+  asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  contract_id: "CBMT5M7Z7Y4FJ3H7Y5K6L7M8N9O0P1Q2R3S4T5U6V7W8X9Y0Z1A2B3C4D",
+  num_liquidity_pools: 5,
+  liquidity_pools_amount: "1250000",
+  accounts: {
+    authorized: 850,
+    authorized_to_maintain_liabilities: 12,
+    unauthorized: 8,
+  },
+  flags: {
+    auth_required: false,
+    auth_revocable: false,
+    auth_immutable: true,
+    auth_clawback_enabled: false,
+  },
+  ...overrides,
+});
+
+const issuerAccountFactory = (overrides: Record<string, unknown> = {}) => ({
+  id: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  accountId: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  sequence: "123456789",
+  subentryCount: 3,
+  flags: {
+    auth_required: false,
+    auth_revocable: false,
+    auth_immutable: true,
+    auth_clawback_enabled: false,
+  },
+  balances: [],
+  ...overrides,
+});
+
+const sacContractState = {
+  deployed: true,
+  type: "stellar_asset_contract",
+  lastModifiedLedgerSeq: 1234000,
+  liveUntilLedgerSeq: 2234000,
+  latestLedger: 1234567,
+};
+
+const wasmContractState = {
+  deployed: true,
+  type: "wasm_contract",
+  wasmHash: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+  lastModifiedLedgerSeq: 1234000,
+  liveUntilLedgerSeq: 2234000,
+  latestLedger: 1234567,
+};
+
+function assertStellarReplay(fixtureName: string, result: AgentResult) {
+  const expected = stellarReplaySnapshots[fixtureName];
+  assert(expected !== undefined, `Stellar replay snapshot must exist for ${fixtureName}.`);
+  assert(expected.chainFamily === "stellar", `Stellar replay snapshot ${fixtureName} must have chainFamily stellar.`);
+  assert(result.agent === "onchain", `Stellar ${fixtureName} must be an onchain agent result.`);
+  assert(result.agent === expected.agent, `Stellar ${fixtureName} agent mismatch: expected ${expected.agent}, got ${result.agent}.`);
+  assert(result.recommendedAction === expected.recommendedAction, `Stellar ${fixtureName} recommendedAction drift: expected ${expected.recommendedAction}, got ${result.recommendedAction}.${expected.migrationNote ? ` Note: ${expected.migrationNote}` : ""}`);
+  assert(Math.abs(result.riskScore - expected.riskScore) <= 3, `Stellar ${fixtureName} riskScore drift: expected ${expected.riskScore}, got ${result.riskScore}.${expected.migrationNote ? ` Note: ${expected.migrationNote}` : ""}`);
+  // Also verify deterministic snapshot creation
+  const snapshotHash = hashSourceSnapshot({ sources: result.sources, rawSignals: result.rawSignals });
+  const replaySnapshot = createStellarReplaySnapshot(result, snapshotHash, fixtureName);
+  assert(replaySnapshot.chainFamily === "stellar", `Stellar replay snapshot must set chainFamily to stellar for ${fixtureName}.`);
+  const selfComparison = compareReplaySnapshot(replaySnapshot, result);
+  assert(selfComparison.compatible, `Stellar replay snapshot ${fixtureName} self-comparison failed: ${selfComparison.migrationNote}`);
+}
+
+async function runStellarOnchainChecks() {
+  // 1. XLM (native)
+  const xlmResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", assetType: "native", symbol: "XLM" },
+    { fetchRpcHealth: stellarRpcHealthConnected },
+  );
+  assertAgentContract(xlmResult);
+  assert(xlmResult.riskScore < 50, "XLM native fixture must produce low/medium risk.");
+  assert(xlmResult.recommendedAction === "hold" || xlmResult.recommendedAction === "watch", "XLM native fixture must not force manual review.");
+  assert(xlmResult.findings.some((f) => f.label === "Asset identity" && f.detail.includes("Native XLM identity")), "XLM report must reference native identity.");
+  assert(xlmResult.findings.some((f) => f.label === "Issuer controls" && f.detail.includes("XLM has no asset issuer")), "XLM report must state no issuer.");
+  assert(xlmResult.findings.some((f) => f.label === "Clawback capability" && f.detail.includes("cannot be clawed back")), "XLM report must state no clawback possible.");
+  assert(xlmResult.findings.some((f) => f.label === "Trustline state" && f.detail.includes("XLM does not require a trustline")), "XLM report must state no trustline needed.");
+  assert(!xlmResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "XLM report must not contain EVM-only checks.");
+  assert(xlmResult.sources.some((s) => s.label === "Soroban contract state" && s.status === "unavailable"), "XLM report must show contract state as unavailable.");
+  assert(assertGoldenScore("stellar_xlm", xlmResult.riskScore), "XLM fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_xlm", xlmResult);
+
+  // 2. Known classic asset (USDC on Stellar, clean)
+  const classicProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchClassicAssetRecord: async () => classicAssetRecordFactory(),
+    fetchIssuerAccount: async () => issuerAccountFactory(),
+    fetchContractState: async () => sacContractState,
+  };
+  const classicResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", assetType: "classic", symbol: "USDC", issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" },
+    classicProviders,
+  );
+  assertAgentContract(classicResult);
+  assert(classicResult.riskScore < 50, "Known classic fixture must produce low/medium risk.");
+  assert(classicResult.recommendedAction === "hold" || classicResult.recommendedAction === "watch", "Known classic fixture must not force manual review.");
+  assert(classicResult.findings.some((f) => f.label === "Asset identity" && f.detail.includes("USDC")), "Classic report must reference asset code.");
+  assert(classicResult.findings.some((f) => f.label === "Contract interface" && f.detail.includes("Stellar Asset Contract")), "Classic SAC report must mention SAC.");
+  assert(!classicResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Classic report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_known_classic", classicResult.riskScore), "Known classic fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_known_classic", classicResult);
+
+  // 3. Restricted asset (auth_required + auth_revocable + clawback enabled)
+  const restrictedProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchClassicAssetRecord: async () => classicAssetRecordFactory({
+      num_liquidity_pools: 1,
+      liquidity_pools_amount: "25000",
+      accounts: { authorized: 50, authorized_to_maintain_liabilities: 200, unauthorized: 100 },
+      flags: {
+        auth_required: true,
+        auth_revocable: true,
+        auth_immutable: false,
+        auth_clawback_enabled: true,
+      },
+    }),
+    fetchIssuerAccount: async () => issuerAccountFactory({
+      flags: {
+        auth_required: true,
+        auth_revocable: true,
+        auth_immutable: false,
+        auth_clawback_enabled: true,
+      },
+    }),
+    fetchContractState: async () => sacContractState,
+  };
+  const restrictedResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", assetType: "classic", symbol: "REST", issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5" },
+    restrictedProviders,
+  );
+  assertAgentContract(restrictedResult);
+  assert(restrictedResult.riskScore >= 25, "Restricted asset fixture must produce at least medium risk.");
+  assert(restrictedResult.findings.some((f) => f.label === "Clawback capability" && f.severity === "high"), "Restricted asset report must flag clawback as high severity.");
+  assert(restrictedResult.findings.some((f) => f.label === "Trustline state" && f.detail.includes("unauthorized")), "Restricted asset report must mention unauthorized accounts.");
+  assert(restrictedResult.findings.some((f) => f.label === "Issuer controls" && f.detail.includes("Authorization required: yes")), "Restricted asset report must show auth_required.");
+  assert(!restrictedResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Restricted asset report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_restricted_asset", restrictedResult.riskScore), "Restricted asset fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_restricted_asset", restrictedResult);
+
+  // 4. SAC (Stellar Asset Contract, via contract address)
+  const sacProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchContractState: async () => sacContractState,
+  };
+  const sacResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", contractAddress: "CBMT5M7Z7Y4FJ3H7Y5K6L7M8N9O0P1Q2R3S4T5U6V7W8X9Y0Z1A2B3C4D", assetType: "contract" },
+    sacProviders,
+  );
+  assertAgentContract(sacResult);
+  assert(sacResult.riskScore < 50, "SAC fixture must produce low/medium risk.");
+  assert(sacResult.findings.some((f) => f.label === "Contract interface" && f.detail.includes("Stellar Asset Contract")), "SAC report must state SAC interface.");
+  assert(sacResult.findings.some((f) => f.label === "Contract storage" && f.detail.includes("live until ledger")), "SAC report must show contract storage TTL.");
+  assert(!sacResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "SAC report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_sac", sacResult.riskScore), "SAC fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_sac", sacResult);
+
+  // 5. SEP-41 (generic Soroban WASM contract)
+  const sep41Providers: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchContractState: async () => wasmContractState,
+  };
+  const sep41Result = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", contractAddress: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", assetType: "contract" },
+    sep41Providers,
+  );
+  assertAgentContract(sep41Result);
+  assert(sep41Result.riskScore >= 25, "SEP-41 WASM fixture must produce at least medium risk (unknown issuer, no classic backing).");
+  assert(sep41Result.findings.some((f) => f.label === "Contract interface" && f.detail.includes("WASM contract")), "SEP-41 report must state WASM contract.");
+  assert(sep41Result.findings.some((f) => f.label === "Contract interface" && f.detail.includes("SEP-41")), "SEP-41 report must mention SEP-41 simulation requirement.");
+  assert(sep41Result.confidence < 0.84, "SEP-41 WASM contract (no issuer) must have reduced confidence.");
+  assert(!sep41Result.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "SEP-41 report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_sep41", sep41Result.riskScore), "SEP-41 fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_sep41", sep41Result);
+
+  // 6. Invalid issuer (CODE:ISSUER where issuer doesn't exist)
+  const invalidIssuerProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchClassicAssetRecord: async () => null,
+    fetchIssuerAccount: async () => null,
+  };
+  const invalidIssuerResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", assetType: "classic", symbol: "FAKE", issuer: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" },
+    invalidIssuerProviders,
+  );
+  assertAgentContract(invalidIssuerResult);
+  assert(invalidIssuerResult.riskScore >= 60, "Invalid issuer fixture must produce high/critical risk.");
+  assert(invalidIssuerResult.recommendedAction === "manual_review" || invalidIssuerResult.recommendedAction === "avoid", "Invalid issuer fixture must not recommend hold.");
+  assert(invalidIssuerResult.findings.some((f) => f.label === "Issuer controls" && f.severity === "critical"), "Invalid issuer report must flag missing issuer as critical.");
+  assert(invalidIssuerResult.findings.some((f) => f.label === "Asset identity" && f.detail.includes("could not be confirmed")), "Invalid issuer report must state identity not confirmed.");
+  assert(!invalidIssuerResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Invalid issuer report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_invalid_issuer", invalidIssuerResult.riskScore), "Invalid issuer fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_invalid_issuer", invalidIssuerResult);
+
+  // 7. Unknown contract (contract address with no deployed code)
+  const unknownContractProviders: StellarOnchainProviders = {
+    fetchRpcHealth: stellarRpcHealthConnected,
+    fetchContractState: async () => null,
+  };
+  const unknownContractResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", contractAddress: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", assetType: "contract" },
+    unknownContractProviders,
+  );
+  assertAgentContract(unknownContractResult);
+  assert(unknownContractResult.riskScore >= 55, "Unknown contract fixture must produce high/critical risk.");
+  assert(unknownContractResult.recommendedAction === "manual_review" || unknownContractResult.recommendedAction === "avoid", "Unknown contract fixture must not recommend hold.");
+  assert(unknownContractResult.findings.some((f) => f.label === "Contract interface" && f.detail.includes("No deployed Soroban contract")), "Unknown contract report must state no contract deployed.");
+  assert(unknownContractResult.findings.some((f) => f.label === "Contract storage" && f.detail.includes("was unavailable")), "Unknown contract report must state storage unavailable.");
+  assert(!unknownContractResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Unknown contract report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_unknown_contract", unknownContractResult.riskScore), "Unknown contract fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_unknown_contract", unknownContractResult);
+
+  // 8. Unavailable provider (all RPC calls fail)
+  const unavailableProviders: StellarOnchainProviders = {
+    fetchRpcHealth: async () => {
+      throw new Error("RPC unavailable");
+    },
+  };
+  const unavailableResult = await runStellarOnchainAgent(
+    { chain: "stellar-testnet", contractAddress: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", assetType: "contract" },
+    unavailableProviders,
+  );
+  assertAgentContract(unavailableResult);
+  assert(unavailableResult.riskScore >= 60, "Unavailable provider fixture must produce high/critical risk.");
+  assert(unavailableResult.recommendedAction === "manual_review" || unavailableResult.recommendedAction === "avoid", "Unavailable provider fixture must not recommend hold.");
+  assert(unavailableResult.sources.some((s) => s.status === "unavailable"), "Unavailable provider report must show unavailable sources.");
+  assert(unavailableResult.confidence < 0.5, "Unavailable provider fixture must have reduced confidence.");
+  assert(!unavailableResult.findings.some((f) => f.label.toLowerCase().includes("honeypot") || f.label.toLowerCase().includes("bytecode") || f.label.toLowerCase().includes("evm")), "Unavailable provider report must not contain EVM-only checks.");
+  assert(assertGoldenScore("stellar_unavailable_provider", unavailableResult.riskScore), "Unavailable provider fixture must satisfy golden score range.");
+  assertStellarReplay("stellar_unavailable_provider", unavailableResult);
+}
+
 function runX402Checks() {
   const previous = {
     X402_PAY_TO: process.env.X402_PAY_TO,
     X402_PRICE_USD: process.env.X402_PRICE_USD,
     X402_NETWORK: process.env.X402_NETWORK,
     X402_FACILITATOR_URL: process.env.X402_FACILITATOR_URL,
+    X402_STELLAR_ENABLED: process.env.X402_STELLAR_ENABLED,
+    X402_PAYMENT_EXPIRY_SECONDS: process.env.X402_PAYMENT_EXPIRY_SECONDS,
     CDP_API_KEY_ID: process.env.CDP_API_KEY_ID,
     CDP_API_KEY_SECRET: process.env.CDP_API_KEY_SECRET,
   };
@@ -1868,6 +2142,8 @@ function runX402Checks() {
   process.env.X402_PRICE_USD = "$0.01";
   process.env.X402_NETWORK = "eip155:84532";
   process.env.X402_FACILITATOR_URL = "https://x402.org/facilitator";
+  delete process.env.X402_STELLAR_ENABLED;
+  delete process.env.X402_PAYMENT_EXPIRY_SECONDS;
 
   const config = getX402RuntimeConfig();
   const validation = validateX402RuntimeConfig(config);
@@ -1875,10 +2151,14 @@ function runX402Checks() {
 
   assert(validation.ok, `x402 config should validate in fixture: ${validation.issues.join(", ")}`);
   assert(config.protectedResource === "/api/x402/deep-scan", "x402 protected resource must be the premium deep scan endpoint.");
+  assert(config.chainFamily === "evm", "EVM network config must detect evm chain family.");
+  assert(config.paymentExpirySeconds === 300, "Payment expiry must default to 300 seconds.");
+  assert(config.supportedSchemes.includes("exact"), "EVM config must support exact scheme.");
   assert(Array.isArray(routeConfig.accepts), "x402 route config must expose payment requirements.");
   assert(routeConfig.accepts[0]?.payTo === config.payTo, "x402 route config must bind the expected recipient.");
   assert(routeConfig.accepts[0]?.network === config.network, "x402 route config must bind the expected network.");
 
+  // Test: fresh payment passes guard
   const request = new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
     headers: { "PAYMENT-SIGNATURE": "fixture-payment-signature" },
   });
@@ -1889,6 +2169,10 @@ function runX402Checks() {
   });
 
   assert(guard.ok, "Fresh x402 payment signature must pass idempotency guard.");
+  assert(guard.paymentDetails.chainFamily === "evm", "Payment details must expose evm chain family.");
+  assert(typeof guard.requestBodyHash === "string" && guard.requestBodyHash.length === 64, "Payment must bind to exact request body hash.");
+
+  // Test: receipt with chain family
   const receipt = createX402PaymentReceipt({
     requestId: guard.requestId,
     paymentHeaderHash: guard.paymentHeaderHash,
@@ -1901,11 +2185,14 @@ function runX402Checks() {
     protectedResource: config.protectedResource,
     requestBodyHash: guard.requestBodyHash,
     verificationStatus: "verified",
+    chainFamily: "evm",
   });
 
   assert(receipt.id.startsWith("x402_"), "x402 payment receipts must use x402 ids.");
+  assert(receipt.chainFamily === "evm", "x402 receipt must store evm chain family.");
   assert(getX402PaymentReceiptByHeaderHash(hashPaymentHeader("fixture-payment-signature"))?.id === receipt.id, "x402 receipts must be retrievable by payment header hash.");
 
+  // Test: duplicate payment rejected
   const duplicate = assertFreshX402Payment({
     request,
     requestBody: { query: "GOAT", chain: "base" },
@@ -1914,10 +2201,76 @@ function runX402Checks() {
 
   assert(!duplicate.ok && duplicate.status === 409, "Duplicate x402 payment signature must be rejected before premium work runs.");
 
+  // Test: amount mismatch with x402 middleware headers
+  const amountMismatch = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: { "PAYMENT-SIGNATURE": "fixture-amount-mismatch", "X-PAYMENT-AMOUNT": "$0.99" },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!amountMismatch.ok && amountMismatch.error === "payment_amount_mismatch", "Payment amount mismatch must be rejected before premium work runs.");
+
+  // Test: recipient mismatch
+  const recipientMismatch = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: { "PAYMENT-SIGNATURE": "fixture-recipient-mismatch", "X-PAYMENT-RECIPIENT": "0x0000000000000000000000000000000000000099" },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!recipientMismatch.ok && recipientMismatch.error === "payment_recipient_mismatch", "Payment recipient mismatch must be rejected before premium work runs.");
+
+  // Test: network mismatch
+  const networkMismatch = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: { "PAYMENT-SIGNATURE": "fixture-network-mismatch", "X-PAYMENT-NETWORK": "eip155:1" },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!networkMismatch.ok && networkMismatch.error === "payment_network_mismatch", "Payment network mismatch must be rejected before premium work runs.");
+
+  // Test: expired payment
+  const expired = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-expired",
+        "X-PAYMENT-SETTLED-AT": new Date(Date.now() - 600_000).toISOString(),
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!expired.ok && expired.error === "payment_expired", "Expired x402 payment must be rejected before premium work runs.");
+
+  // Test: payment with payer identity on headers
+  const withPayer = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-with-payer",
+        "X-PAYMENT-PAYER": "0x0000000000000000000000000000000000000001",
+        "X-PAYMENT-TX-HASH": "0x" + "a".repeat(64),
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(withPayer.ok, "Valid EVM payer identity must pass payment guard.");
+  assert(withPayer.paymentDetails.payer === "0x0000000000000000000000000000000000000001", "EVM payer must be exposed in payment details.");
+  assert(withPayer.paymentDetails.transactionHash === "0x" + "a".repeat(64), "EVM transaction hash must be exposed in payment details.");
+
+  // Test: price format validation
   process.env.X402_PRICE_USD = "0.01";
   const invalid = validateX402RuntimeConfig(getX402RuntimeConfig());
   assert(!invalid.ok && invalid.issues.some((issue) => issue.includes("X402_PRICE_USD")), "x402 price must keep dollar-prefixed format.");
 
+  // Test: Base mainnet requires CDP facilitator
   process.env.X402_PRICE_USD = "$0.01";
   process.env.X402_NETWORK = "eip155:8453";
   const invalidMainnetFacilitator = validateX402RuntimeConfig(getX402RuntimeConfig());
@@ -1926,11 +2279,82 @@ function runX402Checks() {
     "Base mainnet must reject the testnet-only facilitator.",
   );
 
+  // Test: CDP facilitator requires credentials
   process.env.X402_FACILITATOR_URL = "https://api.cdp.coinbase.com/platform/v2/x402";
   delete process.env.CDP_API_KEY_ID;
   delete process.env.CDP_API_KEY_SECRET;
   const invalidCdpAuth = validateX402RuntimeConfig(getX402RuntimeConfig());
   assert(!invalidCdpAuth.ok && invalidCdpAuth.issues.some((issue) => issue.includes("CDP_API_KEY_ID")), "CDP facilitator must require both API credentials.");
+
+  // Test: Stellar network config validation
+  process.env.X402_NETWORK = "stellar:testnet";
+  process.env.X402_PAY_TO = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+  process.env.X402_FACILITATOR_URL = "https://x402.org/facilitator";
+  process.env.X402_STELLAR_ENABLED = "1";
+  const stellarConfig = getX402RuntimeConfig();
+  assert(stellarConfig.chainFamily === "stellar", "Stellar network must detect stellar chain family.");
+  assert(stellarConfig.supportedSchemes.includes("exact-stellar"), "Stellar-enabled config must support exact-stellar scheme.");
+  assert(stellarConfig.asset === "USDC:stellar", "Stellar config must default to USDC:stellar asset.");
+
+  // Test: Stellar payment with valid payer
+  const stellarGuard = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=stellar", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-stellar-payer",
+        "X-PAYMENT-PAYER": "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+        "X-PAYMENT-TX-HASH": "a".repeat(64),
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "stellar" },
+    config: stellarConfig,
+  });
+
+  assert(stellarGuard.ok, "Valid Stellar payer identity must pass payment guard.");
+  assert(stellarGuard.paymentDetails.chainFamily === "stellar", "Stellar payment must expose stellar chain family.");
+  assert(stellarGuard.paymentDetails.payer === "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H", "Stellar payer must be exposed in payment details.");
+
+  // Test: invalid payer address format
+  const invalidPayer = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-invalid-payer",
+        "X-PAYMENT-PAYER": "not-a-valid-address",
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!invalidPayer.ok && invalidPayer.error === "invalid_payer_identity", "Invalid payer address format must be rejected.");
+
+  // Test: payer chain family mismatch (Stellar payer on EVM network)
+  const chainMismatch = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-chain-mismatch",
+        "X-PAYMENT-PAYER": "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!chainMismatch.ok && chainMismatch.error === "payer_chain_family_mismatch", "Stellar payer on EVM network must be rejected.");
+
+  // Test: invalid EVM transaction hash format
+  const invalidTxHash = assertFreshX402Payment({
+    request: new Request("http://localhost/api/x402/deep-scan?query=GOAT&chain=base", {
+      headers: {
+        "PAYMENT-SIGNATURE": "fixture-invalid-tx",
+        "X-PAYMENT-PAYER": "0x0000000000000000000000000000000000000001",
+        "X-PAYMENT-TX-HASH": "not-a-tx-hash",
+      },
+    }),
+    requestBody: { query: "GOAT", chain: "base" },
+    config,
+  });
+
+  assert(!invalidTxHash.ok && invalidTxHash.error === "invalid_transaction_hash", "Invalid EVM transaction hash format must be rejected.");
 
   for (const [key, value] of Object.entries(previous)) {
     if (value === undefined) {
@@ -1941,9 +2365,162 @@ function runX402Checks() {
   }
 }
 
+function runStellarAssetIdentityChecks() {
+  const testnetPassphrase = stellarNetworks["stellar-testnet"].networkPassphrase;
+  const networkId = "stellar-testnet";
+
+  // 1. Native XLM resolution
+  const nativeXlm = parseStellarAssetInput("xlm", networkId);
+  assert(nativeXlm !== null, "XLM must resolve.");
+  assert(nativeXlm!.type === "native", "XLM must resolve as native type.");
+  assert(nativeXlm!.assetKey === "native", "XLM asset key must be 'native'.");
+  assert((nativeXlm as { symbol: string }).symbol === "XLM", "XLM symbol must be XLM.");
+  assert((nativeXlm as { contractId: string }).contractId.startsWith("C"), "Native XLM must derive a SAC contract ID.");
+
+  const nativeAlt = parseStellarAssetInput("native", networkId);
+  assert(nativeAlt !== null && nativeAlt.type === "native", "'native' string must resolve as native.");
+
+  const nativeStellarPrefix = parseStellarAssetInput("stellar:xlm", networkId);
+  assert(nativeStellarPrefix !== null && nativeStellarPrefix.type === "native", "'stellar:xlm' must resolve as native.");
+
+  // 2. Classic asset (CODE:ISSUER) resolution and deterministic SAC
+  const fakeIssuer = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+  const classicInput = `USDC:${fakeIssuer}`;
+  const classic = parseStellarAssetInput(classicInput, networkId);
+  assert(classic !== null, "Classic CODE:ISSUER must resolve.");
+  assert(classic!.type === "classic", "CODE:ISSUER must resolve as classic type.");
+  assert((classic as { symbol: string }).symbol === "USDC", "Classic symbol must be USDC.");
+  assert((classic as { issuer: string }).issuer === fakeIssuer, "Classic issuer must match.");
+  assert((classic as { contractId: string }).contractId.startsWith("C"), "Classic must derive a deterministic SAC contract ID.");
+
+  // Verify deterministic SAC derivation helper matches
+  const sacIdFromHelper = deriveStellarSacContractId({ code: "USDC", issuer: fakeIssuer }, testnetPassphrase);
+  assert(sacIdFromHelper === (classic as { contractId: string }).contractId, "deriveStellarSacContractId must match parseStellarAssetInput SAC.");
+
+  // Native SAC derivation
+  const nativeSacId = deriveStellarSacContractId("native", testnetPassphrase);
+  assert(nativeSacId === (nativeXlm as { contractId: string }).contractId, "Native SAC derivation must match XLM identity contractId.");
+
+  // 3. Symbol-only identity is NEVER accepted for classic assets
+  const symbolOnly = parseStellarAssetInput("USDC", networkId);
+  assert(symbolOnly === null, "Symbol-only identity must NEVER be accepted for classic assets.");
+
+  const symbolOnlyLower = parseStellarAssetInput("usdc", networkId);
+  assert(symbolOnlyLower === null, "Symbol-only identity (lowercase) must not resolve.");
+
+  // 4. Contract (C...) address resolution
+  const fakeContract = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+  const contractIdentity = parseStellarAssetInput(fakeContract, networkId);
+  assert(contractIdentity !== null, "C-contract must resolve.");
+  assert(contractIdentity!.type === "contract" || contractIdentity!.type === "deterministic_sac", "C-contract must resolve as contract or deterministic_sac.");
+  assert((contractIdentity as { contractId: string }).contractId === fakeContract, "Contract identity must have matching contractId.");
+
+  // If a C-address matches the native SAC, it should resolve as deterministic_sac
+  const nativeSac = parseStellarAssetInput(nativeSacId, networkId);
+  assert(nativeSac !== null, "Native SAC contract ID must resolve.");
+  assert(nativeSac!.type === "deterministic_sac", "Native SAC contract ID must resolve as deterministic_sac.");
+  assert((nativeSac as { underlyingType: string }).underlyingType === "native", "Native SAC must have underlyingType 'native'.");
+  assert((nativeSac as { symbol: string }).symbol === "XLM", "Native SAC must have symbol XLM.");
+
+  // 5. Issuer account (G...) resolution
+  const issuerIdentity = parseStellarAssetInput(fakeIssuer, networkId);
+  assert(issuerIdentity !== null, "G-account must resolve.");
+  assert(issuerIdentity!.type === "issuer_account", "G-account must resolve as issuer_account.");
+  assert((issuerIdentity as { issuer: string }).issuer === fakeIssuer, "Issuer must match.");
+
+  // 6. Explorer URL parsing
+  const expertUrl = `https://stellar.expert/explorer/testnet/asset/USDC-${fakeIssuer}`;
+  const expertParsed = parseStellarAssetInput(expertUrl, networkId);
+  assert(expertParsed !== null, "Stellar Expert asset URL must resolve.");
+  assert(expertParsed!.type === "classic", "Stellar Expert asset URL must resolve as classic.");
+  assert((expertParsed as { symbol: string }).symbol === "USDC", "Stellar Expert URL symbol must be USDC.");
+  assert((expertParsed as { source?: string }).source === "explorer_url", "Explorer URL must have source 'explorer_url'.");
+
+  const expertContractUrl = `https://stellar.expert/explorer/testnet/contract/${fakeContract}`;
+  const expertContractParsed = parseStellarAssetInput(expertContractUrl, networkId);
+  assert(expertContractParsed !== null, "Stellar Expert contract URL must resolve.");
+  assert((expertContractParsed as { contractId: string }).contractId === fakeContract, "Stellar Expert contract URL contractId must match.");
+
+  const expertAccountUrl = `https://stellar.expert/explorer/testnet/account/${fakeIssuer}`;
+  const expertAccountParsed = parseStellarAssetInput(expertAccountUrl, networkId);
+  assert(expertAccountParsed !== null, "Stellar Expert account URL must resolve.");
+  assert(expertAccountParsed!.type === "issuer_account", "Stellar Expert account URL must resolve as issuer_account.");
+
+  const lumenscanUrl = `https://lumenscan.io/assets/USDC-${fakeIssuer}`;
+  const lumenscanParsed = parseStellarAssetInput(lumenscanUrl, networkId);
+  assert(lumenscanParsed !== null, "Lumenscan asset URL must resolve.");
+  assert(lumenscanParsed!.type === "classic", "Lumenscan URL must resolve as classic.");
+
+  // DexScreener stellar URL with contract
+  const dexUrl = `https://dexscreener.com/stellar/${fakeContract}`;
+  const dexParsed = parseStellarAssetInput(dexUrl, networkId);
+  assert(dexParsed !== null, "DexScreener Stellar URL must resolve.");
+  assert((dexParsed as { contractId: string }).contractId === fakeContract, "DexScreener Stellar URL contract must match.");
+
+  // 7. SSRF / private network metadata URL blocking
+  assert(isPrivateOrLocalHost("localhost"), "isPrivateOrLocalHost must block localhost.");
+  assert(isPrivateOrLocalHost("127.0.0.1"), "isPrivateOrLocalHost must block 127.0.0.1.");
+  assert(isPrivateOrLocalHost("10.0.0.1"), "isPrivateOrLocalHost must block 10.x.x.x.");
+  assert(isPrivateOrLocalHost("192.168.1.1"), "isPrivateOrLocalHost must block 192.168.x.x.");
+  assert(isPrivateOrLocalHost("169.254.1.1"), "isPrivateOrLocalHost must block 169.254.x.x (link-local).");
+  assert(isPrivateOrLocalHost("0.0.0.0"), "isPrivateOrLocalHost must block 0.0.0.0.");
+  assert(isPrivateOrLocalHost("::1"), "isPrivateOrLocalHost must block ::1.");
+  assert(!isPrivateOrLocalHost("example.com"), "isPrivateOrLocalHost must not block public hostnames.");
+
+  const sep1Blocked = assertSep1FetchAllowed("http://localhost/.well-known/stellar.toml");
+  assert(!sep1Blocked.allowed, "SEP-1 fetch must block localhost.");
+  assert(sep1Blocked.issues.some((i: string) => i.includes("private or localhost")), "SEP-1 fetch block must mention private target.");
+  assert(sep1Blocked.issues.some((i: string) => i.includes("HTTPS")), "SEP-1 fetch must require HTTPS.");
+
+  const sep1PrivateIp = assertSep1FetchAllowed("https://10.0.0.1/.well-known/stellar.toml");
+  assert(!sep1PrivateIp.allowed, "SEP-1 fetch must block private IP addresses.");
+
+  const sep1ValidHttps = assertSep1FetchAllowed("https://example.com/.well-known/stellar.toml");
+  assert(sep1ValidHttps.allowed, "SEP-1 fetch must allow valid HTTPS URLs.");
+
+  const sep1OversizedContent = assertSep1FetchAllowed("https://example.com/.well-known/stellar.toml", "text/plain", 300_000);
+  assert(!sep1OversizedContent.allowed, "SEP-1 fetch must block oversized responses.");
+
+  // 8. SEP-1 TOML parsing and issuer conflict detection
+  const sampleToml = [
+    "[DOCUMENTATION]",
+    'ORG_NAME = "Test Org"',
+    'ORG_URL = "https://example.com"',
+    'ORG_TWITTER = "test_org"',
+    "",
+    "[[CURRENCIES]]",
+    'code = "USDC"',
+    `issuer = "${fakeIssuer}"`,
+    'name = "Test USDC"',
+    "display_decimals = 7",
+  ].join("\n");
+
+  const parsed = parseSep1Toml(sampleToml);
+  assert(parsed.documentation?.orgName === "Test Org", "SEP-1 TOML must parse ORG_NAME.");
+  assert(parsed.documentation?.orgUrl === "https://example.com", "SEP-1 TOML must parse ORG_URL.");
+  assert(parsed.documentation?.orgTwitter === "test_org", "SEP-1 TOML must parse ORG_TWITTER.");
+  assert(parsed.currencies?.length === 1, "SEP-1 TOML must parse one currency.");
+  assert(parsed.currencies?.[0]?.code === "USDC", "SEP-1 currency code must be USDC.");
+  assert(parsed.currencies?.[0]?.issuer === fakeIssuer, "SEP-1 currency issuer must match.");
+  assert(parsed.currencies?.[0]?.displayDecimals === 7, "SEP-1 currency display_decimals must be 7.");
+
+  // Empty/comment-only TOML
+  const emptyToml = parseSep1Toml("# just a comment\n");
+  assert(emptyToml.documentation === undefined, "Empty TOML must have no documentation.");
+  assert(emptyToml.currencies === undefined, "Empty TOML must have no currencies.");
+
+  // 9. Invalid inputs return null
+  assert(parseStellarAssetInput("", networkId) === null, "Empty string must not resolve.");
+  assert(parseStellarAssetInput("not-a-valid-input", networkId) === null, "Random text must not resolve.");
+  assert(parseStellarAssetInput("0x3333333333333333333333333333333333333333", networkId) === null, "EVM address must not resolve as Stellar.");
+
+  console.log("  Stellar asset identity checks passed.");
+}
+
 async function main() {
   await runDiscoveryFixtures();
   await runOnchainChecks();
+  await runStellarOnchainChecks();
   await runNewsChecks();
   await runSocialChecks();
   await runDecisionChecks();
@@ -1953,6 +2530,7 @@ async function main() {
   await runProviderReliabilityChecks();
   runCachePolicyChecks();
   runX402Checks();
+  runStellarAssetIdentityChecks();
 
   const discoveryFixtureResults = await runDiscoveryFixtures();
   for (const fixture of discoveryFixtureResults) {

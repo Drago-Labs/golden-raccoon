@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, CreditCard, Lock } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { x402Client, x402HTTPClient } from "@x402/core/client";
 import type { PaymentRequired } from "@x402/core/types";
 import { toClientEvmSigner } from "@x402/evm";
@@ -12,6 +12,7 @@ import { NoDataState } from "@/components/NoDataState";
 import { RiskBreakdownCard } from "@/components/RiskBreakdownCard";
 import { WalletConnectButton } from "@/components/WalletConnectButton";
 import { StellarRiskPublishButton } from "@/components/StellarRiskPublishButton";
+import { LiveRegion } from "@/components/a11y/LiveRegion";
 
 const paymentStatusLabels: Record<PaymentStage, { title: string; detail: string }> = {
   idle: {
@@ -172,6 +173,7 @@ function getPaymentChainId(paymentRequirement: PaymentRequired | null) {
 }
 
 export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: string }) {
+  const queryErrorId = useId();
   const { address, chainId, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
@@ -196,6 +198,15 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
   const isPaymentWorking = premiumStatus === "requesting" || premiumStatus === "signing" || premiumStatus === "verifying" || isPreparingPremium;
   const isBusy = isScanning || isPaymentWorking;
   const showPaymentPanel = premiumStatus !== "idle";
+  const statusMessage = scanError
+    ? scanError
+    : isScanning
+      ? "Analyzing token risk…"
+      : isPaymentWorking
+        ? premiumDetail ?? paymentStatusLabels[premiumStatus].detail
+        : scan
+          ? `Scan complete. ${scan.symbol} risk ${scan.overallRiskScore} out of 100.`
+          : null;
 
   useEffect(() => {
     let active = true;
@@ -366,6 +377,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
 
   return (
     <div className="space-y-5">
+      <LiveRegion message={statusMessage} politeness={scanError ? "assertive" : "polite"} />
       <section className="glass-panel rounded-lg p-5">
           <h1 className="text-3xl font-semibold tracking-tight">Scan token</h1>
           <div className="mt-5 grid gap-3 lg:grid-cols-[9rem_1fr_auto_auto]">
@@ -384,6 +396,9 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="DexScreener URL or contract address"
+              aria-label="DexScreener URL or contract address"
+              aria-invalid={Boolean(scanError)}
+              aria-describedby={scanError ? queryErrorId : undefined}
               className="h-12 min-w-0 flex-1 rounded-full border border-white/10 bg-white/7 px-5 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#d9a441]/60"
             />
             <button
@@ -478,7 +493,11 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
         </section>
       ) : null}
 
-      {scanError ? <NoDataState title="Scan failed" detail={scanError} action="No result was saved. Fix the input or retry with a supported contract/DexScreener URL." /> : null}
+      {scanError ? (
+        <div id={queryErrorId}>
+          <NoDataState title="Scan failed" detail={scanError} action="No result was saved. Fix the input or retry with a supported contract/DexScreener URL." />
+        </div>
+      ) : null}
 
       {scan ? (
         <section className="grid gap-5 xl:grid-cols-[.85fr_1.15fr]">

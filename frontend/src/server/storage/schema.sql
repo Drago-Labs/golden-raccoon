@@ -41,6 +41,7 @@ create table if not exists agent_runs (
   target_name text,
   target_address text,
   target_chain text,
+  target_token_data jsonb,
   status text not null check (status in ('completed', 'partial', 'failed')),
   recommendation text not null,
   decision_score integer not null,
@@ -192,6 +193,8 @@ create table if not exists x402_payment_receipts (
   wallet_address text,
   payer text,
   transaction_hash text,
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
+  payer_identity jsonb not null default '{}'::jsonb,
   network text not null,
   asset text not null,
   amount text not null,
@@ -200,10 +203,45 @@ create table if not exists x402_payment_receipts (
   facilitator_url text not null,
   protected_resource text not null,
   request_body_hash text not null,
+  payment_expiry timestamptz,
   verification_status text not null check (verification_status in ('payment_required', 'verified', 'settled', 'failed', 'duplicate', 'expired')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- V3 emergency pause / agent revoke / allowance / trustline recovery
+create table if not exists recovery_requests (
+  id uuid primary key default gen_random_uuid(),
+  wallet_address text not null,
+  recovery_type text not null check (recovery_type in ('pause_agent', 'revoke_agent', 'reduce_allowance', 'revoke_allowance', 'remove_trustline')),
+  asset text,
+  consumer text,
+  chain_id text,
+  chain_family text,
+  status text not null check (status in ('requested', 'prepared', 'submitted', 'confirmed', 'failed', 'stale')),
+  incident_mode boolean not null default false,
+  consequences jsonb not null default '[]'::jsonb,
+  reserved_native_amount text,
+  expected_fee text,
+  policy_version text not null default 'v3.0.0',
+  last_verified_ledger bigint,
+  last_verified_block_number bigint,
+  amount text,
+  reason text,
+  error text,
+  requested_at timestamptz not null default now(),
+  prepared_at timestamptz,
+  submitted_at timestamptz,
+  tx_hash text,
+  confirmed_at timestamptz,
+  stale_at timestamptz,
+  updated_at timestamptz not null default now(),
+  expires_at timestamptz
+);
+create index if not exists recovery_requests_wallet_updated_idx on recovery_requests(wallet_address, updated_at desc);
+create index if not exists recovery_requests_status_idx on recovery_requests(status);
+create unique index if not exists recovery_requests_active_unique on recovery_requests(wallet_address, recovery_type, coalesce(asset, E'\0'), coalesce(consumer, E'\0'))
+  where status in ('requested', 'prepared');
 
 create table if not exists user_rules (
   id uuid primary key default gen_random_uuid(),

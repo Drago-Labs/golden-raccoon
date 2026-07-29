@@ -1,0 +1,99 @@
+name: Bug report
+description: Report a reproducible bug in Golden Raccoon
+title: "[Bug] "
+labels: ["bug"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report. **Do not**
+        submit security vulnerabilities here — use [SECURITY.md](../../SECURITY.md)
+        for private disclosure.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One-line description of the bug.
+      placeholder: "Execution preview shows incorrect slippage for Stellar path payments"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, reproducible steps.
+      placeholder: |
+        1. Connect Stellar testnet wallet
+        2. Navigate to /operations
+        3. Click "Prepare trade"
+        4. Observe slippage shows 0 bps instead of 100 bps
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What should happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What actually happened? Include error messages, console output, or screenshots.
+
+  - type: dropdown
+    id: chain
+    attributes:
+      label: Chain family
+      description: Which chain family is affected?
+      options:
+        - EVM (Ethereum, Base, etc.)
+        - Stellar
+        - Both / N/A
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      description: Where did the bug occur?
+      options:
+        - Local development
+        - Testnet deployment
+        - Production
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Git commit hash or release tag.
+      placeholder: "abc1234"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or output
+      description: Console errors, API responses, or terminal output.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any other context that might help diagnose the issue.
+    validations:
+      required: false
