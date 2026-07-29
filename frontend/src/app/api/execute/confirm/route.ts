@@ -233,7 +233,8 @@ export async function POST(request: Request) {
     asset: parsed.data.asset ?? "Wallet approval",
     valueUsd: parsed.data.valueUsd ?? 0,
   });
-
+  // Override the hard-coded "confirmed" status with the actual lifecycle
+  approval.status = transaction.lifecycleStatus === "confirmed" ? "confirmed" : "pending";
 
   return withCacheHeaders(NextResponse.json({
     ...parsed.data,

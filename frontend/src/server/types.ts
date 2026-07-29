@@ -905,7 +905,7 @@ export type UserApprovalRecord = {
   action?: AgentRecommendedAction;
   asset?: string;
   valueUsd?: number;
-  status: "confirmed";
+  status: "confirmed" | "pending";
   autoExecuted: false;
   createdAt: string;
 };

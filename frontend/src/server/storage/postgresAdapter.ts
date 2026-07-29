@@ -38,6 +38,10 @@ import type {
   AlertDelivery,
   AlertObservation,
   AlertRule,
+  ChainFamily,
+  TransactionLifecycleEvent,
+  TransactionLifecycleStatus,
+  TransactionRecord,
 } from "@/server/types";
 
 type MaybePgPool = {
@@ -467,6 +471,125 @@ class PostgresStorageAdapter {
     await this.enqueueMirror(() => this.doMirrorAlertDelivery(delivery));
   }
 
+  async mirrorTransaction(record: TransactionRecord): Promise<void> {
+    if (!this.connectionString || !(await this.ensurePool())) return;
+    await this.enqueueMirror(() => doMirrorTransactionRecord(this.pool!, record));
+  }
+
+  async mirrorTransactionLifecycleEvent(event: TransactionLifecycleEvent): Promise<void> {
+    if (!this.connectionString || !(await this.ensurePool())) return;
+    await this.enqueueMirror(() => doMirrorTransactionLifecycleEvent(this.pool!, event));
+  }
+
+  async hydrateTransactionTables(target: {
+    transactions: TransactionRecord[];
+    events: TransactionLifecycleEvent[];
+  }): Promise<{ hydrated: number; skipped: number }> {
+    if (!this.connectionString || !(await this.ensurePool())) {
+      return { hydrated: 0, skipped: 0 };
+    }
+    return (await this.enqueueMirror(() => this.doHydrateTransactionTables(target))) ?? { hydrated: 0, skipped: 0 };
+  }
+
+  private async doHydrateTransactionTables(target: {
+    transactions: TransactionRecord[];
+    events: TransactionLifecycleEvent[];
+  }): Promise<{ hydrated: number; skipped: number }> {
+    if (!this.pool) return { hydrated: 0, skipped: 0 };
+
+    let hydrated = 0;
+    let skipped = 0;
+
+    hydrated += await this.mergeTransactionsFromPostgres(target.transactions, () => skipped++);
+    hydrated += await this.mergeTransactionEventsFromPostgres(target.events, () => skipped++);
+
+    return { hydrated, skipped };
+  }
+
+  private async mergeTransactionsFromPostgres(
+    store: TransactionRecord[],
+    onSkip: () => void,
+  ): Promise<number> {
+    if (!this.pool) return 0;
+    const result = await this.pool.query("SELECT * FROM transactions ORDER BY created_at ASC");
+    let hydrationCount = 0;
+
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      const hash = typeof row.tx_hash === "string" ? row.tx_hash : "";
+      if (!hash) { onSkip(); continue; }
+      const existing = store.find((t) => t.hash.toLowerCase() === hash.toLowerCase());
+      if (existing) { onSkip(); continue; }
+      const family: ChainFamily = row.chain_family === "stellar" ? "stellar" : "evm";
+      const lifecycleStatusVal = String(row.lifecycle_status ?? row.status ?? "prepared") as TransactionLifecycleStatus;
+      store.push({
+        hash,
+        chainFamily: family,
+        network: String(row.network ?? ""),
+        walletAddress: typeof row.wallet_address === "string" ? row.wallet_address.toLowerCase() : undefined,
+        sourceAccount: typeof row.source_account === "string" ? row.source_account : undefined,
+        type: "swap" as TransactionRecord["type"],
+        asset: String(row.asset ?? ""),
+        valueUsd: Number(row.value_usd ?? 0),
+        decisionAction: typeof row.decision_action === "string" ? row.decision_action as TransactionRecord["decisionAction"] : undefined,
+        decisionId: typeof row.decision_id === "string" ? row.decision_id : undefined,
+        lifecycleStatus: lifecycleStatusVal,
+        status: lifecycleStatusVal,
+        userApproved: Boolean(row.user_approved),
+        simulationStatus: typeof row.simulation_status === "string" ? row.simulation_status as TransactionRecord["simulationStatus"] : undefined,
+        policyStatus: row.policy_status ? JSON.parse(String(row.policy_status)) as TransactionRecord["policyStatus"] : undefined,
+        expectedEffects: row.expected_effects ? JSON.parse(String(row.expected_effects)) as TransactionRecord["expectedEffects"] : undefined,
+        idempotencyKey: typeof row.idempotency_key === "string" ? row.idempotency_key : undefined,
+        explorerUrl: typeof row.explorer_url === "string" ? row.explorer_url : undefined,
+        failureReason: typeof row.failure_reason === "string" ? row.failure_reason : undefined,
+        submittedAt: typeof row.submitted_at === "string" ? row.submitted_at : undefined,
+        terminalAt: typeof row.terminal_at === "string" ? row.terminal_at : undefined,
+        lastPolledAt: typeof row.last_polled_at === "string" ? row.last_polled_at : undefined,
+        createdAt: typeof row.created_at === "string" ? row.created_at : new Date().toISOString(),
+        stellarDetails: row.envelope_xdr ? {
+          envelopeXdr: typeof row.envelope_xdr === "string" ? row.envelope_xdr : undefined,
+          sequence: typeof row.sequence === "string" ? row.sequence : undefined,
+          feeCharged: typeof row.fee_charged === "number" ? row.fee_charged : undefined,
+          operationCount: typeof row.operation_count === "number" ? row.operation_count : undefined,
+          ledger: typeof row.ledger === "number" ? row.ledger : undefined,
+          resultXdr: typeof row.result_xdr === "string" ? row.result_xdr : undefined,
+          trustlineAsset: typeof row.trustline_asset === "string" ? row.trustline_asset : undefined,
+        } : undefined,
+      });
+      hydrationCount += 1;
+    }
+
+    return hydrationCount;
+  }
+
+  private async mergeTransactionEventsFromPostgres(
+    store: TransactionLifecycleEvent[],
+    onSkip: () => void,
+  ): Promise<number> {
+    if (!this.pool) return 0;
+    const result = await this.pool.query("SELECT * FROM transaction_lifecycle_events ORDER BY occurred_at ASC");
+    let hydrationCount = 0;
+
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      const hash = typeof row.transaction_hash === "string" ? row.transaction_hash : "";
+      if (!hash) { onSkip(); continue; }
+      const id = typeof row.id === "string" ? row.id : `tx_event_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const existing = store.find((e) => e.id === id);
+      if (existing) { onSkip(); continue; }
+      store.push({
+        id,
+        hash,
+        event: String(row.event ?? "prepared") as TransactionLifecycleEvent["event"],
+        detail: row.detail ? JSON.parse(String(row.detail)) : undefined,
+        provider: typeof row.provider === "string" ? row.provider : undefined,
+        providerUrl: typeof row.provider_url === "string" ? row.provider_url : undefined,
+        occurredAt: typeof row.occurred_at === "string" ? row.occurred_at : new Date().toISOString(),
+      });
+      hydrationCount += 1;
+    }
+
+    return hydrationCount;
+  }
+
   private async ensurePool(): Promise<boolean> {
     if (this.pool && this.connected) return true;
     const result = await this.connect();
@@ -771,6 +894,82 @@ export function mirrorAlertUpdate(alert: Alert): void {
 
 export function mirrorAlertDeliveryUpdate(delivery: AlertDelivery): void {
   mirrorAlertDeliveryWrite(delivery);
+}
+
+// ── Transaction mirror helpers ────────────────────────────────────────────
+
+async function doMirrorTransactionRecord(
+  pool: MaybePgPool,
+  record: TransactionRecord,
+): Promise<void> {
+  const hash = record.hash;
+  await pool.query(
+    `INSERT INTO transactions (
+       tx_hash, wallet_address, decision_id, decision_action, type, asset, value_usd,
+       status, lifecycle_status, chain_family, source_account, expected_effects,
+       idempotency_key, explorer_url, failure_reason, network, user_approved,
+       simulation_status, policy_status, submitted_at, terminal_at, last_polled_at, created_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21,$22,$23)
+     ON CONFLICT (tx_hash) DO UPDATE SET
+       status = EXCLUDED.status,
+       lifecycle_status = EXCLUDED.lifecycle_status,
+       failure_reason = EXCLUDED.failure_reason,
+       terminal_at = EXCLUDED.terminal_at,
+       last_polled_at = EXCLUDED.last_polled_at,
+       explorer_url = EXCLUDED.explorer_url,
+       policy_status = EXCLUDED.policy_status`,
+    [
+      hash,
+      record.walletAddress ?? "",
+      record.decisionId ?? null,
+      record.decisionAction ?? null,
+      record.type,
+      record.asset,
+      record.valueUsd,
+      record.lifecycleStatus,
+      record.lifecycleStatus,
+      record.chainFamily,
+      record.sourceAccount ?? null,
+      JSON.stringify(record.expectedEffects ?? []),
+      record.idempotencyKey ?? null,
+      record.explorerUrl ?? null,
+      record.failureReason ?? null,
+      record.network,
+      record.userApproved ?? false,
+      record.simulationStatus ?? null,
+      JSON.stringify(record.policyStatus ?? {}),
+      record.submittedAt ?? null,
+      record.terminalAt ?? null,
+      record.lastPolledAt ?? null,
+      record.createdAt,
+    ],
+  );
+}
+
+async function doMirrorTransactionLifecycleEvent(
+  pool: MaybePgPool,
+  event: TransactionLifecycleEvent,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO transaction_lifecycle_events (transaction_hash, event, detail, provider, provider_url, occurred_at)
+     VALUES ($1,$2,$3::jsonb,$4,$5,$6)`,
+    [
+      event.hash,
+      event.event,
+      JSON.stringify(event.detail ?? {}),
+      event.provider ?? null,
+      event.providerUrl ?? null,
+      event.occurredAt,
+    ],
+  );
+}
+
+export function mirrorTransactionRecord(record: TransactionRecord): void {
+  void getPostgresStorageAdapter().mirrorTransaction(record);
+}
+
+export function mirrorTransactionLifecycleEvent(event: TransactionLifecycleEvent): void {
+  void getPostgresStorageAdapter().mirrorTransactionLifecycleEvent(event);
 }
 
 export async function bootstrapPostgresStorage(): Promise<{ tried: boolean; connected: boolean; detail: string }> {

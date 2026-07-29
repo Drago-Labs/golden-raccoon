@@ -226,7 +226,7 @@ export async function submitTransaction(input: SubmitTransactionInput): Promise<
   const existingByKey = input.idempotencyKey
     ? storage.getByIdempotencyKey(input.walletAddress, input.idempotencyKey)
     : undefined;
-  if (existingByKey) {
+  if (existingByKey && existingByKey.hash !== canonicalizeTransactionHash(`pending:${input.walletAddress}:${input.idempotencyKey}`, family)) {
     return {
       transaction: existingByKey,
       outcome: "ignored_duplicate",

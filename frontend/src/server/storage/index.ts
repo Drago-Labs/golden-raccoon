@@ -90,13 +90,21 @@ export function ensureStorageReady(): Promise<{ tried: boolean; hydrated: number
     }
 
     try {
-      const hydrate = await adapter.hydrateAlertTables({
-        rules: getAlertRulesStore(),
-        observations: getAlertObservationsStore(),
-        alerts: getAlertsStore(),
-        deliveries: getAlertDeliveriesStore(),
-      });
-      const result = { tried: true, hydrated: hydrate.hydrated, skipped: hydrate.skipped, detail: "ok" };
+      const [alertHydrate, txHydrate] = await Promise.all([
+        adapter.hydrateAlertTables({
+          rules: getAlertRulesStore(),
+          observations: getAlertObservationsStore(),
+          alerts: getAlertsStore(),
+          deliveries: getAlertDeliveriesStore(),
+        }),
+        adapter.hydrateTransactionTables({
+          transactions: getTransactions(),
+          events: getTransactionEvents(),
+        }),
+      ]);
+      const totalHydrated = alertHydrate.hydrated + txHydrate.hydrated;
+      const totalSkipped = alertHydrate.skipped + txHydrate.skipped;
+      const result = { tried: true, hydrated: totalHydrated, skipped: totalSkipped, detail: "ok" };
       store.__goldenRaccoonLastHydration = { ...result, at: new Date().toISOString() };
 
       return result;

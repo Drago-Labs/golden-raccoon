@@ -151,6 +151,28 @@ create unique index if not exists transactions_idempotency_wallet_idx
   on transactions(wallet_address, idempotency_key)
   where idempotency_key is not null;
 
+-- Migrate existing transactions table: add lifecycle columns that may not exist
+alter table transactions add column if not exists lifecycle_status text;
+alter table transactions add column if not exists chain_family text not null default 'evm';
+alter table transactions add column if not exists source_account text;
+alter table transactions add column if not exists expected_effects jsonb not null default '[]'::jsonb;
+alter table transactions add column if not exists idempotency_key text;
+alter table transactions add column if not exists explorer_url text;
+alter table transactions add column if not exists failure_reason text;
+alter table transactions add column if not exists submitted_at timestamptz;
+alter table transactions add column if not exists terminal_at timestamptz;
+alter table transactions add column if not exists last_polled_at timestamptz;
+alter table transactions add column if not exists user_approved boolean not null default false;
+alter table transactions add column if not exists simulation_status text;
+alter table transactions add column if not exists policy_status jsonb not null default '{}'::jsonb;
+alter table transactions add column if not exists decision_action text;
+alter table transactions add column if not exists decision_id text;
+
+-- Add check constraint for lifecycle_status if the table already existed
+alter table transactions drop constraint if exists transactions_lifecycle_status_check;
+alter table transactions add constraint transactions_lifecycle_status_check
+  check (lifecycle_status in ('prepared', 'user_rejected', 'submitted', 'confirmed', 'failed', 'replaced', 'expired', 'pending'));
+
 create table if not exists transaction_lifecycle_events (
   id uuid primary key default gen_random_uuid(),
   transaction_hash text not null references transactions(tx_hash) on delete cascade,

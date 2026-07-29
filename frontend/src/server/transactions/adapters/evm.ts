@@ -1,4 +1,4 @@
-import { createPublicClient, decodeEventLog, http, parseAbiItem, recoverTransactionAddress, toFunctionSelector, type Hash, type PublicClient } from "viem";
+import { createPublicClient, decodeEventLog, http, keccak256, parseAbiItem, recoverTransactionAddress, toFunctionSelector, type Hash, type PublicClient } from "viem";
 import type { ChainFamily } from "@/lib/chainIdentity";
 import { isTransactionHashForChain } from "@/lib/chainIdentity";
 import { resolveEvmRpcUrl, resolveEvmChainId } from "@/lib/evm/config";
@@ -156,12 +156,16 @@ export async function deriveEvmTransactionHash(signedPayload: string): Promise<H
     throw new Error("EVM signed payload must be a 0x-prefixed hex string.");
   }
 
-  // For non-hash raw payloads, require a parseable signature.
-  await recoverTransactionAddress({ serializedTransaction: trimmed as never }).catch(() => {
+  // For non-hash raw payloads, require a parseable signature then derive the hash.
+  const recovered = await recoverTransactionAddress({ serializedTransaction: trimmed as never }).catch(() => {
     throw new Error("Could not parse the signed EVM transaction (missing or invalid signature).");
   });
 
-  return trimmed as Hash;
+  if (!recovered) {
+    throw new Error("Could not recover sender address from the signed EVM transaction.");
+  }
+
+  return keccak256(trimmed as `0x${string}`);
 }
 
 export function getEvmChainAdapter(options: EvmAdapterOptions): {
