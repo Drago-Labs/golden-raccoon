@@ -225,13 +225,13 @@ For every state-changing call the test must verify:
 
 1. The state delta is applied first (state writes complete; for Soroban, instance TTL is bumped on the same atomic write).
 2. Then the event is emitted. Topic ordering is per-event as documented in `docs/V2_CONTRACT_SPEC.md` §4 — there is no single global topic ordering. The relevant per-event topic orderings are:
-   - `DecisionLogged`: `wallet`, `agent`, `decisionHash`. (Note: `decision_id` is in the data field, NOT a topic.)
+   - `DecisionLogged`: `wallet`, `agent`, `decisionHash`. (`decision_id` is in the data field, not a topic.)
    - `ExecutionIntentLogged`: `wallet`, `intentHash`.
    - `ExecutionIntentReplayed`: `intentHash`, `wallet`.
    - `ExecutionIntentExpired`: `wallet`, `intentHash`.
    - `RiskPublished`: `asset_id`, `network`, `publisher`.
    - `RiskRevoked`: `asset_id`, `network`.
-3. Then any data-field indexer fields (e.g. `nonce`, `expiry`, `decision_id`) are read in the documented `docs/V2_CONTRACT_SPEC.md` §4 column order per event.
+3. Then any data-field indexer fields (`nonce`, `expiry`, `decision_id`, etc.) are read in the documented `docs/V2_CONTRACT_SPEC.md` §4 column order per event.
 4. Then the function returns.
 
 Invalid orderings or missing events fail the test.
