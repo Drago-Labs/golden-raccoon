@@ -1,6 +1,7 @@
 import type {
   AgentResult,
   AgentRunRecord,
+  DiscoveryAlert,
   RecommendationRecord,
   StorageCounts,
   StorageHealth,
@@ -9,18 +10,15 @@ import type {
   UserRule,
   WatchlistEntry,
   WatchlistEntryInput,
-  WatchlistScanRecord,
+  WatchlistScanRun,
   X402PaymentReceipt,
+  AgentSource,
+  AgentMissingData,
+  DiscoveryClassification,
+  RiskLevel,
 } from "@/server/types";
-import { canonicalizeAddress } from "@/lib/chainIdentity";
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { validateAgentResult } from "@/server/agents/schema";
-import {
-  loadWatchlistFromDisk,
-  mutateWatchlistSnapshot,
-  readWatchlistSnapshotSync,
-} from "@/server/storage/persistence";
-import { buildWatchlistIdentity, identityKey } from "@/server/watchlist/validation";
 
 type CreateAgentRunInput = {
   walletAddress: string;
@@ -41,10 +39,11 @@ export const storageSchemaContract = {
     "approvals",
     "transactions",
     "x402_payment_receipts",
-    "watchlist_entries",
-    "watchlist_scan_records",
     "token_identities",
     "source_snapshots",
+    "watchlist_entries",
+    "watchlist_scan_runs",
+    "discovery_alerts",
   ],
   adapterApi: [
     "listAgentRunRecords",
@@ -62,16 +61,15 @@ export const storageSchemaContract = {
     "getUserRuleRecord",
     "upsertUserRuleRecord",
     "listWatchlistEntries",
-    "getWatchlistEntryForWallet",
-    "findWatchlistEntry",
-    "createWatchlistEntry",
-    "deleteWatchlistEntryForWallet",
-    "updateWatchlistEntry",
-    "createWatchlistScanRecord",
-    "getWatchlistScanRecord",
-    "getLatestScanForEntry",
-    "getPreviousScanForEntry",
-    "listWatchlistScanRecordsForEntry",
+    "getWatchlistEntry",
+    "addWatchlistEntry",
+    "removeWatchlistEntry",
+    "listWatchlistScanRuns",
+    "addWatchlistScanRun",
+    "listDiscoveryAlerts",
+    "acknowledgeDiscoveryAlert",
+    "createDiscoveryAlert",
+    "updateWatchlistEntryLatestScan",
   ],
   migration: "frontend/src/server/storage/schema.sql",
 };
@@ -83,6 +81,9 @@ const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonApprovals?: UserApprovalRecord[];
   __goldenRaccoonUserRules?: UserRule[];
   __goldenRaccoonX402PaymentReceipts?: X402PaymentReceipt[];
+  __goldenRaccoonWatchlistEntries?: WatchlistEntry[];
+  __goldenRaccoonWatchlistScanRuns?: WatchlistScanRun[];
+  __goldenRaccoonDiscoveryAlerts?: DiscoveryAlert[];
 };
 
 function getAgentRuns() {
@@ -119,6 +120,24 @@ function getX402PaymentReceipts() {
   memoryStore.__goldenRaccoonX402PaymentReceipts ??= [];
 
   return memoryStore.__goldenRaccoonX402PaymentReceipts;
+}
+
+function getWatchlistEntries() {
+  memoryStore.__goldenRaccoonWatchlistEntries ??= [];
+
+  return memoryStore.__goldenRaccoonWatchlistEntries;
+}
+
+function getWatchlistScanRuns() {
+  memoryStore.__goldenRaccoonWatchlistScanRuns ??= [];
+
+  return memoryStore.__goldenRaccoonWatchlistScanRuns;
+}
+
+function getDiscoveryAlerts() {
+  memoryStore.__goldenRaccoonDiscoveryAlerts ??= [];
+
+  return memoryStore.__goldenRaccoonDiscoveryAlerts;
 }
 
 function createId() {
@@ -162,15 +181,15 @@ export function getStorageHealth(): StorageHealth {
     return {
       provider: "supabase_postgres",
       persistent: false,
-      detail: "Supabase env vars are configured. The MVP adapter still uses in-memory storage for some tables, but watchlist entries and immutable scan records are persisted to a JSON snapshot under `frontend/.data/`. The function API and schema contract are fixed for adapter parity.",
+      detail: "Supabase env vars are configured. The MVP adapter still uses in-memory storage, but the function API and schema contract are fixed for adapter parity.",
       schema: storageSchemaContract,
     };
   }
 
   return {
     provider: "memory",
-    persistent: true,
-    detail: "MVP storage with watchlist persisted to disk under frontend/.data/watchlist.json. Other tables reset when the server process restarts. The function API and schema contract are fixed for adapter parity.",
+    persistent: false,
+    detail: "Using in-memory MVP storage. Records reset when the server process restarts.",
     schema: storageSchemaContract,
   };
 }
@@ -382,269 +401,227 @@ export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | 
   return record;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Watchlist helpers (file-backed)                                            */
-/* -------------------------------------------------------------------------- */
-
-
-export async function listWatchlistEntries(walletAddress?: string): Promise<WatchlistEntry[]> {
-  const shape = await loadWatchlistFromDisk();
-  const normalizedWallet = walletAddress
-    ? canonicalizeAddress(walletAddress, inferFamily(walletAddress))
-    : undefined;
-
-  return shape.entries
-    .filter((entry) => !normalizedWallet || canonicalizeAddress(entry.walletAddress, entry.chainFamily) === normalizedWallet)
-    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
-}
-
-export async function getWatchlistEntry(id: string): Promise<WatchlistEntry | undefined> {
-  const shape = await loadWatchlistFromDisk();
-
-  return shape.entries.find((entry) => entry.id === id);
-}
-
-export async function getWatchlistEntryForWallet(
-  id: string,
-  walletAddress: string,
-): Promise<WatchlistEntry | undefined> {
-  const entry = await getWatchlistEntry(id);
-
-  if (!entry) return undefined;
-
-  const expected = canonicalizeAddress(walletAddress, entry.chainFamily);
-
-  if (canonicalizeAddress(entry.walletAddress, entry.chainFamily) !== expected) return undefined;
-
-  return entry;
-}
-
-/**
- * Infer chain family from a wallet address for normalisation purposes.
- * Only used to choose the canonical form for list filtering; for actual asset
- * decisions use `chainFamily` from the entry itself.
- */
-function inferFamily(address: string): "evm" | "stellar" {
-  return address.startsWith("G") && address.length === 56 ? "stellar" : "evm";
-}
-
-/**
- * Find a watchlist entry by canonical identity (wallet + chainFamily + network
- * + canonical assetIdentifier). Includes `network` so the same EVM contract on
- * different chains is treated as a distinct entry. Canonicalisation is delegated
- * to the validation module to keep the rules in one place.
- */
-export async function findWatchlistEntry(input: {
-  walletAddress: string;
-  chainFamily: "evm" | "stellar";
-  network: string;
-  assetIdentifier: string;
-}): Promise<WatchlistEntry | undefined> {
-  const shape = await loadWatchlistFromDisk();
-  const targetIdentity = identityKey(
-    buildWatchlistIdentity({
-      walletAddress: input.walletAddress,
-      chainFamily: input.chainFamily,
-      network: input.network,
-      assetIdentifier: input.assetIdentifier,
-    }),
-  );
-
-  return shape.entries.find(
-    (entry) =>
-      identityKey(
-        buildWatchlistIdentity({
-          walletAddress: entry.walletAddress,
-          chainFamily: entry.chainFamily,
-          network: entry.network,
-          assetIdentifier: entry.assetIdentifier,
-        }),
-      ) === targetIdentity,
-  );
-}
-
-export async function createWatchlistEntry(input: WatchlistEntryInput): Promise<WatchlistEntry> {
-  const existing = await findWatchlistEntry({
-    walletAddress: input.walletAddress,
-    chainFamily: input.chainFamily,
-    network: input.network,
-    assetIdentifier: input.assetIdentifier,
-  });
-
-  if (existing) {
-    throw new Error(
-      `Watchlist entry already exists for ${input.assetIdentifier} on ${input.network}. ` +
-        `Idempotent: entry id ${existing.id}.`,
-    );
-  }
-
-  const now = new Date().toISOString();
-  const entry: WatchlistEntry = {
-    id: createRecordId("watch"),
-    walletAddress: input.walletAddress,
-    chainFamily: input.chainFamily,
-    network: input.network,
-    assetIdentifier: input.assetIdentifier,
-    assetType: input.assetType,
-    symbol: input.symbol,
-    name: input.name ?? input.symbol,
-    previousScanAvailable: false,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  await mutateWatchlistSnapshot((current) => ({
-    ...current,
-    entries: [entry, ...current.entries],
-  }));
-
-  return entry;
-}
-
-export async function deleteWatchlistEntry(id: string): Promise<boolean> {
-  const snapshot = await mutateWatchlistSnapshot((current) => {
-    const nextEntries = current.entries.filter((entry) => entry.id !== id);
-
-    if (nextEntries.length === current.entries.length) {
-      // No row removed; return current so the persistence layer skips a write.
-      return current;
-    }
-
-    // Cascade delete scan records that belong to the removed entry.
-    const nextScans = current.scans.filter((scan) => scan.watchlistEntryId !== id);
-
-    return { ...current, entries: nextEntries, scans: nextScans };
-  });
-
-  const stillThere = snapshot.entries.some((entry) => entry.id === id);
-
-  return !stillThere;
-}
-
-export async function deleteWatchlistEntryForWallet(id: string, walletAddress: string): Promise<boolean> {
-  const entry = await getWatchlistEntryForWallet(id, walletAddress);
-
-  if (!entry) return false;
-
-  return deleteWatchlistEntry(id);
-}
-
-export async function updateWatchlistEntry(
-  id: string,
-  update: Partial<
-    Pick<
-      WatchlistEntry,
-      | "latestScanId"
-      | "previousScanId"
-      | "latestScanAt"
-      | "latestScanStatus"
-      | "latestVerdict"
-      | "latestRiskScore"
-      | "previousVerdict"
-      | "previousRiskScore"
-      | "previousScanAvailable"
-    >
-  >,
-): Promise<WatchlistEntry | undefined> {
-  let nextEntry: WatchlistEntry | undefined;
-
-  await mutateWatchlistSnapshot((current) => {
-    const idx = current.entries.findIndex((entry) => entry.id === id);
-
-    if (idx === -1) {
-      nextEntry = undefined;
-      return current;
-    }
-
-    const merged: WatchlistEntry = {
-      ...current.entries[idx],
-      ...update,
-      updatedAt: new Date().toISOString(),
-      previousScanAvailable:
-        update.previousScanAvailable ?? current.entries[idx].previousScanAvailable,
-    };
-    const entries = current.entries.slice();
-    entries[idx] = merged;
-    nextEntry = merged;
-
-    return { ...current, entries };
-  });
-
-  return nextEntry;
-}
-
-/* ─────────────────────────────  Scan records  ───────────────────────────── */
-
-export type CreateWatchlistScanRecordInput = Omit<
-  WatchlistScanRecord,
-  "id" | "createdAt"
-> & { createdAt?: string };
-
-export async function createWatchlistScanRecord(input: CreateWatchlistScanRecordInput): Promise<WatchlistScanRecord> {
-  const createdAt = input.createdAt ?? new Date().toISOString();
-  const record: WatchlistScanRecord = {
-    ...input,
-    id: createRecordId("wscan"),
-    createdAt,
-  };
-
-  await mutateWatchlistSnapshot((current) => ({
-    ...current,
-    scans: [record, ...current.scans],
-  }));
-
-  return record;
-}
-
-export async function getWatchlistScanRecord(id: string): Promise<WatchlistScanRecord | undefined> {
-  const shape = await loadWatchlistFromDisk();
-
-  return shape.scans.find((scan) => scan.id === id);
-}
-
-export async function listWatchlistScanRecordsForEntry(
-  watchlistEntryId: string,
-): Promise<WatchlistScanRecord[]> {
-  const shape = await loadWatchlistFromDisk();
-
-  return shape.scans
-    .filter((scan) => scan.watchlistEntryId === watchlistEntryId)
-    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
-}
-
-export async function getLatestScanForEntry(watchlistEntryId: string): Promise<WatchlistScanRecord | undefined> {
-  const records = await listWatchlistScanRecordsForEntry(watchlistEntryId);
-
-  return records[0];
-}
-
-export async function getPreviousScanForEntry(
-  watchlistEntryId: string,
-  currentScanId?: string,
-): Promise<WatchlistScanRecord | undefined> {
-  const records = await listWatchlistScanRecordsForEntry(watchlistEntryId);
-
-  if (currentScanId) {
-    return records.find((scan) => scan.id !== currentScanId);
-  }
-
-  return records[1];
-}
-
 export function getStorageCounts(): StorageCounts {
-  // Counts are synchronous to preserve the existing API; read directly from
-  // the cached shape. The watchlist snapshot is loaded on first access and
-  // cached for the lifetime of the process, so this stays cheap.
-  const cachedShape = readWatchlistSnapshotSync();
-
   return {
     agentRuns: getAgentRuns().length,
     recommendations: getRecommendations().length,
     transactions: getTransactions().length,
     approvals: getApprovals().length,
     userRules: getUserRules().length,
-    watchlistEntries: cachedShape.entries.length,
-    watchlistScanRecords: cachedShape.scans.length,
     x402PaymentReceipts: getX402PaymentReceipts().length,
   };
+}
+
+type CreateWatchlistInput = WatchlistEntryInput & {
+  identityKey: string;
+};
+
+export function listWatchlistEntries(walletAddress?: string) {
+  const normalizedWallet = walletAddress?.toLowerCase();
+
+  return getWatchlistEntries()
+    .filter((entry) => !normalizedWallet || entry.walletAddress.toLowerCase() === normalizedWallet)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+export function getWatchlistEntry(id: string) {
+  return getWatchlistEntries().find((entry) => entry.id === id);
+}
+
+export type AddWatchlistEntryResult = {
+  entry: WatchlistEntry;
+  alreadyExisted: boolean;
+};
+
+export function addWatchlistEntry(input: CreateWatchlistInput): AddWatchlistEntryResult {
+  const normalizedWallet = input.walletAddress.trim();
+  const existing = getWatchlistEntries().find(
+    (entry) =>
+      entry.walletAddress.toLowerCase() === normalizedWallet.toLowerCase() &&
+      entry.identityKey === input.identityKey,
+  );
+
+  if (existing) {
+    return { entry: existing, alreadyExisted: true };
+  }
+
+  const entry: WatchlistEntry = {
+    id: createRecordId("watch"),
+    walletAddress: normalizedWallet,
+    identityKey: input.identityKey,
+    chain: input.chain,
+    contractAddress: input.contractAddress,
+    pairAddress: input.pairAddress,
+    symbol: input.symbol,
+    tokenName: input.tokenName,
+    assetKey: input.assetKey,
+    issuer: input.issuer,
+    assetType: input.assetType,
+    source: input.source,
+    note: input.note,
+    createdAt: new Date().toISOString(),
+  };
+
+  getWatchlistEntries().unshift(entry);
+
+  return { entry, alreadyExisted: false };
+}
+
+export function removeWatchlistEntry(id: string) {
+  const store = getWatchlistEntries();
+  const remaining = store.filter((entry) => entry.id !== id);
+  const removed = store.length - remaining.length;
+
+  memoryStore.__goldenRaccoonWatchlistEntries = remaining;
+
+  const runs = getWatchlistScanRuns().filter((run) => run.entryId !== id);
+  memoryStore.__goldenRaccoonWatchlistScanRuns = runs;
+
+  const alerts = getDiscoveryAlerts().filter((alert) => alert.entryId !== id);
+  memoryStore.__goldenRaccoonDiscoveryAlerts = alerts;
+
+  return removed > 0;
+}
+
+type AddWatchlistScanRunInput = {
+  entryId: string;
+  walletAddress: string;
+  identityKey: string;
+  classification: DiscoveryClassification;
+  classificationReasons: string[];
+  confidence: number;
+  score: number;
+  sourceLineage: AgentSource[];
+  missingData: AgentMissingData[];
+  riskReport?: WatchlistScanRun["riskReport"];
+  agentRunId?: string;
+  status?: WatchlistScanRun["status"];
+};
+
+export function addWatchlistScanRun(input: AddWatchlistScanRunInput): WatchlistScanRun {
+  const previous = getWatchlistScanRuns()
+    .filter((run) => run.entryId === input.entryId)
+    .sort((left, right) => new Date(right.scannedAt).getTime() - new Date(left.scannedAt).getTime())[0];
+
+  const run: WatchlistScanRun = {
+    id: createRecordId("wscan"),
+    entryId: input.entryId,
+    walletAddress: input.walletAddress,
+    identityKey: input.identityKey,
+    agentRunId: input.agentRunId,
+    classification: input.classification,
+    classificationReasons: input.classificationReasons,
+    confidence: input.confidence,
+    score: input.score,
+    sourceLineage: input.sourceLineage,
+    missingData: input.missingData,
+    riskReport: input.riskReport,
+    status: input.status ?? "completed",
+    previousRunId: previous?.id,
+    scannedAt: new Date().toISOString(),
+  };
+
+  getWatchlistScanRuns().unshift(run);
+  updateWatchlistEntryLatestScan(input.entryId, {
+    scanRunId: run.id,
+    classification: run.classification,
+    score: run.score,
+    scannedAt: run.scannedAt,
+    status: run.status,
+  });
+
+  return run;
+}
+
+export function updateWatchlistEntryLatestScan(
+  id: string,
+  update: {
+    scanRunId: string;
+    classification: DiscoveryClassification;
+    score: number;
+    scannedAt: string;
+    status: WatchlistScanRun["status"];
+  },
+) {
+  const entry = getWatchlistEntries().find((candidate) => candidate.id === id);
+
+  if (!entry) {
+    return undefined;
+  }
+
+  entry.lastScannedAt = update.scannedAt;
+  entry.latestScanRunId = update.scanRunId;
+  entry.latestStatus = update.status === "failed" ? "stale" : update.status;
+
+  if (update.status === "failed") {
+    // Preserve last successful observation as the latest visible result.
+    const hasPriorSuccess = entry.successfulScanRunIds && entry.successfulScanRunIds.length > 0;
+
+    if (!hasPriorSuccess) {
+      entry.latestStatus = "stale";
+    }
+  } else {
+    entry.latestClassification = update.classification;
+    entry.latestScore = update.score;
+    entry.successfulScanRunIds = [update.scanRunId, ...(entry.successfulScanRunIds ?? [])].slice(0, 50);
+  }
+
+  return entry;
+}
+
+export function listWatchlistScanRuns(entryId?: string) {
+  return getWatchlistScanRuns()
+    .filter((run) => !entryId || run.entryId === entryId)
+    .sort((left, right) => new Date(right.scannedAt).getTime() - new Date(left.scannedAt).getTime());
+}
+
+type CreateDiscoveryAlertInput = {
+  walletAddress: string;
+  entryId?: string;
+  runId?: string;
+  kind: DiscoveryAlert["kind"];
+  title: string;
+  detail: string;
+  severity: RiskLevel;
+  sourceLabel?: string;
+};
+
+export function createDiscoveryAlert(input: CreateDiscoveryAlertInput): DiscoveryAlert {
+  const alert: DiscoveryAlert = {
+    id: createRecordId("alert"),
+    walletAddress: input.walletAddress,
+    entryId: input.entryId,
+    runId: input.runId,
+    kind: input.kind,
+    title: input.title,
+    detail: input.detail,
+    severity: input.severity,
+    sourceLabel: input.sourceLabel,
+    acknowledged: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  getDiscoveryAlerts().unshift(alert);
+
+  return alert;
+}
+
+export function listDiscoveryAlerts(walletAddress?: string) {
+  const normalizedWallet = walletAddress?.toLowerCase();
+
+  return getDiscoveryAlerts()
+    .filter((alert) => !normalizedWallet || alert.walletAddress.toLowerCase() === normalizedWallet)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+export function acknowledgeDiscoveryAlert(id: string) {
+  const alert = getDiscoveryAlerts().find((candidate) => candidate.id === id);
+
+  if (!alert) {
+    return undefined;
+  }
+
+  alert.acknowledged = true;
+
+  return alert;
 }

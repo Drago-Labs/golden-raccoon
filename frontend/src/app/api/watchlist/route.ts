@@ -1,109 +1,86 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createWatchlistEntry, listWatchlistEntries } from "@/server/storage";
 import { checkRateLimit } from "@/server/security/rateLimit";
-import { isStellarAccountAddress, isWalletAddressForChain } from "@/lib/chainIdentity";
-import { parseWatchlistAsset } from "@/server/watchlist/validation";
-import type { WatchlistEntryInput } from "@/server/types";
+import { addToWatchlist, listWatchlist, removeFromWatchlist } from "@/server/discovery/watchlist";
 
 const addBodySchema = z.object({
-  walletAddress: z.string().min(1, "Wallet address is required"),
-  chainFamily: z.enum(["evm", "stellar"]),
-  network: z.string().min(1, "Network is required"),
-  assetIdentifier: z.string().optional(),
-  assetType: z.enum(["evm_contract", "stellar_native", "stellar_classic", "stellar_contract"]),
-  symbol: z.string().min(1).max(32, "Symbol too long"),
-  name: z.string().max(80, "Name too long").optional(),
+  action: z.enum(["add"]).default("add"),
+  walletAddress: z.string().min(1).max(80),
+  chain: z.string().min(1).max(40),
+  contractAddress: z.string().max(80).optional(),
+  pairAddress: z.string().max(120).optional(),
+  symbol: z.string().max(32).optional(),
+  tokenName: z.string().max(120).optional(),
+  assetKey: z.string().max(180).optional(),
+  issuer: z.string().max(64).optional(),
+  assetType: z.enum(["native", "classic", "contract", "issuer_account"]).optional(),
+  source: z.enum(["dexscreener", "stellar_market", "manual"]).default("manual"),
+  note: z.string().max(280).optional(),
 });
 
-function validateWalletForQuery(walletAddress: string | null): { ok: true; address: string } | NextResponse {
-  if (!walletAddress) {
-    return NextResponse.json(
-      { error: "missing_wallet", detail: "walletAddress query parameter is required." },
-      { status: 400 },
-    );
-  }
+const removeBodySchema = z.object({
+  action: z.literal("remove"),
+  entryId: z.string().min(1).max(120),
+});
 
-  const trimmed = walletAddress.trim();
+const listQuerySchema = z.object({
+  walletAddress: z.string().min(1).max(80),
+});
 
-  if (!isStellarAccountAddress(trimmed) && !isWalletAddressForChain(trimmed, "ethereum")) {
-    return NextResponse.json(
-      { error: "invalid_wallet_address", detail: "walletAddress must be a valid EVM or Stellar address." },
-      { status: 400 },
-    );
-  }
-
-  return { ok: true, address: trimmed };
-}
-
-export async function GET(request: NextRequest) {
-  const rateLimited = checkRateLimit(request, { namespace: "watchlist:read", limit: 80, windowMs: 60_000 });
+export async function GET(request: Request) {
+  const rateLimited = checkRateLimit(request, { namespace: "watchlist:list", limit: 60, windowMs: 60_000 });
 
   if (rateLimited) {
     return rateLimited;
   }
 
-  const walletCheck = validateWalletForQuery(request.nextUrl.searchParams.get("walletAddress"));
+  const url = new URL(request.url);
+  const parsed = listQuerySchema.safeParse({ walletAddress: url.searchParams.get("walletAddress") ?? "" });
 
-  if (walletCheck instanceof NextResponse) return walletCheck;
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
 
-  const entries = await listWatchlistEntries(walletCheck.address);
-  const noStore = NextResponse.json(entries);
-
-  noStore.headers.set("Cache-Control", "no-store");
-
-  return noStore;
+  return NextResponse.json({ entries: listWatchlist(parsed.data.walletAddress) });
 }
 
 export async function POST(request: Request) {
-  const rateLimited = checkRateLimit(request, { namespace: "watchlist:write", limit: 30, windowMs: 60_000 });
+  const rateLimited = checkRateLimit(request, { namespace: "watchlist:add", limit: 20, windowMs: 60_000 });
 
   if (rateLimited) {
     return rateLimited;
   }
 
   const body = await request.json().catch(() => ({}));
+  const parsedAdd = addBodySchema.safeParse({ ...body, action: "add" });
 
-  // First pass: structural validation of known fields. Asset/identity checks
-  // happen inside `parseWatchlistAsset` so we can return stable error codes.
-  const parsed = addBodySchema.safeParse(body);
+  if (parsedAdd.success) {
+    const result = await addToWatchlist({
+      walletAddress: parsedAdd.data.walletAddress,
+      chain: parsedAdd.data.chain,
+      contractAddress: parsedAdd.data.contractAddress,
+      pairAddress: parsedAdd.data.pairAddress,
+      symbol: parsedAdd.data.symbol,
+      tokenName: parsedAdd.data.tokenName,
+      assetKey: parsedAdd.data.assetKey,
+      issuer: parsedAdd.data.issuer,
+      assetType: parsedAdd.data.assetType,
+      source: parsedAdd.data.source === "manual" ? "manual_watchlist" : parsedAdd.data.source,
+      note: parsedAdd.data.note,
+    });
 
-  if (!parsed.success) {
-    return NextResponse.json({ error: "invalid_body", issues: parsed.error.flatten() }, { status: 400 });
+    return result.ok
+      ? NextResponse.json({ entry: result.entry, alreadyExisted: result.alreadyExisted })
+      : NextResponse.json({ error: result.error }, { status: 422 });
   }
 
-  const result = parseWatchlistAsset({
-    walletAddress: parsed.data.walletAddress,
-    chainFamily: parsed.data.chainFamily,
-    network: parsed.data.network,
-    assetType: parsed.data.assetType,
-    assetIdentifier: parsed.data.assetIdentifier ?? "",
-  });
+  const parsedRemove = removeBodySchema.safeParse({ ...body, action: "remove" });
 
-  if (!result.ok) {
-    return NextResponse.json(
-      { error: result.code, detail: result.message },
-      { status: 400 },
-    );
+  if (parsedRemove.success) {
+    const ok = await removeFromWatchlist(parsedRemove.data.entryId);
+
+    return NextResponse.json({ ok });
   }
 
-  try {
-    const entry = await createWatchlistEntry({
-      walletAddress: parsed.data.walletAddress,
-      chainFamily: result.chainFamily,
-      network: result.network,
-      assetIdentifier: result.assetIdentifier,
-      assetType: result.assetType,
-      symbol: parsed.data.symbol,
-      name: parsed.data.name,
-    } satisfies WatchlistEntryInput);
-
-    return NextResponse.json(entry, { status: 201 });
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("already exists")) {
-      return NextResponse.json({ error: "duplicate_entry", detail: error.message }, { status: 409 });
-    }
-
-    return NextResponse.json({ error: "internal_error", detail: "Could not add watchlist entry." }, { status: 500 });
-  }
+  return NextResponse.json({ error: "Invalid watchlist request." }, { status: 400 });
 }

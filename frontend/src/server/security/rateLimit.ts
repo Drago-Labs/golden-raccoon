@@ -10,10 +10,9 @@ export const rateLimitProfiles = {
   tokenScan: { namespace: "scan:token", limit: 25, windowMs: 60_000 },
   portfolioReview: { namespace: "agent:portfolio", limit: 30, windowMs: 60_000 },
   executionPrepare: { namespace: "execute:prepare", limit: 20, windowMs: 60_000 },
+  watchlistRescan: { namespace: "watchlist:rescan", limit: 15, windowMs: 60_000 },
   historyRead: { namespace: "history", limit: 80, windowMs: 60_000 },
   expensiveProviderCall: { namespace: "provider:expensive", limit: 10, windowMs: 60_000 },
-  watchlistRescan: { namespace: "watchlist:rescan", limit: 10, windowMs: 60_000 },
-  watchlistWrite: { namespace: "watchlist:write", limit: 30, windowMs: 60_000 },
 } satisfies Record<string, RateLimitOptions>;
 
 const buckets = globalThis as typeof globalThis & {

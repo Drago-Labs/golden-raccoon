@@ -2,17 +2,23 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useWalletSession } from "@/hooks/useWalletSession";
-import type { WatchlistEntry, TokenScanResult } from "@/server/types";
+import type { DiscoveryCandidate, WatchlistEntry, WatchlistScanRun } from "@/server/types";
 import { Plus, Trash2, RefreshCw, Orbit, Wallet, AlertTriangle, Loader2, History } from "lucide-react";
-import { scanNetworks } from "@/lib/scanNetworks";
+
+type AssetType = NonNullable<WatchlistEntry["assetType"]>;
+type ChainFamily = "evm" | "stellar";
 
 type AddFormState = {
-  assetIdentifier: string;
-  network: string;
-  chainFamily: "evm" | "stellar";
-  assetType: WatchlistEntry["assetType"];
+  chainFamily: ChainFamily;
+  chain: string;
+  assetType: AssetType;
+  contractAddress: string;
+  pairAddress: string;
+  issuer: string;
+  assetKey: string;
   symbol: string;
-  name: string;
+  tokenName: string;
+  note: string;
 };
 
 type EntryStatus =
@@ -21,25 +27,83 @@ type EntryStatus =
   | { type: "scanning"; entryId: string }
   | { type: "error"; detail: string };
 
+/**
+ * Native XLM is a valid add target — it requires a symbol but no contract or issuer.
+ * Classic Stellar assets require both CODE:ISSUER. EVM/Soroban contracts require an address.
+ */
+function symbolValid(form: AddFormState): boolean {
+  return Boolean(form.symbol.trim());
+}
+
+function nativeValid(form: AddFormState): boolean {
+  return form.assetType === "native" && Boolean(form.symbol.trim());
+}
+
+function contractValid(form: AddFormState): boolean {
+  if (form.assetType === "native" || form.assetType === "classic") return true;
+  return Boolean(form.contractAddress.trim());
+}
+
+function classicValid(form: AddFormState): boolean {
+  if (form.assetType !== "classic") return true;
+  return Boolean(form.issuer.trim()) && Boolean(form.assetKey.trim());
+}
+
 const defaultForm: AddFormState = {
-  assetIdentifier: "",
-  network: "base",
   chainFamily: "evm",
-  assetType: "evm_contract",
+  chain: "base",
+  assetType: "contract",
+  contractAddress: "",
+  pairAddress: "",
+  issuer: "",
+  assetKey: "",
   symbol: "",
-  name: "",
+  tokenName: "",
+  note: "",
 };
 
-function verdictStyles(verdict: string | undefined) {
-  if (!verdict) return "bg-white/10 text-white/50";
-  if (verdict === "safe" || verdict === "watch") return "bg-emerald-400/15 text-emerald-200";
-  if (verdict === "high_risk" || verdict === "critical") return "bg-red-400/15 text-red-200";
+function chipForClassification(classification: WatchlistEntry["latestClassification"] | undefined) {
+  if (!classification) return { label: "Pending", tone: "bg-white/10 text-white/55" };
+  if (classification === "early_opportunity") return { label: "Early opportunity", tone: "bg-emerald-400/15 text-emerald-200" };
+  if (classification === "watch") return { label: "Watch", tone: "bg-sky-400/15 text-sky-200" };
+  if (classification === "risky") return { label: "Risky", tone: "bg-amber-400/15 text-amber-200" };
 
-  return "bg-white/10 text-white/50";
+  return { label: "Likely scam", tone: "bg-red-500/15 text-red-200" };
+}
+
+function statusChipFor(status: WatchlistScanRun["status"] | undefined) {
+  switch (status) {
+    case "completed":
+      return "text-emerald-200/80";
+    case "partial":
+      return "text-amber-200/80";
+    case "failed":
+      return "text-red-200/80";
+    case "stale":
+      return "text-amber-300/80";
+    default:
+      return "text-white/45";
+  }
+}
+
+function chainLabel(chain: string, family: ChainFamily) {
+  return family === "stellar" ? "Stellar · " + chain : "EVM · " + chain;
+}
+
+function inferFamilyFromChain(chain: string): ChainFamily {
+  return chain.toLowerCase().includes("stellar") ? "stellar" : "evm";
+}
+
+function assetTypeForFamily(family: ChainFamily): AssetType {
+  return family === "stellar" ? "classic" : "contract";
+}
+
+function defaultChainForFamily(family: ChainFamily) {
+  return family === "stellar" ? "stellar-pubnet" : "base";
 }
 
 export function WatchlistClient() {
-  const { address, family, isConnected } = useWalletSession();
+  const { address, family: walletFamily, isConnected } = useWalletSession();
   const [entries, setEntries] = useState<WatchlistEntry[]>([]);
   const [status, setStatus] = useState<EntryStatus>({ type: "loading" });
   const [showAddForm, setShowAddForm] = useState(false);
@@ -54,18 +118,21 @@ export function WatchlistClient() {
 
     setStatus({ type: "loading" });
 
-    const response = await fetch(`/api/watchlist?walletAddress=${encodeURIComponent(address)}`);
+    try {
+      const response = await fetch(`/api/watchlist?walletAddress=${encodeURIComponent(address)}`);
 
-    if (!response.ok) {
-      const detail = await response.json().catch(() => ({ detail: "Failed to load." }));
-      setStatus({ type: "error", detail: detail.detail ?? detail.error ?? "Failed to load." });
-      return;
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({ detail: "Failed to load." }));
+        setStatus({ type: "error", detail: detail.detail ?? detail.error ?? "Failed to load." });
+        return;
+      }
+
+      const payload = (await response.json()) as { entries?: WatchlistEntry[] };
+      setEntries(payload.entries ?? []);
+      setStatus({ type: "idle" });
+    } catch (error) {
+      setStatus({ type: "error", detail: (error as Error).message || "Failed to load." });
     }
-
-    const data = (await response.json()) as WatchlistEntry[];
-
-    setEntries(data);
-    setStatus({ type: "idle" });
   }, [address]);
 
   useEffect(() => {
@@ -77,45 +144,60 @@ export function WatchlistClient() {
 
     setStatus({ type: "loading" });
 
-    const response = await fetch("/api/watchlist", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    try {
+      const payload: Record<string, unknown> = {
+        action: "add",
         walletAddress: address,
-        chainFamily: form.chainFamily,
-        network: form.network,
+        chain: form.chain,
+        source: form.chainFamily === "stellar" ? "manual_watchlist" : "manual_watchlist",
+        symbol: form.symbol.trim() || undefined,
+        tokenName: form.tokenName.trim() || undefined,
+        note: form.note.trim() || undefined,
         assetType: form.assetType,
-        // Asset identifier is intentionally optional; the server canonicalizes
-        // (e.g. forces "native" for native XLM and validates the format).
-        ...(form.assetType === "stellar_native" ? {} : { assetIdentifier: form.assetIdentifier.trim() }),
-        symbol: form.symbol.trim(),
-        name: form.name.trim() || form.symbol.trim(),
-      }),
-    });
+      };
 
-    if (response.ok) {
-      setForm(defaultForm);
-      setShowAddForm(false);
-      await loadEntries();
-    } else {
-      const errorBody = await response.json().catch(() => ({ error: "Failed to add entry" }));
-      setStatus({ type: "error", detail: errorBody.detail ?? errorBody.error ?? "Could not add entry." });
+      if (form.contractAddress.trim()) payload.contractAddress = form.contractAddress.trim();
+      if (form.pairAddress.trim()) payload.pairAddress = form.pairAddress.trim();
+      if (form.issuer.trim()) payload.issuer = form.issuer.trim();
+      if (form.assetKey.trim()) payload.assetKey = form.assetKey.trim();
+
+      const response = await fetch("/api/watchlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        setForm(defaultForm);
+        setShowAddForm(false);
+        await loadEntries();
+      } else {
+        const errorBody = await response.json().catch(() => ({ error: "Failed to add entry" }));
+        setStatus({ type: "error", detail: errorBody.detail ?? errorBody.error ?? "Could not add entry." });
+      }
+    } catch (error) {
+      setStatus({ type: "error", detail: (error as Error).message || "Could not add entry." });
     }
   }
 
   async function removeEntry(id: string) {
     if (!address) return;
 
-    const response = await fetch(
-      `/api/watchlist/${encodeURIComponent(id)}?walletAddress=${encodeURIComponent(address)}`,
-      { method: "DELETE" },
-    );
+    try {
+      const response = await fetch("/api/watchlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove", entryId: id, walletAddress: address }),
+      });
 
-    if (response.ok) {
-      setEntries((prev) => prev.filter((entry) => entry.id !== id));
-    } else {
-      const detail = await response.json().catch(() => ({ detail: "Could not remove." }));
-      setStatus({ type: "error", detail: detail.detail ?? detail.error ?? "Could not remove entry." });
+      if (response.ok) {
+        setEntries((prev) => prev.filter((entry) => entry.id !== id));
+      } else {
+        const detail = await response.json().catch(() => ({ detail: "Could not remove." }));
+        setStatus({ type: "error", detail: detail.detail ?? detail.error ?? "Could not remove entry." });
+      }
+    } catch (error) {
+      setStatus({ type: "error", detail: (error as Error).message || "Could not remove." });
     }
   }
 
@@ -124,25 +206,35 @@ export function WatchlistClient() {
 
     setStatus({ type: "scanning", entryId: entry.id });
 
-    const response = await fetch(`/api/watchlist/${encodeURIComponent(entry.id)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "rescan", walletAddress: address }),
-    });
+    try {
+      const response = await fetch(`/api/watchlist/${encodeURIComponent(entry.id)}/rescan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress: address }),
+      });
 
-    const data = (await response.json()) as { entry?: WatchlistEntry; scan?: TokenScanResult; scanRecordId?: string; error?: string; detail?: string };
+      const data = (await response.json()) as {
+        entry?: WatchlistEntry;
+        error?: string;
+        detail?: string;
+      };
 
-    if (response.ok && data.entry) {
-      setEntries((prev) => prev.map((e) => (e.id === entry.id ? data.entry! : e)));
-      setStatus({ type: "idle" });
-    } else {
-      // Even on failure, the server returns the updated entry with prior evidence preserved.
-      if (data.entry) {
-        setEntries((prev) => prev.map((e) => (e.id === entry.id ? data.entry! : e)));
+      if (response.ok && data.entry) {
+        setEntries((prev) => prev.map((existing) => (existing.id === entry.id ? data.entry! : existing)));
+        await loadEntries();
+        setStatus({ type: "idle" });
+      } else {
+        if (data.entry) {
+          setEntries((prev) => prev.map((existing) => (existing.id === entry.id ? data.entry! : existing)));
+        }
+        setStatus({ type: "error", detail: data.detail ?? data.error ?? "Rescan failed." });
       }
-      setStatus({ type: "error", detail: data.detail ?? data.error ?? "Rescan failed." });
+    } catch (error) {
+      setStatus({ type: "error", detail: (error as Error).message || "Rescan failed." });
     }
   }
+
+  const chainFamily = walletFamily === "stellar" ? "stellar" : "evm";
 
   return (
     <div className="space-y-8">
@@ -152,7 +244,7 @@ export function WatchlistClient() {
           <div className="text-sm uppercase tracking-[0.2em] text-[#d9a441]">Asset watchlist</div>
           <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">Watchlist</h1>
           <p className="mt-2 max-w-xl text-sm text-white/45">
-            Track EVM tokens and Stellar assets. Entries persist per wallet and can be rescanned at any time.
+            Track EVM tokens and Stellar assets. Each entry is wallet-scoped, identity-keyed, and rescannable.
           </p>
         </div>
         {isConnected ? (
@@ -173,76 +265,73 @@ export function WatchlistClient() {
           <div className="text-sm font-semibold">Add to watchlist</div>
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div>
-              <label className="block text-xs text-white/45">Chain Family</label>
-              <select
-                value={form.chainFamily}
-                onChange={(e) => {
-                  const nextFamily = e.target.value as "evm" | "stellar";
-                  setForm({
-                    ...form,
-                    chainFamily: nextFamily,
-                    network: nextFamily === "stellar" ? "stellar-pubnet" : "base",
-                    assetType: nextFamily === "stellar" ? "stellar_classic" : "evm_contract",
-                  });
+              <label className="block text-xs text-white/45">Chain</label>
+              <input
+                type="text"
+                value={form.chain}
+                onChange={(event) => {
+                  const nextChain = event.target.value;
+                  const nextFamily = inferFamilyFromChain(nextChain);
+                  setForm({ ...form, chain: nextChain, chainFamily: nextFamily });
                 }}
+                placeholder="base · stellar-pubnet"
                 className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none focus:border-[#d9a441]/50"
-              >
-                <option value="evm">EVM</option>
-                <option value="stellar">Stellar</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-white/45">Network</label>
-              <select
-                value={form.network}
-                onChange={(e) => setForm({ ...form, network: e.target.value })}
-                className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none focus:border-[#d9a441]/50"
-              >
-                {scanNetworks
-                  .filter((n) => form.chainFamily === "stellar" ? n.chainFamily === "stellar" : !n.chainFamily || n.chainFamily === "evm")
-                  .map((network) => (
-                    <option key={network.id} value={network.id}>
-                      {network.name}
-                    </option>
-                  ))}
-              </select>
+              />
             </div>
             <div>
               <label className="block text-xs text-white/45">Asset Type</label>
               <select
                 value={form.assetType}
-                onChange={(e) => setForm({ ...form, assetType: e.target.value as WatchlistEntry["assetType"] })}
+                onChange={(event) => setForm({ ...form, assetType: event.target.value as AssetType })}
                 className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none focus:border-[#d9a441]/50"
               >
-                {form.chainFamily === "evm" ? (
-                  <option value="evm_contract">EVM Contract</option>
-                ) : (
-                  <>
-                    <option value="stellar_classic">Classic (CODE:ISSUER)</option>
-                    <option value="stellar_contract">Soroban Contract (C…)</option>
-                    <option value="stellar_native">Native XLM</option>
-                  </>
-                )}
+                <option value="contract">EVM / Soroban contract</option>
+                <option value="classic">Stellar classic (CODE:ISSUER)</option>
+                <option value="native">Stellar native (XLM)</option>
+                <option value="issuer_account">Issuer account</option>
               </select>
             </div>
             <div>
-              <label className="block text-xs text-white/45">
-                Asset identifier
-                {form.assetType === "stellar_native" ? " (auto: native)" : ""}
-              </label>
+              <label className="block text-xs text-white/45">Contract address</label>
               <input
                 type="text"
-                value={form.assetIdentifier}
-                onChange={(e) => setForm({ ...form, assetIdentifier: e.target.value })}
-                disabled={form.assetType === "stellar_native"}
-                placeholder={
-                  form.assetType === "evm_contract"
-                    ? "0x…"
-                    : form.assetType === "stellar_classic"
-                      ? "CODE:ISSUER"
-                      : "C…"
-                }
-                className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-[#d9a441]/50 disabled:opacity-40"
+                value={form.contractAddress}
+                onChange={(event) => setForm({ ...form, contractAddress: event.target.value })}
+                placeholder="0x… or C…"
+                disabled={form.assetType === "native"}
+                className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none focus:border-[#d9a441]/50 disabled:opacity-40"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-white/45">Issuer (Stellar classic)</label>
+              <input
+                type="text"
+                value={form.issuer}
+                onChange={(event) => setForm({ ...form, issuer: event.target.value })}
+                placeholder="G…"
+                disabled={form.assetType !== "classic"}
+                className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none focus:border-[#d9a441]/50 disabled:opacity-40"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-white/45">Stellar asset code</label>
+              <input
+                type="text"
+                value={form.assetKey}
+                onChange={(event) => setForm({ ...form, assetKey: event.target.value })}
+                placeholder="USDC"
+                disabled={form.assetType !== "classic"}
+                className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none focus:border-[#d9a441]/50 disabled:opacity-40"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-white/45">Pair address (optional)</label>
+              <input
+                type="text"
+                value={form.pairAddress}
+                onChange={(event) => setForm({ ...form, pairAddress: event.target.value })}
+                placeholder="0x…"
+                className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none focus:border-[#d9a441]/50"
               />
             </div>
             <div>
@@ -250,19 +339,29 @@ export function WatchlistClient() {
               <input
                 type="text"
                 value={form.symbol}
-                onChange={(e) => setForm({ ...form, symbol: e.target.value })}
+                onChange={(event) => setForm({ ...form, symbol: event.target.value })}
                 placeholder="e.g. MEME"
-                className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-[#d9a441]/50"
+                className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none focus:border-[#d9a441]/50"
               />
             </div>
             <div>
-              <label className="block text-xs text-white/45">Name (optional)</label>
+              <label className="block text-xs text-white/45">Token name (optional)</label>
               <input
                 type="text"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                value={form.tokenName}
+                onChange={(event) => setForm({ ...form, tokenName: event.target.value })}
                 placeholder="e.g. Meme Token"
-                className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-[#d9a441]/50"
+                className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none focus:border-[#d9a441]/50"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-white/45">Note (optional)</label>
+              <input
+                type="text"
+                value={form.note}
+                onChange={(event) => setForm({ ...form, note: event.target.value })}
+                placeholder="Why are you tracking this?"
+                className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none focus:border-[#d9a441]/50"
               />
             </div>
           </div>
@@ -270,11 +369,22 @@ export function WatchlistClient() {
             <button
               type="button"
               onClick={() => void addEntry()}
-              disabled={!form.symbol.trim() || (!form.assetIdentifier.trim() && form.assetType !== "stellar_native") || !family}
+              disabled={
+                !symbolValid(form) ||
+                !contractValid(form) ||
+                !classicValid(form)
+              }
               className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[#d9a441] px-5 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Plus className="h-4 w-4" />
               Add to watchlist
+            </button>
+            <button
+              type="button"
+              onClick={() => setForm({ ...defaultForm, chainFamily, chain: defaultChainForFamily(chainFamily), assetType: assetTypeForFamily(chainFamily) })}
+              className="inline-flex h-10 items-center justify-center rounded-full border border-white/10 px-5 text-sm font-medium text-white/60 transition hover:border-white/30 hover:text-white/90"
+            >
+              Reset
             </button>
           </div>
         </section>
@@ -297,69 +407,62 @@ export function WatchlistClient() {
           <Orbit className="mx-auto h-10 w-10 text-white/20" />
           <div className="mt-4 text-lg font-semibold">Empty watchlist</div>
           <div className="mt-1 text-sm text-white/45">
-            Add EVM tokens or Stellar assets to start tracking them. Entries persist per wallet.
+            Add EVM tokens or Stellar assets to start tracking them. Entries are scoped to your wallet.
           </div>
         </section>
       ) : (
-        /* ─── Entry list ─── */
         <div className="grid gap-4">
           {entries.map((entry) => {
-            const networkConfig = scanNetworks.find((n) => n.id === entry.network);
             const isScanning = status.type === "scanning" && status.entryId === entry.id;
-            const isStale = entry.latestScanStatus === "stale" || entry.latestScanStatus === "unavailable" || entry.latestScanStatus === "failed";
+            const entryFamily: ChainFamily = inferFamilyFromChain(entry.chain);
+            const staleOrPending = !entry.lastScannedAt || entry.latestStatus === "stale" || entry.latestStatus === "failed";
+            const classification = chipForClassification(entry.latestClassification);
 
             return (
               <div
                 key={entry.id}
-                className={`rounded-[24px] border p-5 transition ${isStale ? "border-amber-400/20 bg-amber-500/5" : "border-white/10 bg-white/6"}`}
+                className={`rounded-[24px] border p-5 transition ${staleOrPending ? "border-amber-400/20 bg-amber-500/5" : "border-white/10 bg-white/6"}`}
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2.5">
-                      <span
-                        className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${networkConfig?.color ?? "bg-white/10 text-white"}`}
-                      >
-                        {networkConfig?.mark ?? "?"}
+                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs font-bold text-white">
+                        {entry.chain.startsWith("stellar") ? "✦" : entry.chain.slice(0, 2).toUpperCase()}
                       </span>
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-base font-semibold">{entry.symbol}</span>
-                          {entry.latestVerdict ? (
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${verdictStyles(entry.latestVerdict)}`}>
-                              {entry.latestVerdict}
-                            </span>
-                          ) : null}
-                          {entry.previousScanAvailable && entry.previousVerdict ? (
-                            <span
-                              className={`flex items-center gap-1 rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-white/70 ${verdictStyles(entry.previousVerdict)}`}
-                              title="Last verified scan before the most recent attempt"
-                            >
-                              <History className="h-3 w-3" />
-                              Last verified · {entry.previousVerdict}
-                            </span>
+                          <span className="text-base font-semibold">{entry.symbol ?? "—"}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${classification.tone}`}>
+                            {classification.label}
+                          </span>
+                          {entry.latestScore !== undefined ? (
+                            <span className="text-xs text-white/55">Score: {entry.latestScore}</span>
                           ) : null}
                         </div>
                         <div className="text-xs text-white/40">
-                          {entry.name !== entry.symbol ? `${entry.name} · ` : null}
-                          {networkConfig?.name ?? entry.network} · {entry.chainFamily.toUpperCase()}
+                          {(entry.tokenName ?? entry.symbol ?? "") + " · "}
+                          {chainLabel(entry.chain, entryFamily)}
+                          {(entry.identityKey ?? "").length > 0 ? " · " + entry.identityKey.slice(0, 28) + "…" : null}
                         </div>
                       </div>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/35">
-                      <span className="font-mono">{entry.assetIdentifier.slice(0, 24)}…</span>
-                      {entry.latestRiskScore !== undefined ? (
-                        <span>Risk: {entry.latestRiskScore}/100</span>
+                      <span className={`font-medium ${statusChipFor(entry.latestStatus)}`}>
+                        {entry.latestStatus ?? "not yet scanned"}
+                      </span>
+                      {entry.lastScannedAt ? (
+                        <span>Last scan {new Date(entry.lastScannedAt).toLocaleDateString()}</span>
                       ) : null}
-                      {entry.previousRiskScore !== undefined ? (
-                        <span className="text-white/25">Prior: {entry.previousRiskScore}/100</span>
-                      ) : null}
-                      {entry.latestScanAt ? (
-                        <span>Scanned {new Date(entry.latestScanAt).toLocaleDateString()}</span>
-                      ) : null}
-                      {isStale ? (
+                      {staleOrPending ? (
                         <span className="flex items-center gap-1 text-amber-300/70">
                           <AlertTriangle className="h-3 w-3" />
                           Stale — rescan
+                        </span>
+                      ) : null}
+                      {entry.latestScanRunId ? (
+                        <span className="flex items-center gap-1 text-white/30">
+                          <History className="h-3 w-3" />
+                          run {entry.latestScanRunId.slice(0, 12)}
                         </span>
                       ) : null}
                     </div>

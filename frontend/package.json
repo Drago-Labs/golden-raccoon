@@ -12,8 +12,9 @@
     "test:watch": "vitest",
     "test:agents": "tsx --tsconfig tsconfig.json scripts/agent-fixture-check.ts",
     "test:stellar-config": "tsx --tsconfig tsconfig.json scripts/stellar-config-check.ts",
+    "test:stellar-portfolio": "tsx --tsconfig tsconfig.json scripts/stellar-portfolio-check.ts",
     "test:watchlist": "vitest run src/server/watchlist src/server/storage src/app/api/watchlist",
-    "verify": "npm run test:agents && npm run lint && npm run build"
+    "verify": "npm run test:agents && npm run test:stellar-portfolio && npm run test:watchlist && npm run lint && npm run build"
   },
   "dependencies": {
     "@coinbase/x402": "^2.1.0",
@@ -40,6 +41,11 @@
     "wagmi": "^2.19.5",
     "zod": "^3.25.76"
   },
+  "optionalDependencies": {
+    "@emnapi/core": "1.11.3",
+    "@emnapi/runtime": "1.11.3",
+    "@emnapi/wasi-threads": "1.2.3"
+  },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
@@ -48,7 +54,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
-    "typescript": "^5",
+    "typescript": "^5.4.5",
     "vitest": "^4.1.10"
   }
 }
