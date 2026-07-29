@@ -1,5 +1,6 @@
 import type { AgentRecommendedAction, UserRule } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
+import { isIncidentMode } from "@/server/recovery/policy";
 
 export type ExecutionPolicy = {
   autoExecute: false;
@@ -12,6 +13,8 @@ export type ExecutionPolicy = {
   blockedTokens: string[];
   allowedActions: Set<AgentRecommendedAction>;
   walletAddress: string;
+  /** V3: incident mode disables NEW execution preparation (visibility-only for existing in-flight previews). */
+  incidentMode: boolean;
 };
 
 export type ExecutionPolicyInput = {
@@ -45,6 +48,7 @@ export function buildExecutionPolicy(rules?: UserRule): ExecutionPolicy {
     blockedTokens: uniqueStrings(safeRules.blockedTokens, []),
     allowedActions: new Set(safeRules.allowedActions ?? defaultRules.allowedActions ?? ["reduce_exposure", "swap_to_stable", "prepare_transaction", "watch", "hold", "no_action"]),
     walletAddress: safeRules.walletAddress,
+    incidentMode: isIncidentMode(),
   };
 }
 
@@ -58,6 +62,10 @@ export function evaluateExecutionPolicy(input: ExecutionPolicyInput, policy: Exe
 
   if (policy.autoExecute) {
     violations.push("Auto-execute is disabled. User wallet approval is mandatory.");
+  }
+
+  if (policy.incidentMode) {
+    violations.push("Incident mode is active. New execution preparation is blocked. Existing previews expire; re-prepare after incident clears.");
   }
 
   if (!policy.allowedActions.has(input.action)) {

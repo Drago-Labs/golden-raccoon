@@ -1,6 +1,7 @@
 import type { AgentRecommendedAction, AgentResult, PortfolioSnapshot, TransactionPreview, UserRule } from "@/server/types";
 import { buildAgentResult } from "@/server/agents/shared";
 import { buildExecutionPolicy, evaluateExecutionPolicy } from "@/server/agents/execution/policy";
+import { applyRecoveryToExecutionPreview } from "@/server/recovery";
 
 type ExecutionAgentInput = {
   action?: AgentRecommendedAction | string;
@@ -192,6 +193,7 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
     priceImpactBps,
     gasEstimateUsd,
     policy: {
+      // policyVersion is intentionally added at recovery merge time below.
       maxTradePercent: executionPolicy.maxTradePercent,
       maxRiskScore: executionPolicy.maxRiskScoreForTrade,
       maxMemeExposurePercent: executionPolicy.maxMemeExposurePercent,
@@ -233,7 +235,9 @@ export function buildExecutionPreview(input: ExecutionAgentInput): TransactionPr
     preview.blockedReason = blockedReason;
   }
 
-  return preview;
+  // V3: surface recovery state (incident mode, paused/revoked agents, infinite approvals)
+  // on the preview without breaking existing consumers.
+  return applyRecoveryToExecutionPreview(preview, { walletAddress: input.walletAddress, rules: input.rules });
 }
 
 export function buildExecutionPreviewFromPortfolio(portfolio: PortfolioSnapshot, input: ExecutionAgentInput): TransactionPreview {

@@ -33,6 +33,7 @@ export const storageSchemaContract = {
     "x402_payment_receipts",
     "token_identities",
     "source_snapshots",
+    "recovery_requests",
   ],
   adapterApi: [
     "listAgentRunRecords",
@@ -49,6 +50,12 @@ export const storageSchemaContract = {
     "createX402PaymentReceipt",
     "getUserRuleRecord",
     "upsertUserRuleRecord",
+    "listRecoveryRequests",
+    "getRecoveryRequest",
+    "createRecoveryRequest",
+    "patchRecoveryRequest",
+    "getRecoveryList",
+    "getRecoveryStateSummary",
   ],
   migration: "frontend/src/server/storage/schema.sql",
 };
@@ -360,6 +367,17 @@ export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | 
 }
 
 export function getStorageCounts(): StorageCounts {
+  // The recovery store lives in src/server/recovery/store.ts; the count is imported lazily to
+  // avoid a circular import at module load.
+  let recoveryRequests = 0;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("@/server/recovery") as { getRecoveryCounts?: () => { total: number } };
+    recoveryRequests = mod.getRecoveryCounts?.()?.total ?? 0;
+  } catch {
+    recoveryRequests = 0;
+  }
+
   return {
     agentRuns: getAgentRuns().length,
     recommendations: getRecommendations().length,
@@ -367,5 +385,6 @@ export function getStorageCounts(): StorageCounts {
     approvals: getApprovals().length,
     userRules: getUserRules().length,
     x402PaymentReceipts: getX402PaymentReceipts().length,
+    recoveryRequests,
   };
 }

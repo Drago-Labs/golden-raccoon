@@ -10,7 +10,8 @@ export type ApiCacheKey =
   | "history"
   | "scan"
   | "rules"
-  | "transactions";
+  | "transactions"
+  | "recovery";
 
 export type ApiCachePolicy = {
   name: string;
@@ -101,6 +102,14 @@ export const apiCacheStrategy: Record<ApiCacheKey, ApiCachePolicy> = {
     ttlClass: "none",
     criticalFreshnessVisible: false,
     detail: "Transactions are wallet-specific audit records and should be fetched fresh.",
+  },
+  recovery: {
+    name: "recovery-no-store",
+    seconds: 0,
+    scope: "no-store",
+    ttlClass: "none",
+    criticalFreshnessVisible: true,
+    detail: "Recovery requests are wallet-bound, freshness-sensitive and must never be cached across users.",
   },
 };
 

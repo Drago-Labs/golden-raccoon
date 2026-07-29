@@ -247,6 +247,10 @@ export type TransactionPreview = {
     revokeSuggestion?: string;
     permitSupport: "unsupported" | "planned";
     permit2Support: "unsupported" | "planned";
+    /** V3 hint surfaced by recovery state when active recovery requests target the preview asset. */
+    revivePlan?: string;
+    /** V3 explicit surface for consequences (allowance reduce, trustline removal, incidents). */
+    consequences?: string[];
   };
   blockedReason?: string;
   policy?: {
@@ -259,6 +263,17 @@ export type TransactionPreview = {
     blockedTokens?: string[];
     allowedActions?: AgentRecommendedAction[];
     autoExecute: false;
+    /** V3 recovery rule version this preview was built with. */
+    policyVersion?: string;
+    /** V3 recovery state attached to the preview; absent when no recovery data is available. */
+    recoveryState?: {
+      incidentMode: boolean;
+      activeRecoveries: number;
+      walletPaused: boolean;
+      walletRevoked: boolean;
+      infiniteApprovalWarnings: Array<{ asset: string; consumer: string }>;
+      retainedIssuerControls: Array<{ asset: string; retention: string }>;
+    };
   };
   policyStatus?: {
     allowed: boolean;
@@ -562,4 +577,107 @@ export type StorageCounts = {
   approvals: number;
   userRules: number;
   x402PaymentReceipts: number;
+  recoveryRequests: number;
+};
+
+/**
+ * Recovery domain (V3 emergency pause, agent revoke, allowance/trustline recovery).
+ *
+ * The recovery module intentionally mirrors the storage adapter pattern:
+ * server-only state with idempotent lifecycle, never holding wallet secrets.
+ */
+export const RECOVERY_RULES_VERSION = "v3.0.0";
+
+export type RecoveryStatus =
+  | "requested"
+  | "prepared"
+  | "submitted"
+  | "confirmed"
+  | "failed"
+  | "stale";
+
+export type RecoveryType =
+  | "pause_agent"
+  | "revoke_agent"
+  | "reduce_allowance"
+  | "revoke_allowance"
+  | "remove_trustline";
+
+export type RecoveryChain = "evm" | "stellar" | "any";
+
+export type RecoveryRequest = {
+  id: string;
+  walletAddress: string;
+  recoveryType: RecoveryType;
+  asset?: string;
+  /** EVM: contract + spender. Stellar: asset code + issuer. */
+  consumer?: string;
+  chainId?: string;
+  chainFamily?: RecoveryChain;
+  /** Human-readable subset of the planned operation. */
+  operation?: string;
+  status: RecoveryStatus;
+  incidentMode: boolean;
+  /** Surfaced loss, reserve and asset consequences for the user. */
+  consequences: string[];
+  reservedNativeAmount?: string;
+  expectedFee?: string;
+  policyVersion: string;
+  lastVerifiedLedger?: number;
+  lastVerifiedBlockNumber?: number;
+  /** Optional amount for `reduce_allowance`; for revoke actions indicates fully revoked. */
+  amount?: string;
+  reason?: string;
+  // Wallet mismatch or stale failures are recorded here.
+  error?: string;
+  requestedAt: string;
+  preparedAt?: string;
+  submittedAt?: string;
+  /** Onchain hash is mandatory to move state to `confirmed`. */
+  txHash?: string;
+  confirmedAt?: string;
+  /** Stale records carry the moment they became stale. */
+  staleAt?: string;
+  updatedAt: string;
+  /** Records expire automatically after this timestamp (15m default). */
+  expiresAt?: string;
+  /** Set true when /api/recovery/confirm flips to `confirmed` while incident mode was active. Audit-only; does not gate user action. */
+  appliedDuringIncident?: boolean;
+};
+
+export type RecoveryIncidentMode = {
+  enabled: boolean;
+  reason?: string;
+  updatedAt: string;
+  updatedBy?: string;
+};
+
+export type RecoveryList = {
+  requests: RecoveryRequest[];
+  incidentMode: RecoveryIncidentMode;
+  policyVersion: string;
+  lastVerifiedLedger?: number;
+  lastVerifiedBlockNumber?: number;
+  /** Number of expired/unresolved records that should warn the user. */
+  staleCount: number;
+};
+
+export type RecoveryNetworkFreshness = {
+  network: string;
+  chainFamily: RecoveryChain;
+  ledger?: number;
+  blockNumber?: number;
+  checkedAt: string;
+  freshnessSeconds: number;
+  degraded: boolean;
+};
+
+export type RecoveryStateSummary = {
+  pausedAgents: AgentResult["agent"][];
+  revokedAgents: AgentResult["agent"][];
+  infiniteApprovalWarnings: Array<{ asset: string; consumer: string }>;
+  retainedIssuerControls: Array<{ asset: string; retention: string }>;
+  activeRecoveries: number;
+  /** Most recent recovery operations regardless of status. */
+  recent: RecoveryRequest[];
 };
