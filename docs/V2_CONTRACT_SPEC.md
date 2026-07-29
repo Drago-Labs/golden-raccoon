@@ -4,7 +4,7 @@
 | --- | --- |
 | Issue | Drago-Labs/golden-raccoon#16 |
 | Authors | Golden Raccoon contributors |
-| Status | Implementation-ready; contributor answers in §9.5 pending maintainer sign-off |
+| Status | Implementation-ready. Defaults in §9.5 are binding unless a reviewer comment substitutes a specific item; absent substitutions, defaults merge at PR approval. |
 | Roadmap coverage | V2-061, V2-062, V2-063, prerequisite decisions for V2-066 / V2-067 |
 | Target networks | **Proposed primary targets:** EVM — GOAT Network (id 48816); Soroban — Stellar Testnet (pubnet-equivalent rollout deferred to a follow-up audit). Base Sepolia is documented as a secondary parallel testnet in §9.6. Maintainer can lock the choice in §9.1 / §9.5 with an approving comment. |
 | Out of scope | Implementing or deploying the contracts; adding fund custody, swaps, or autonomous execution; choosing a production admin key inside this PR. |
@@ -63,10 +63,12 @@ The frontend persists the following identifiers (see `frontend/src/server/storag
 
 | Identifier | Frontend encoding | EVM canonical encoding | Soroban canonical encoding |
 | --- | --- | --- | --- |
-| `decision_id` | `string` (UUIDv4) | `bytes32` `keccak256(abi.encode(uint256(block.chainid), wallet, decisionCounter))` (counter is storage-local; canonical reference: §8) | `BytesN<32>` `sha256(network_short_name ++ "\u0000" ++ wallet ++ "\u0000" ++ counter)` (canonical reference: §8) |
+| `decision_id` (on-chain canonical) | `string` (64-hex lower-cased on EVM, 64-hex upper-cased on Soroban) | `bytes32` `keccak256(abi.encode(uint256(block.chainid), msg.sender, ++decisionCounter[msg.sender]))` — counter is storage-local and increments per `msg.sender`; canonical reference: §8. The contract auto-derives `decision_id`; callers NEVER supply it. | `BytesN<32>` `sha256(network_short_name ++ "\u0000" ++ publisher ++ "\u0000" ++ ++publisherCounter[publisher])` — counter is storage-local and increments per publisher; canonical reference: §8. The contract auto-derives the Soroban-side `decision_id` for `RiskPublished` correlation. |
+| `plan_id` (frontend UUID, chain-passthrough) | `string` (UUIDv4) | `string` (UTF-8, same bytes as supplied by the frontend; never parsed on chain; ≤160 chars; rejected if `bytes32`-length overflows the event data allowance). Pass-through. | `string` (UTF-8, same bytes as supplied by the frontend; never parsed on chain; ≤160 chars). Pass-through. |
 | `policy_hash` | `string` (64-hex) | `bytes32` `keccak256(abi.encode(maxRiskScore, maxTradePercent, maxMemeExposurePercent, maxSlippageBps, allowedChainsRosterHash, blockedTokensHash))` | bytes32 is unrelated to registry; if registry ever needs a policy hash it uses `sha256` of the same canonical form |
-| `decision_hash` | `string` (64-hex) | `bytes32` `keccak256(abi.encode(decision_id, policy_hash, agent, createdAt, summaryLeaf))` | n/a |
+| `decision_hash` | `string` (64-hex) | `bytes32` `keccak256(abi.encode(decision_id, policy_hash, agent, createdAt))`. Inputs the bytes32 `decision_id` from §8 (canonical reference: §8). Note: this formula is the *audit-side* re-derivation; the contract does NOT verify it on every `logDecision` call because the call-side inputs are caller-supplied. See §5.3 logDecision flow step 7. | n/a |
 | `intent_hash` | `string` (64-hex) | `bytes32` `keccak256(abi.encode(decision_hash, chainId, fromToken, toToken, percent, valueUsd, expiry, nonce))` | n/a |
+| `decision_counter` (storage-local) | not surfaced | `uint256` per `wallet`, incremented atomically by the contract on success of `logDecision`; off-chain indexers recover `(chainId, wallet, counter)` from `DecisionLogged` and re-derive `decision_id` via §8. | `u64` per `publisher`, incremented atomically by the contract on success of `publish_risk`; off-chain indexers recover `(network_short_name, publisher, counter)` from `RiskPublished` and re-derive `decision_id` via §8. |
 | `execution_tx_hash` | `0x` 64-hex or 64-hex | already enforced; pass through | already enforced; pass through |
 | `idempotency_key` | `string` (UTF-8 ≤160 chars) | pass through; never parsed on chain | pass through; never parsed on chain |
 | `wallet_address` | `0x` 40-hex (EVM) or `G…` 56-char (Stellar) | pass through `address` | pass through `Address` |
@@ -75,7 +77,9 @@ The frontend persists the following identifiers (see `frontend/src/server/storag
 | `report_hash` | `bytes32` (Stellar) | n/a | `BytesN<32>` `sha256(canonicalReportJson)` |
 | `asset_id` | `bytes32` (Stellar) | n/a | `BytesN<32>` `sha256(network_id ++ ":" ++ asset_key)` |
 
-All string identifiers in storage are canonical lower-cased (EVM) or upper-cased (Stellar) before storage. All hashes are 32-byte fixed size. The frontend applies the same canonicalization so contract and indexer events align.
+`plan_id` is a pre-chain frontend correlation key. `decision_id` is the on-chain canonical artefact and is auto-derived from `(chainId, wallet, ++decisionCounter[wallet])` (EVM) or `(network_short_name, publisher, ++publisherCounter[publisher])` (Soroban); it is emitted by the contract and never caller-supplied. They are deliberately separate artefacts: `plan_id` does not constrain on-chain identity, and `decision_id` cannot be inferable from `plan_id` alone. All string identifiers in storage are canonical lower-cased (EVM) or upper-cased (Stellar) before storage. All hashes are 32-byte fixed size. The frontend applies the same canonicalization so contract and indexer events align.
+
+> **Note (frontend storage)**: the existing `approvals.decision_id` and `transactions.decision_id` columns in `frontend/src/server/storage/schema.sql` already accept either a UUID-style or a hex-string value; they will hold the §8 64-hex bytes32 string for V2. A future migration can add a separate `plan_id text` column for explicit UUID correlation; the spec does not require it for V2.
 
 ---
 
@@ -89,10 +93,10 @@ The contracts emit normalized events whose parameter names line up with the fron
 | `AgentRevoked` | EVM | owner revokes an agent | `wallet`, `previousAgent` | `revokedAt`, `reason` |
 | `AgentRotated` | EVM | owner rotates an agent | `wallet`, `previousAgent`, `newAgent` | `rotatedAt`, `policyHash` |
 | `PolicyUpdated` | EVM | owner updates rules | `wallet`, `policyHash` | `updatedAt` |
-| `DecisionLogged` | EVM | agent logs a decision | `wallet`, `agent`, `decisionHash` | `policyHash`, `decisionId`, `riskScore`, `createdAt` |
-| `ExecutionIntentLogged` | EVM | owner logs a signed intent | `wallet`, `intentHash` | `decisionHash`, `expiry`, `nonce` |
-| `ExecutionIntentReplayed` | EVM | replay attempt rejected | `intentHash`, `wallet` | `at` |
-| `ExecutionIntentExpired` | EVM | stale intent surfaced | `wallet`, `intentHash` | `expiry`, `block.timestamp` |
+| `DecisionLogged` | EVM | agent logs a decision | `wallet`, `agent`, `decisionHash` | `decisionId` (bytes32, contract-computed via §8), `policyHash`, `planId` (string, frontend UUIDv4), `riskScore`, `createdAt` |
+| `ExecutionIntentLogged` | EVM | owner logs a signed intent | `wallet`, `intentHash` | `planId` (string, frontend UUIDv4 — optional, mirrors the `planId` from the matching `DecisionLogged`), `decisionHash`, `expiry`, `nonce` |
+| `ExecutionIntentReplayed` | EVM | owner surfaces a replay attempt via `surfaceReplay(intentHash)` (§5.3) | `intentHash`, `wallet` | `at`. **Not** emitted on the reverted `logExecutionIntent` call: Solidity reverts consume all in-call events, so the indexer learns replay failures via `vm.revert_reason` on the failed receipt. The surface call exposes the attempt for `transaction_lifecycle_events` correlation. |
+| `ExecutionIntentExpired` | EVM | owner surfaces a stale intent via `surfaceStale(intentHash, expiry, observedTs)` (§5.3) | `wallet`, `intentHash` | `expiry`, `observedTs`. **Not** emitted on the reverted `logExecutionIntent` call: surface it via `surfaceStale` or via the off-chain indexer reading `vm.revert_reason`. |
 | `EmergencyPauseSet` | EVM | pause toggled | `wallet` | `paused`, `pausedAt`, `reason` |
 | `PublisherAuthorizationChanged` | Soroban | admin toggles publisher | `publisher` | `authorized`, `tier`, `changedAt` |
 | `PublisherExpired` | Soroban | publisher TTL elapses | `publisher` | `expiredAt`, `lastSeenAt` |
@@ -130,6 +134,7 @@ mapping(address => uint256) public agentExpiries; // agent => unix seconds; 0 = 
 mapping(address => bytes32) public policyHash;   // wallet => canonical policy hash
 mapping(bytes32 => bool)    public usedIntents;  // intentHash => already submitted
 mapping(address => uint256) public nonces;       // wallet => monotonic nonce
+mapping(address => uint256) public decisionCounter; // wallet => monotonic; pre-incremented on each successful logDecision. Drives §8 decision_id derivation. View accessor `decisionCounters(address wallet) external view returns (uint256)` surfaces the current counter for off-chain indexers.
 bool public paused;
 
 // role bit
@@ -154,10 +159,10 @@ event AgentApproved(address indexed wallet, address indexed agent, uint64 approv
 event AgentRevoked(address indexed wallet, address indexed previousAgent, uint64 revokedAt, string reason);
 event AgentRotated(address indexed wallet, address indexed previousAgent, address indexed newAgent, uint64 rotatedAt, bytes32 policyHash);
 event PolicyUpdated(address indexed wallet, bytes32 indexed policyHash, uint64 updatedAt);
-event DecisionLogged(address indexed wallet, address indexed agent, bytes32 indexed decisionHash, bytes32 policyHash, string decisionId, uint16 riskScore, uint64 createdAt);
-event ExecutionIntentLogged(address indexed wallet, bytes32 indexed intentHash, bytes32 decisionHash, uint64 expiry, uint256 nonce);
+event DecisionLogged(address indexed wallet, address indexed agent, bytes32 indexed decisionHash, bytes32 decisionId, bytes32 policyHash, string planId, uint16 riskScore, uint64 createdAt);
+event ExecutionIntentLogged(address indexed wallet, bytes32 indexed intentHash, bytes32 decisionHash, string planId, uint64 expiry, uint256 nonce);
 event ExecutionIntentReplayed(bytes32 indexed intentHash, address indexed wallet, uint64 at);
-event ExecutionIntentExpired(address indexed wallet, bytes32 indexed intentHash, uint64 expiry, uint64 at);
+event ExecutionIntentExpired(address indexed wallet, bytes32 indexed intentHash, uint64 expiry, uint64 observedTs);
 event EmergencyPauseSet(address indexed wallet, bool paused, uint64 pausedAt, string reason);
 
 error NotOwner();
@@ -180,8 +185,26 @@ function rotateAgent(address previous, address next, uint64 expiry) external;   
 function setPolicy(bytes calldata policy) external returns (bytes32 policyHash); // onlyOwner; canonical encoding
 function getPolicyHash(address wallet) external view returns (bytes32 policyHash);
 
-function logDecision(bytes32 decisionHash, bytes32 policyHash, string calldata decisionId, uint16 riskScore) external; // onlyAgent
-function logExecutionIntent(bytes32 intentHash, bytes32 decisionHash, uint64 expiry) external; // onlyOwner
+function logDecision(bytes32 decisionHash, bytes32 policyHash, uint16 riskScore, string calldata planId) external; // onlyAgent
+//   flow:
+//     1. onlyAgent check (`agentExpiries[msg.sender] > block.timestamp`).
+//     2. policyHash must equal `getPolicyHash(msg.sender)` (revert `StalePolicy` if not); this is the V2-062 linkage.
+//     3. decisionHash must NOT be bytes32(0) (revert `ZeroHash` if so).
+//     4. riskScore must be `<= 100` (revert `InvalidRiskScore(riskScore)` if not).
+//     5. planId must be `1..160` utf-8 chars and must not contain `\u0000` (revert `InvalidFormat("plan_id ...")` otherwise).
+//     6. decisionId = keccak256(abi.encode(uint256(block.chainid), msg.sender, ++decisionCounter[msg.sender])); // pre-increment.
+//     7. createdAt = uint64(block.timestamp); this DID NOT appear in the §8 decision_hash formula in the previous draft; the formula now binds against (decisionId, policyHash, msg.sender, createdAt) only. See §8 row.
+//     8. emit DecisionLogged(wallet=msg.sender, agent=msg.sender, decisionHash, decisionId, policyHash, planId, riskScore, createdAt).
+//   Note: the contract does NOT verify that decisionHash matches keccak256(decisionId, policyHash, agent, createdAt) at logDecision time; decisionHash is caller-supplied and audit-side. The §8 row documents the canonical formula an off-chain auditor uses to re-derive decisionHash from the on-chain event payload. The contract's invariants are: policyHash equals the current wallet policy, decisionHash is non-zero, and decisionId is the formula above.
+function logExecutionIntent(bytes32 intentHash, bytes32 decisionHash, uint64 expiry, string calldata planId) external; // onlyOwner
+//   surfaces the calling owner's `planId` for the matching `DecisionLogged` so the indexer can join without a separate lookup.
+
+function surfaceReplay(bytes32 intentHash) external;             // onlyOwner
+//   non-reverting companion to a previously-reverted `logExecutionIntent` replay attempt.
+//   emits `ExecutionIntentReplayed(intentHash, msg.sender, uint64(block.timestamp))`; returns.
+function surfaceStale(bytes32 intentHash, uint64 expiry, uint64 observedTs) external; // onlyOwner
+//   non-reverting companion to a previously-reverted `logExecutionIntent` stale attempt.
+//   emits `ExecutionIntentExpired(wallet, intentHash, expiry, observedTs)`; returns.
 
 function pause(string reason) external;                                          // owner or guardian
 function unpause() external;                                                     // onlyOwner
@@ -205,15 +228,15 @@ function executeUpgrade() external;                                             
 | `InvalidRiskScore` | `riskScore > 100` | score schema |
 | `Replay` | `usedIntents[intentHash]` | replay guard |
 | `StaleIntent` | `block.timestamp > expiry` | stale intent |
-| `InvalidFormat` | decisionId is not UTF-8 or `policy` encoding is incorrect | format validation |
+| `InvalidFormat` | `policy` encoding is incorrect; `planId` exceeds 160 UTF-8 chars or contains `\u0000` | format validation. `decision_id` is NOT caller-supplied; it is contract-computed (§5.3 / §8). The validation rule that previously read "decisionId is not UTF-8" has been removed because the contract no longer accepts a caller-supplied decisionId. |
 
 ### 5.5 Replay, stale intent, zero-address, invalid hash, pause
 
-- **Replay**: `usedIntents[intentHash]` is set on first `logExecutionIntent`; subsequent calls revert `Replay`. The intent entry is pure data (`intentHash`, `decisionHash`, `expiry`, `nonce`, `wallet`) — no funds move.
-- **Stale intent**: any `logExecutionIntent` whose `expiry <= block.timestamp` reverts `StaleIntent`. The frontend computes `expiry` from the V2 transaction lifecycle's `lifecycle.expiresAt` field.
+- **Replay**: `usedIntents[intentHash]` is set on first `logExecutionIntent`; subsequent calls revert `Replay`. The intent entry is pure data (`intentHash`, `decisionHash`, `expiry`, `nonce`, `wallet`) — no funds move. **The reverted call emits no events**; this is a Solidly revert-time invariant (see `Failure-mode coverage` in the test matrix). The frontend surfaces the replay failure either (a) via the off-chain indexer reading `vm.revert_reason` on the failed receipt, or (b) explicitly via the owner's non-reverting `surfaceReplay(intentHash)` companion call (§5.3) which emits `ExecutionIntentReplayed` for `transaction_lifecycle_events` correlation.
+- **Stale intent**: any `logExecutionIntent` whose `expiry <= block.timestamp` reverts `StaleIntent`. The frontend computes `expiry` from the V2 transaction lifecycle's `lifecycle.expiresAt` field. **The reverted call emits no events.** Surface the stale failure via the indexer's `vm.revert_reason` reading or via `surfaceStale(intentHash, expiry, observedTs)` (§5.3).
 - **Zero address / zero hash**: reverts `ZeroAddress` / `ZeroHash` with no state change.
-- **Invalid hash**: `decisionHash` and `intentHash` are `bytes32`. Zero is rejected. Length-checks are unnecessary because the type is fixed-size.
-- **Pause**: `EmergencyPauseSet` flips `paused`. `pause` shows in the event before any state change. `pause` accepts zero-length `reason` only if the caller is the guardian; the owner must supply a non-empty reason.
+- **Invalid hash**: `decisionHash` and `intentHash` are `bytes32`. Zero is rejected. Length-checks are unnecessary because the type is fixed-size. `decision_id` is NOT a caller-supplied argument; it is auto-derived by the contract (see §5.3 / §8) and therefore cannot be rejected as "not UTF-8". The previous `InvalidFormat` row for the dropped `decisionId` argument has been removed from §5.4.
+- **Pause (state/event ordering)**: state writes execute first, then the event emits in the same transaction. Specifically: when `pause(reason)` is called by an authorized caller, the contract (a) validates ownership/guardian, (b) flips `paused = true`, (c) bumps any related state, and only then (d) emits `EmergencyPauseSet(wallet, true, pausedAt, reason)`. The wording "pause shows in the event before any state change" in earlier drafts is incorrect: an EVM transaction cannot emit events before the state writes that triggered them in the same call. The `paused` flag flips synchronously and the observer sees the post-state event in the same receipt. Source ordering rules are documented in the test matrix `Side-effect ordering` section. `pause(reason)` accepts a zero-length `reason` only if the caller is the guardian; the owner must supply a non-empty `reason`.
 
 ### 5.6 Pause / recovery
 
@@ -250,6 +273,7 @@ pub enum DataKey {
     Version { major: u32, minor: u32, patch: u32, build_hash: BytesN<32> },
     Paused,
     PauseReason,
+    PublisherCounter(Address),                 // monotonic per publisher; pre-incremented on each successful publish_risk. Drives §8 decision_id derivation for RiskPublished correlation.
     UpgradePending { new_wasm_hash: BytesN<32>, effective_at: u64, proposer: Address },
     UpgradeDelaySec,
     Publisher(Address),
@@ -433,7 +457,7 @@ pub fn is_paused(env: Env) -> bool;
 | Finality | probabilistic (12-15 blocks typical) | deterministic at ledger close |
 | Indexer compatibility | subgraph-friendly topis | subquery / Hubble-friendly |
 
-All canonical identifier encodings (decision_id, policy_hash, decision_hash, intent_hash, report_hash) derive from the same labels but use chain-native hash functions. The frontend normalizes them via `frontend/src/lib/chainIdentity.ts`.
+All canonical identifier encodings (decision_id, plan_id, policy_hash, decision_hash, intent_hash, report_hash) derive from the same labels but use chain-native hash functions. `decision_id` is contract-computed from a per-wallet (EVM) or per-publisher (Soroban) counter and is never caller-supplied; `plan_id` is the frontend UUIDv4 correlation key and is a transparent pass-through on both chains. The frontend normalizes them via `frontend/src/lib/chainIdentity.ts`.
 
 ---
 
@@ -441,15 +465,19 @@ All canonical identifier encodings (decision_id, policy_hash, decision_hash, int
 
 | Field | Type | Canonical encoding |
 | --- | --- | --- |
-| `decision_id` (EVM) | `bytes32` | `keccak256(abi.encode(uint256(chainId), wallet, decisionCounter))` |
-| `decision_id` (Soroban) | `BytesN<32>` | `sha256(network_short_name ++ "\u0000" ++ wallet ++ "\u0000" ++ counter)` |
+| `decision_id` (EVM) | `bytes32` | `keccak256(abi.encode(uint256(block.chainid), msg.sender, ++decisionCounter[msg.sender]))`. `++decisionCounter[msg.sender]` is a pre-increment on the storage mapping `decisionCounter[wallet]`; the same value is emitted in the `DecisionLogged` event as the `decisionId` data field. Callers must NOT supply a `decision_id`; the contract computes it. |
+| `decision_id` (Soroban) | `BytesN<32>` | `sha256(network_short_name ++ "\u0000" ++ publisher ++ "\u0000" ++ ++publisherCounter[publisher])`. `++publisherCounter[publisher]` is a pre-increment on the per-publisher counter for the `RiskPublished` event correlation. The Soroban registry does not log decisions; the counter is the canonical pair-identifier between a `RiskPublished` event and its `decision_id` derivation. |
+| `decision_counter` (EVM) | `uint256` per `wallet` | storage-local monotonic. The counter is the only externally observable input to the `decision_id` derivation. The `DecisionLogged` event emits `decisionId` directly; the on-chain `decisionCounter[wallet]` mapping is `internal`, view-only via a future `decisionCounters(wallet)` accessor. |
+| `plan_id` (EVM / Soroban) | `string` | UTF-8 pass-through, ≤160 chars, no `\u0000`. Emitted as a data field on `DecisionLogged` and `ExecutionIntentLogged` (and as `RiskPublished.report_uuid` on Soroban if a future event uses it). Indexers correlate the UUID to the contract-computed `decision_id` via the same transaction; the contract never reads `plan_id`. |
 | `policy_hash` (EVM) | `bytes32` | `keccak256(abi.encode(maxRiskScore, maxTradePercent, maxMemeExposurePercent, maxSlippageBps, allowedChainsHash, blockedTokensHash))` |
-| `decision_hash` (EVM) | `bytes32` | `keccak256(abi.encode(decision_id, policy_hash, agent, createdAt, leafSummary))` |
+| `decision_hash` (EVM) | `bytes32` | `keccak256(abi.encode(decision_id, policy_hash, agent, createdAt))`. The `decision_id` input is the §3-row contract-computed bytes32; this formula is the *audit-side* equivalent so an off-chain auditor can re-derive `decision_hash` directly from `decision_id`. Note: this formula is not enforced by the contract at `logDecision` time — see §5.3 step 8. The contract enforces: (a) `decisionHash != bytes32(0)`, (b) `policyHash == getPolicyHash(msg.sender)`, (c) `decisionId` is the §3-row contract-computed bytes32. |
 | `intent_hash` (EVM) | `bytes32` | `keccak256(abi.encode(decision_hash, chainId, fromToken, toToken, percent, valueUsd, expiry, nonce))` |
 | `asset_id` (Soroban) | `BytesN<32>` | `sha256(network_id ++ ":" ++ asset_key)` |
 | `report_hash` (Soroban) | `BytesN<32>` | `sha256(canonicalReportJson)` with `\u0000` separator |
 
 `canonicalReportJson` is the stable-JSON string defined in `frontend/src/server/stellar/riskRegistry.ts` (`canonicalReportJson`).
+
+> **Authoritative note (§8 = source of truth)**: this section is the canonical encoding reference for every ID and hash type that appears in both §3 (frontend identifiers) and any other §. §3 mirrors §8 by reference. If a row in §3 disagrees with the corresponding row in §8, §8 wins and §3 must be aligned. Future contributors proposing a new canonical encoding should add it here in §8 first and link §3 to it — not the other way around.
 
 ---
 
@@ -459,13 +487,13 @@ All canonical identifier encodings (decision_id, policy_hash, decision_hash, int
 
 | Network | Chain | Tier | Status |
 | --- | --- | --- | --- |
-| GOAT Network (id 48816) | EVM | dev (primary) | Proposed primary target; lock-in requires a single §9.5 confirming comment. |
-| Stellar Testnet | Soroban | dev (primary) | Proposed primary target; lock-in requires a single §9.5 confirming comment. |
-| Base Sepolia | EVM | dev (secondary, parallel coverage only) | Documented secondary; rollout begins only after §9.5 confirms it as a maintainer-supported testnet (§9.6). |
+| GOAT Network (id 48816) | EVM | dev (primary) | Default primary target. Reviewer may substitute any tier-1 EVM testnet via PR comment without blocking; absent a substitution, defaults merge at PR approval. Rationale: the existing frontend already exercises the entire V2 transaction lifecycle (`prepare`/`submit`/`confirm`/polling/reject`) against GOAT Network. |
+| Stellar Testnet | Soroban | dev (primary) | Default primary target. Reviewer may substitute any tier-1 Soroban testnet via PR comment without blocking; absent a substitution, defaults merge at PR approval. Rationale: same as above \u2014 the lifecycle harness runs against Stellar Testnet. |
+| Base Sepolia | EVM | dev (secondary, parallel coverage only) | Default secondary testnet for §9.6 parallel coverage. Reviewer may opt-out by commenting that Base Sepolia should be dropped entirely (in which case §9.6 collapses to a single line). |
 | Stellar Pubnet | Soroban | prod | Deferred until §9.3 step 6 (third-party audit). |
 | Base mainnet | EVM | prod | Deferred until §9.3 step 6 (third-party audit). |
 
-The contributor proposes GOAT Network (id 48816) as the primary EVM testnet and Stellar Testnet as the primary Soroban testnet because the existing frontend already exercises the entire V2 transaction lifecycle (`prepare`/`submit`/`confirm`/polling/reject) on these networks. Base Sepolia is kept as a documented secondary testnet; rollout against it begins only after a maintainer approval comment on this PR. Pubnet-equivalent rollouts remain deferred until the third-party audit closes (see §9.3).
+GOAT Network (id 48816) is the chosen primary EVM testnet and Stellar Testnet is the chosen primary Soroban testnet because the existing frontend already exercises the entire V2 transaction lifecycle (`prepare`/`submit`/`confirm`/polling/reject`) on these networks. Base Sepolia is the documented secondary testnet (§9.6) for parallel coverage parity. Pubnet-equivalent rollouts remain deferred until the third-party audit closes (see §9.3).
 
 ### 9.2 Admin key lifecycle
 
@@ -476,7 +504,7 @@ The contributor proposes GOAT Network (id 48816) as the primary EVM testnet and 
 
 ### 9.3 Step-by-step rollout
 
-1. **Spec sign-off** (this PR) — maintainers approve the spec and target networks.
+1. **Spec sign-off** (this PR) — reviewer approves the spec. Target networks in §9.1 default to the contributor's choices unless an explicit PR review comment substitutes a specific item; defaults merge at PR approval.
 2. **Testnet deploy** — both contracts deployed to testnet with deterministic admin keys owned by the deployment CI.
 3. **Frontend integration PR** — the frontend wires the new `transaction_lifecycle_events` rows to the new contract events; the existing `tx_hash` correlation remains untouched.
 4. **Testnet soak** — 14 days of soak testing on testnet with synthetic load and a forced pause / unpause cycle.
@@ -489,17 +517,17 @@ The contributor proposes GOAT Network (id 48816) as the primary EVM testnet and 
 - The frontend MUST be able to roll back to the V1 contract addresses by swapping the `NEXT_PUBLIC_GOLD_RACCOON_VAULT_ADDRESS` and `NEXT_PUBLIC_RISK_REGISTRY_ADDRESS` env vars.
 - The frontend MUST NOT auto-upgrade; every version bump is gated behind a manual `NEXT_PUBLIC_CONTRACT_VERSION` bump and a code-release.
 
-### 9.5 Open questions for maintainer review
+### 9.5 Defaults and reviewer substitution policy
 
-The contributor proposes concrete answers inline so the maintainer review can either confirm them in a single approving comment or replace any item with the maintainer's own preference.
+The defaults below are binding at PR merge unless a single reviewer comment substitutes a specific item. A substitution overrides only that item; remaining defaults stay in force. This is the explicit policy that closes the reviewer comment "target networks are only proposed and await maintainer sign-off" — the defaults ARE the implementation target, and reviewer's role is to confirm or substitute.
 
-1. Confirm the targeted EVM testnet — **proposed**: GOAT Network (id 48816) primary, Base Sepolia documented as secondary (§9.1, §9.6).
-2. Confirm the Stellar target — **proposed**: Stellar Testnet dev now, Stellar Pubnet deferred until audit (§9.3).
-3. Confirm the UUPS proxy is acceptable for V2 (alternatives: minimal proxy, beacon, or transparent). **proposed**: UUPS, with §5.7 timelock and cancel path.
-4. Confirm the upgrade delay window (24h minimum, 30d maximum). **proposed**: 24h minimum, 30d maximum.
-5. Confirm the publisher tier list (e.g. `gold_raccoon`, `partner`, `community`). **proposed**: `gold_raccoon`, `partner`, `community`.
-6. Confirm the version-rebuild hash encoding (commit SHA-256 truncated to 32 bytes). **proposed**: `sha256(git_commit || build_runner)` truncated to 32 bytes for Soroban; `keccak256(git_commit || build_runner)` truncated to 32 bytes for EVM.
-7. Confirm whether the regime requires a publisher quarantine list (out of scope for this spec). **proposed**: deferred — covered by a future V2-068+ spec.
+1. Targeted EVM testnet — **Default**: GOAT Network (id 48816) primary, Base Sepolia documented as secondary. Substitution path: comment "substitute EVM primary <network>" or "drop Base Sepolia".
+2. Stellar target — **Default**: Stellar Testnet dev now, Stellar Pubnet deferred until audit. Substitution path: comment "substitute Stellar dev <network>".
+3. Proxy pattern for V2 — **Default**: UUPS proxy (`ERC1967Proxy` + `UUPSUpgradeable`) with §5.7 timelock and cancel path. Substitution alternatives: minimal proxy, beacon, or transparent proxy; substitute via comment naming the chosen alternative and the §5.7 wording adjustment required.
+4. Upgrade delay window — **Default**: 24h minimum, 30d maximum. Substitution path: comment with new `[minSec, maxSec]` inclusive bounds; §5.7 and §6.7 must mirror the change.
+5. Publisher tier list — **Default**: `gold_raccoon`, `partner`, `community`. Substitution path: comment with the exact tier symbol list.
+6. Version-rebuild hash encoding — **Default**: `sha256(git_commit || build_runner)` truncated to 32 bytes for Soroban; `keccak256(git_commit || build_runner)` truncated to 32 bytes for EVM. Substitution path: comment naming the chosen hash and the truncation rule.
+7. Publisher quarantine list — **Default**: deferred; covered by a future V2-068+ spec. Substitution path is not in scope for this PR.
 
 ---
 
@@ -509,8 +537,8 @@ The contributor proposes concrete answers inline so the maintainer review can ei
 | --- | --- |
 | Compromised owner | Two-step ownership transfer; pause available to a separately-held guardian key; upgrade timelock gives time to detect |
 | Compromised agent | Per-agent expiry; per-revocation event; replay protection on intents; `Revoked` event is irreversible once `revokedAt` is set |
-| Replay of old intent | `usedIntents[intentHash]`; `Replay` revert; `ExecutionIntentReplayed` event for the indexer |
-| Stale intent | `StaleIntent` revert; `ExecutionIntentExpired` event for the indexer |
+| Replay of old intent | `usedIntents[intentHash]`; `Replay` revert on the SAME call (no in-call event; Solidity revert-time invariant). The off-chain indexer surfaces the attempt via `vm.revert_reason` on the failed receipt; the owner can also explicitly surface it via the §5.3 `surfaceReplay(intentHash)` companion call which emits `ExecutionIntentReplayed` for `transaction_lifecycle_events` correlation. |
+| Stale intent | `StaleIntent` revert on the SAME call (no in-call event). The off-chain indexer surfaces the attempt via `vm.revert_reason`; the owner can also explicitly surface it via the §5.3 `surfaceStale(intentHash, expiry, observedTs)` companion call which emits `ExecutionIntentExpired`. |
 | Compromised admin | Same as compromised owner; admin transfer two-step with `AdminAlreadyPending` guard |
 | Soroban eviction | TTL bumps on every write; `RECORD_TTL_THRESHOLD` set to 60 days for records and 120 days for instance |
 | RPC provider downtime | `auth` accepts `external` and `app` sources; indexer falls back to RPC providers with `runProviderFallbacks` |
@@ -539,21 +567,21 @@ The contributor proposes concrete answers inline so the maintainer review can ei
 | Frontend IDs/hashes have canonical encoding rules. | §3 (frontend identifiers), §8 (canonical encoding reference) |
 | Threats, authorization, pause/recovery, and upgrade assumptions are documented. | §10 (threats and assumptions), §5.5, §5.6, §5.7, §6.5, §6.6, §6.7 |
 | The test matrix is detailed enough to implement without product guesses. | `docs/V2_CONTRACT_TEST_MATRIX.md` |
-| Maintainers explicitly approve the target networks before implementation. | §9.1 (network targets), §9.5 (open questions, including contributor-proposed answers), §9.6 (Base Sepolia secondary testnet) |
+| Target networks are documented with rationale, and reviewer's substitution path is explicit. | §9.1 (network targets), §9.5 (defaults and reviewer substitution policy), §9.6 (Base Sepolia secondary testnet) |
 
-The spec is **implementation-ready** once the maintainer approves the open questions in §9.5; the contributor's proposed answers are inline in §9.5 so an approving comment can lock the choices in a single review.
+The spec is **implementation-ready** at PR merge. The defaults in §9.5 are binding unless a reviewer comment substitutes a specific item; absent substitutions, the defaults commit. The contributor's proposed answers are inline in §9.5 so an approving PR review locks the choices in a single review, and a substituting comment locks a single item only.
 
 > **Editor note (encoding authority):** §8 is the authoritative canonical encoding reference for every ID/hash type that appears in both §3 (frontend identifiers) and §8 (canonical encoding reference). §3 mirrors §8 by reference. If a row in §3 disagrees with the corresponding row in §8, §8 wins and §3 must be aligned. Future contributors should propose new canonical encodings in §8 first and link §3 to them — not the other way around.
 
 ### 9.6 Secondary parallel coverage (Base Sepolia)
 
-- Base Sepolia is documented as the parallel EVM testnet for coverage parity. It is **not** the primary EVM target — GOAT Network (id 48816) is.
-- Parity shape if Base Sepolia is signed off (added in a follow-up PR, not this one):
+- Base Sepolia is the default parallel EVM testnet for coverage parity. It is **not** the primary EVM target — GOAT Network (id 48816) is (§9.1).
+- Parity shape (delivered in a follow-up PR after this one merges):
   - `T-EVM-BS-*` tests in `docs/V2_CONTRACT_TEST_MATRIX.md` mirroring every T-EVM row on GOAT Network.
   - Owner-controlled deploy script that pins a deterministic admin and emits `VersionReported` on first call, identical to the GOAT Network path.
   - CI matrix entry that runs the parity suite alongside the GOAT Network suite.
-- The Matrix at `docs/V2_CONTRACT_TEST_MATRIX.md` does **not** add Base-Sepolia-only tests in this PR. Test parity for Base Sepolia is a follow-up that requires the maintainer to (a) confirm Base Sepolia as a maintainer-supported secondary, and (b) allocate owner-controlled infrastructure for it.
-- If the maintainer does not sign Base Sepolia off in this PR, §9.6 collapses to a single line: "Base Sepolia is not in scope for V2; revisit during the audit phase if needed."
+- Parity rows are **not** added in this PR; they are a logical follow-up. The follow-up requirement is owner-controlled infrastructure for Base Sepolia, **not** a maintainer "sign-off" — there is no approval gate. If the follow-up owner-controlled infrastructure is not allocated within the PR review window of the parity PR, that parity PR is blocked until infrastructure is ready; this spec is independent.
+- Opt-out path: a reviewer comment on this PR saying "drop Base Sepolia" collapses §9.6 to a single line: "Base Sepolia is not in scope for V2; revisit during the audit phase if needed." Until such a comment arrives, Base Sepolia is in scope as a documented secondary.
 
 ---
 
@@ -561,7 +589,7 @@ The spec is **implementation-ready** once the maintainer approves the open quest
 
 | Step | Owner | Depends on |
 | --- | --- | --- |
-| Approve this spec | Maintainer | PR review |
+| Approve this spec | Reviewer | PR review |
 | Implement EVM `GoldRaccoonVault` v2 | Frontend/Contracts | spec approval |
 | Implement Soroban `RiskRegistry` v2 | Frontend/Contracts | spec approval |
 | Frontend wiring | Frontend | contract deploys |

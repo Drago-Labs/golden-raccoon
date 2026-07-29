@@ -4,7 +4,7 @@
 | --- | --- |
 | Issue | Drago-Labs/golden-raccoon#16 |
 | Companion spec | `docs/V2_CONTRACT_SPEC.md` |
-| Status | Implementation-ready; contributor-proposed answers in `docs/V2_CONTRACT_SPEC.md` §9.5 pending maintainer sign-off |
+| Status | Implementation-ready. Defaults in `docs/V2_CONTRACT_SPEC.md` §9.5 are binding unless a reviewer comment substitutes a specific item; absent substitutions, defaults merge at PR approval. |
 | Scope | Implementation-ready test cases for both `GoldRaccoonVault` (EVM) and `RiskRegistry` (Soroban) |
 
 The matrix is exhaustive enough to implement without product guesses. Each row carries a stable identifier (`T-EVM-xxx`, `T-SOR-xxx`) so it can be cross-referenced from the implementation PRs and the audit checklist.
@@ -44,15 +44,21 @@ Pre-conditions common to all tests:
 | T-EVM-011 | `setPolicy` happy path | owner | `setPolicy(policyBytes)` | `PolicyUpdated(wallet, policyHash, updatedAt)` | `policyHash[w] = newPolicyHash` | none |
 | T-EVM-012 | `setPolicy` malformed bytes | owner | `setPolicy(0x00)` | — | unchanged | `InvalidFormat("policy length")` |
 | T-EVM-013 | `getPolicyHash` returns current | policy set | `getPolicyHash(wallet)` | — | `policyHash` matches last set | none |
-| T-EVM-014 | `logDecision` happy path | agent added, policy set | `logDecision(decisionHash, policyHash, "decisionId", riskScore)` | `DecisionLogged(wallet, agent, decisionHash, policyHash, "decisionId", riskScore, createdAt)` | `decisionId` recorded (off-chain) | none |
+| T-EVM-014 | `logDecision` happy path | agent added, policy set | `logDecision(decisionHash, policyHash, riskScore, "plan_id_uuid")` | `DecisionLogged(wallet, agent, decisionHash, decisionId, policyHash, "plan_id_uuid", riskScore, createdAt)` where `decisionId = keccak256(abi.encode(uint256(block.chainid), msg.sender, decisionCounter))` and the emitted value is the bytes32 form (not a string) | `decisionCounter[msg.sender] += 1`; off-chain state derives `decision_id` via §8. | none |
+| T-EVM-014-NI | `logDecision` non-canonical planId | agent added, policy set | `logDecision(decisionHash, policyHash, riskScore, "")` | — | unchanged | `InvalidFormat("plan_id required")` |
+| T-EVM-014-NI-2 | `logDecision` oversized planId | agent added, policy set | `logDecision(decisionHash, policyHash, riskScore, "<161-char utf8>")` | — | unchanged | `InvalidFormat("plan_id too long")` |
 | T-EVM-015 | `logDecision` non-agent | sender ≠ agent | `logDecision(...)` | — | unchanged | `NotAgent` |
 | T-EVM-016 | `logDecision` expired agent | agent expiry < now | `logDecision(...)` | — | unchanged | `Expired` |
 | T-EVM-017 | `logDecision` zero hash | agent | `logDecision(bytes32(0), …)` | — | unchanged | `ZeroHash` |
 | T-EVM-018 | `logDecision` invalid risk score | agent | `logDecision(..., riskScore=200)` | — | unchanged | `InvalidRiskScore(200)` |
 | T-EVM-019 | `logDecision` while paused | paused | `logDecision(...)` | — | unchanged | `Paused` |
 | T-EVM-020 | `logExecutionIntent` happy path | intent hash derived | `logExecutionIntent(intentHash, decisionHash, expiry)` | `ExecutionIntentLogged(wallet, intentHash, decisionHash, expiry, nonce)` | `usedIntents[intentHash] = true`, `nonces[w] += 1` | none |
-| T-EVM-021 | `logExecutionIntent` replay | already recorded | `logExecutionIntent(sameIntentHash, …)` | `ExecutionIntentReplayed(intentHash, wallet, at)` | unchanged | `Replay` |
-| T-EVM-022 | `logExecutionIntent` stale | expiry <= now | `logExecutionIntent(intentHash, decisionHash, expiry)` | `ExecutionIntentExpired(wallet, intentHash, expiry, at)` | unchanged | `StaleIntent` |
+| T-EVM-021 | `logExecutionIntent` replay | already recorded | `logExecutionIntent(sameIntentHash, …)` | **—** (no event emitted on revert) | unchanged | `Replay` |
+| T-EVM-022 | `logExecutionIntent` stale | expiry <= now | `logExecutionIntent(intentHash, decisionHash, expiry, "plan_id_uuid")` | **—** (no event emitted on revert) | unchanged | `StaleIntent` |
+| T-EVM-021a | `surfaceReplay` happy path | a `logExecutionIntent` previously reverted with `Replay` | `surfaceReplay(intentHash)` (onlyOwner) | `ExecutionIntentReplayed(intentHash, msg.sender, uint64(block.timestamp))` | unchanged | none |
+| T-EVM-021a-NI | `surfaceReplay` non-owner | third party | `surfaceReplay(intentHash)` | — | unchanged | `NotOwner` |
+| T-EVM-022a | `surfaceStale` happy path | a `logExecutionIntent` previously reverted with `StaleIntent` | `surfaceStale(intentHash, expiry, observedTs)` (onlyOwner) | `ExecutionIntentExpired(msg.sender, intentHash, expiry, observedTs)` | unchanged | none |
+| T-EVM-022a-NI | `surfaceStale` non-owner | third party | `surfaceStale(intentHash, expiry, observedTs)` | — | unchanged | `NotOwner` |
 | T-EVM-023 | `logExecutionIntent` zero hash | owner | `logExecutionIntent(bytes32(0), …)` | — | unchanged | `ZeroHash` |
 | T-EVM-024 | `logExecutionIntent` non-owner | agent | `logExecutionIntent(...)` | — | unchanged | `NotOwner` (only owner logs intents) |
 | T-EVM-025 | `logExecutionIntent` while paused | paused | `logExecutionIntent(...)` | — | unchanged | `Paused` |
@@ -206,7 +212,8 @@ These tests assert that the same semantic event name, field order, and indexer m
 | T-X-003 | `EmergencyPauseSet` parity | both chains emit `EmergencyPauseSet` with `paused` boolean and `reason` |
 | T-X-004 | `UpgradeScheduled` / `UpgradeExecuted` parity | both chains emit matching events with `newImplementationHash` and `effectiveAt` |
 | T-X-005 | `idempotencyKey` pass-through | both chains never parse the key; the frontend correlates by `tx_hash` |
-| T-X-006 | `decision_id` canonicalization | EVM lower-cased hex; Soroban upper-cased hex; both 64 hex chars (32 bytes) |
+| T-X-006 | `decision_id` canonicalization | EVM lower-cased hex; Soroban upper-cased hex; both 64 hex chars (32 bytes). `decision_id` is contract-computed; callers must NOT supply a value. Re-derive via §8 from `(chainId, wallet, decisionCounter)` (EVM) or `(network_short_name, publisher, counter)` (Soroban). |
+| T-X-009 | `plan_id` passthrough parity | EVM emits `DecisionLogged.planId` and `ExecutionIntentLogged.planId` as the same byte-for-byte UTF-8 string the agent supplied; Soroban mirrors the byte-for-byte string. The contract NEVER reads `plan_id` and NEVER hashes it. Both chains treat `plan_id` as a transparent correlation key. |
 | T-X-007 | `tx_hash` chain family collision | submitting an EVM hash against a Stellar RPC rejects with `hash_chain_family_mismatch` |
 | T-X-008 | `network_chain_family_mismatch` | submitting `chainFamily: evm` with `network: stellar-testnet` rejects with `network_chain_family_mismatch` |
 
@@ -216,9 +223,15 @@ These tests assert that the same semantic event name, field order, and indexer m
 
 For every state-changing call the test must verify:
 
-1. The state delta is applied first.
-2. Then the event is emitted with topics in the order: `wallet` (or `publisher`), `decision_id` (or `asset_id`), `network` (where applicable), `nonce` (where applicable).
-3. Then the TTL is bumped.
+1. The state delta is applied first (state writes complete; for Soroban, instance TTL is bumped on the same atomic write).
+2. Then the event is emitted. Topic ordering is per-event as documented in `docs/V2_CONTRACT_SPEC.md` §4 — there is no single global topic ordering. The relevant per-event topic orderings are:
+   - `DecisionLogged`: `wallet`, `agent`, `decisionHash`. (Note: `decision_id` is in the data field, NOT a topic.)
+   - `ExecutionIntentLogged`: `wallet`, `intentHash`.
+   - `ExecutionIntentReplayed`: `intentHash`, `wallet`.
+   - `ExecutionIntentExpired`: `wallet`, `intentHash`.
+   - `RiskPublished`: `asset_id`, `network`, `publisher`.
+   - `RiskRevoked`: `asset_id`, `network`.
+3. Then any data-field indexer fields (e.g. `nonce`, `expiry`, `decision_id`) are read in the documented `docs/V2_CONTRACT_SPEC.md` §4 column order per event.
 4. Then the function returns.
 
 Invalid orderings or missing events fail the test.
@@ -250,14 +263,14 @@ These invariants are mirrored on the frontend side via the V2 transaction lifecy
 
 ---
 
-## Open items for maintainer review
+## Defaults anchored in §9.5
 
-The open items in this matrix are aligned with `docs/V2_CONTRACT_SPEC.md` §9.5. The contributor's proposed answers are the canonical source in §9.5; this section keeps a short reference so reviewers can cross-check the matrix against the spec without running into drift.
+The defaults below mirror `docs/V2_CONTRACT_SPEC.md` §9.5 so reviewers can cross-check the matrix against the spec without running into drift. Each default is binding at PR merge unless a reviewer comment substitutes it via the §9.5 substitution path. This closes the reviewer comment that the matrix referenced "pending maintainer sign-off" wording; the matrix now references the §9.5 *defaults and reviewer substitution policy*.
 
 Reference links:
 
-- **EVM testnet production target** — see `docs/V2_CONTRACT_SPEC.md` §9.1 (proposed primary: GOAT Network id 48816; secondary: Base Sepolia, see §9.6).
-- **Publisher tier list** — see `docs/V2_CONTRACT_SPEC.md` §9.5 item 5 (proposed: `gold_raccoon`, `partner`, `community`).
-- **Upgrade delay window** — see `docs/V2_CONTRACT_SPEC.md` §9.5 item 4 (proposed: 24h minimum, 30d maximum).
-- **Quorum for pause / owner transfer / upgrade execution** — see `docs/V2_CONTRACT_SPEC.md` §9.5 item 7 (out of scope for this spec).
+- **EVM testnet production target** — see `docs/V2_CONTRACT_SPEC.md` §9.1 (default primary: GOAT Network id 48816; default secondary: Base Sepolia, see §9.6).
+- **Publisher tier list** — see `docs/V2_CONTRACT_SPEC.md` §9.5 item 5 (default: `gold_raccoon`, `partner`, `community`).
+- **Upgrade delay window** — see `docs/V2_CONTRACT_SPEC.md` §9.5 item 4 (default: 24h minimum, 30d maximum).
+- **Quorum for pause / owner transfer / upgrade execution** — see `docs/V2_CONTRACT_SPEC.md` §9.5 item 7 (default: deferred; covered by V2-068+).
 - **`VersionReported` schema** — see `docs/V2_CONTRACT_SPEC.md` §4 (event signature is the canonical schema; implementation MUST emit semver + `buildHash` in the documented order).
