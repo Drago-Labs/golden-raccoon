@@ -243,7 +243,7 @@ export function ApprovalFlowClient({
         setState({ phase: "wallet_error", error: message });
       }
     }
-  }, [state, payload, chainFamily, network, walletAddress, sourceAccount, idempotencyKey, walletClient, evmChainId, switchChainAsync, stellar, onComplete, onReject]);
+  }, [state, payload, chainFamily, network, walletAddress, sourceAccount, idempotencyKey, walletClient, evmChainId, switchChainAsync, stellar, onComplete]);
 
   const handleReject = useCallback(async () => {
     try {
@@ -332,7 +332,7 @@ export function ApprovalFlowClient({
           onRetry={validateApproval}
           onSign={handleSignAndSubmit}
           onReject={handleReject}
-          onClose={onReject}
+          onClose={handleReject}
         />
       </div>
     </div>

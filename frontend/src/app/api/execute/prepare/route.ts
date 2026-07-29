@@ -41,6 +41,8 @@ const bodySchema = z.object({
     method: z.string().optional(),
     assetKey: z.string().optional(),
   })).optional(),
+  /** Pre-built EVM calldata (0x-prefixed hex) or Stellar envelope XDR (base64) */
+  rawPayload: z.string().optional(),
 });
 
 function canonicalizeSeed(value: string): string {
@@ -112,6 +114,7 @@ export async function POST(request: Request) {
     simulationStatus: parsed.data.simulationStatus ?? preview.simulation?.status,
     policyStatus: preview.policyStatus,
     idempotencyKey,
+    rawPayload: parsed.data.rawPayload,
   };
 
   const prepared = prepareTransaction(prepareInput);

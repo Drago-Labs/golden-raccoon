@@ -32,7 +32,14 @@ import {
 const PREPARATION_TTL_MS = 10 * 60_000; // 10 minutes
 
 /** Actions for which the server will NEVER allow a wallet signing prompt. */
-const UNSAFE_ACTIONS = new Set(["avoid", "manual_review", "no_action"]);
+const UNSAFE_ACTIONS = new Set([
+  "avoid",
+  "manual_review",
+  "no_action",
+  "hold",
+  "watch",
+  "prepare_transaction",
+]);
 
 function normalizeWallet(value?: string): string | undefined {
   return value?.trim().toLowerCase();
@@ -116,9 +123,19 @@ export async function validateApproval(
     };
   }
 
-  // 4. Check wallet match
+  // 4. Check wallet match — connectedWallet is REQUIRED for safety
+  if (!normalizedConnected) {
+    return {
+      allowed: false,
+      blockedReason: "Connected wallet address is required for approval validation. Ensure your wallet is connected and the session is active.",
+      walletOk: false,
+      networkOk: false,
+      expired: false,
+      actionSafe: true,
+    };
+  }
+
   const walletOk =
-    !normalizedConnected ||
     !record.walletAddress ||
     normalizedConnected === normalizeWallet(record.walletAddress);
 
@@ -133,9 +150,19 @@ export async function validateApproval(
     };
   }
 
-  // 5. Check network match
+  // 5. Check network match — connectedNetwork is REQUIRED for safety
+  if (!connectedNetwork) {
+    return {
+      allowed: false,
+      blockedReason: "Connected network is required for approval validation. Ensure your wallet is connected and a network is selected.",
+      walletOk: true,
+      networkOk: false,
+      expired: false,
+      actionSafe: true,
+    };
+  }
+
   const networkOk =
-    !connectedNetwork ||
     !record.network ||
     connectedNetwork.toLowerCase() === record.network.toLowerCase();
 

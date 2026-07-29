@@ -3,7 +3,8 @@ import { z } from "zod";
 import { getChainFamily, isStellarAccountAddress } from "@/lib/chainIdentity";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { validateApproval } from "@/server/transactions/approvalFlow";
-import { recordUserRejection, getTransactionRecordByIdempotencyKey } from "@/server/storage";
+import { getTransactionRecordByIdempotencyKey } from "@/server/storage";
+import { recordUserRejection } from "@/server/transactions/lifecycleManager";
 
 const approveBodySchema = z.object({
   idempotencyKey: z.string().min(1).max(160),
@@ -11,9 +12,10 @@ const approveBodySchema = z.object({
   chainFamily: z.enum(["evm", "stellar"]),
   network: z.string().min(1).max(64),
   sourceAccount: z.string().optional(),
-  /** Optionally pass the connected wallet + network for server-side mismatch check */
-  connectedWallet: z.string().optional(),
-  connectedNetwork: z.string().optional(),
+  /** The connected wallet address for server-side mismatch check */
+  connectedWallet: z.string().min(1).max(80),
+  /** The connected network for server-side mismatch check */
+  connectedNetwork: z.string().min(1).max(64),
 });
 
 const rejectBodySchema = z.object({
