@@ -426,7 +426,7 @@ pub fn is_paused(env: Env) -> bool;
 | `PublisherTier(addr)` | same as `Publisher(addr)` | same |
 | `PublisherExpiry(addr)` | same as `Publisher(addr)` | same |
 | `PublisherCounter(addr)` | same as `Publisher(addr)` (`PUBLISHER_TTL_THRESHOLD` 60d → `PUBLISHER_TTL_EXTEND_TO` 365d) | bumped on `publish_risk` only. Drives §8 Soroban `decision_id` derivation. See §6.5 for the disambiguation with `PublisherCounterNonce(Address)` (V2-066 retry protection, reserved today) \u2014 they are separate `DataKey`s with deliberately distinct names. |
-| `PublisherCounterNonce(addr)` | NOT YET BUMPED. Reserved in §6.1 enum for V2-066 publish_risk replay protection. Once V2-066 lands, this key's TTL should mirror `PublisherCounter(addr)` and bump on `publish_risk` only. | future V2-066 reserve; no current ttl bump |
+| `PublisherCounterNonce(addr)` | RESERVED — TTL deferred to V2-066. Once V2-066 lands, this row MUST be updated to mirror `PublisherCounter(addr)` (`PUBLISHER_TTL_THRESHOLD` 60d → `PUBLISHER_TTL_EXTEND_TO` 365d). See §6.1 enum comment. | RESERVED — no current trigger; V2-066 to add `publish_risk`-only bump. |
 | `Record(asset_id, network)` | `RECORD_TTL_THRESHOLD` (60 days) → `RECORD_TTL_EXTEND_TO` (365 days) | bumped on `publish_risk` and `get_risk` |
 
 `MAX_FUTURE_SECONDS` stays at 300. The new `UpgradePending` key uses `UPGRADE_TTL_THRESHOLD` (7 days) → `UPGRADE_TTL_EXTEND_TO` (60 days) so a pending upgrade can survive a temporary outage but cannot linger indefinitely.
