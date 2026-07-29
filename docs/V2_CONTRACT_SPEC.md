@@ -276,6 +276,7 @@ pub enum DataKey {
     Paused,
     PauseReason,
     PublisherCounter(Address),                 // monotonic per publisher; pre-incremented on each successful publish_risk. Drives §8 decision_id derivation for RiskPublished correlation.
+    PublisherCounterNonce(Address),            // RESERVED for V2-066 — NOT YET INITIALIZED. Per-publisher monotonic nonce; storage slot is declared today so a future implementation cannot drift from the spec, but the variant carries no semantic runtime value until V2-066 lands. See §6.5. The deliberately-distinct name (`PublisherCounterNonce`, NOT `PublisherNonce`) avoids the §6.6 collision with `PublisherCounter(Address)`.
     UpgradePending { new_wasm_hash: BytesN<32>, effective_at: u64, proposer: Address },
     UpgradeDelaySec,
     Publisher(Address),
@@ -410,7 +411,7 @@ pub fn is_paused(env: Env) -> bool;
 
 ### 6.5 Replay, stale, zero-address, invalid hash, pause
 
-- **Replay**: `publish_risk` checks `updated_at > existing.updated_at`. The V2-066 prerequisite adds a per-publisher monotonic nonce key (`PublisherNonce(publisher)`) that complements `updated_at`. The nonce is checked against `report_hash` in `publish_risk` so a duplicated (publisher, nonce) pair reverts `ReplayProtection`. **Disambiguation**: `PublisherNonce(publisher)` (V2-066 future replay protection) is a separate `DataKey` from `PublisherCounter(Address)` (§6.6, this PR's §8 decision_id derivation). Both are per-publisher and both bump on `publish_risk` only; their purposes are different (replay protection vs decision_id fan-out) and an implementation MUST NOT collapse them.
+- **Replay**: `publish_risk` checks `updated_at > existing.updated_at`. The V2-066 prerequisite adds a per-publisher monotonic nonce key (`PublisherCounterNonce(Address)`, reserved today in §6.1 enum) that complements `updated_at`. The nonce is checked against `report_hash` in `publish_risk` so a duplicated (publisher, nonce) pair reverts `ReplayProtection`. **Disambiguation**: `PublisherCounterNonce(Address)` (V2-066 future replay protection) is a separate `DataKey` from `PublisherCounter(Address)` (§6.6, this PR's §8 decision_id derivation). Both are per-publisher and both bump on `publish_risk` only when their respective processors fire; their purposes are different (replay protection vs decision_id fan-out) and an implementation MUST NOT collapse them. The deliberately distinct name (`PublisherCounterNonce`, NOT `PublisherNonce`) is the §6.6 collision guard.
 - **Stale**: `StaleReport` is already enforced for `publish_risk`. The new `revoke_risk` adds a `revoked_at` and rejects re-revocation with `StaleReport`.
 - **Zero address / zero hash**: `ZeroAddress` / `ZeroHash` for the publisher parameter and the `asset_id` / `report_hash` parameters. `revoke_risk` reverts `ZeroHash` on the asset_id.
 - **Invalid hash**: `asset_id` and `report_hash` are `BytesN<32>`; zero is rejected. `report_hash` must additionally be `!= sha256(canonicalReportJson) == 0` (effectively a non-zero digit check).
@@ -424,7 +425,8 @@ pub fn is_paused(env: Env) -> bool;
 | `Publisher(addr)` | `PUBLISHER_TTL_THRESHOLD` (60 days) → `PUBLISHER_TTL_EXTEND_TO` (365 days) | bumped on `set_publisher` and `publish_risk` |
 | `PublisherTier(addr)` | same as `Publisher(addr)` | same |
 | `PublisherExpiry(addr)` | same as `Publisher(addr)` | same |
-| `PublisherCounter(addr)` | same as `Publisher(addr)` (`PUBLISHER_TTL_THRESHOLD` 60d → `PUBLISHER_TTL_EXTEND_TO` 365d) | bumped on `publish_risk` only. Drives §8 Soroban `decision_id` derivation. See §6.5 for the disambiguation with `PublisherNonce(publisher)` (V2-066 retry protection) \u2014 they are separate `DataKey`s. |
+| `PublisherCounter(addr)` | same as `Publisher(addr)` (`PUBLISHER_TTL_THRESHOLD` 60d → `PUBLISHER_TTL_EXTEND_TO` 365d) | bumped on `publish_risk` only. Drives §8 Soroban `decision_id` derivation. See §6.5 for the disambiguation with `PublisherCounterNonce(Address)` (V2-066 retry protection, reserved today) \u2014 they are separate `DataKey`s with deliberately distinct names. |
+| `PublisherCounterNonce(addr)` | NOT YET BUMPED. Reserved in §6.1 enum for V2-066 publish_risk replay protection. Once V2-066 lands, this key's TTL should mirror `PublisherCounter(addr)` and bump on `publish_risk` only. | future V2-066 reserve; no current ttl bump |
 | `Record(asset_id, network)` | `RECORD_TTL_THRESHOLD` (60 days) → `RECORD_TTL_EXTEND_TO` (365 days) | bumped on `publish_risk` and `get_risk` |
 
 `MAX_FUTURE_SECONDS` stays at 300. The new `UpgradePending` key uses `UPGRADE_TTL_THRESHOLD` (7 days) → `UPGRADE_TTL_EXTEND_TO` (60 days) so a pending upgrade can survive a temporary outage but cannot linger indefinitely.
@@ -449,7 +451,7 @@ pub fn is_paused(env: Env) -> bool;
 | --- | --- | --- |
 | Storage model | contract storage + event log | instance + persistent + TTL |
 | Auth model | `owner` / `agent` / `guardian` modifiers + `require_auth` | `require_auth` + storage-level allowlist |
-| Replay protection | `usedIntents[intentHash]` mapping | `PublisherNonce` per publisher + `updated_at` monotonic |
+| Replay protection | `usedIntents[intentHash]` mapping | `PublisherCounterNonce` per publisher + `updated_at` monotonic |
 | Pause authority | owner or guardian | admin or guardian |
 | Pause scope | all state-changing methods | `publish_risk`, `revoke_risk`, `set_publisher` |
 | Upgrade | UUPS proxy + `effectiveAt` timelock | versioned WASM + `effectiveAt` timelock |
