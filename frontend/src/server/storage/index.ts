@@ -408,6 +408,8 @@ export function getStorageCounts(): StorageCounts {
     transactions: getTransactions().length,
     approvals: getApprovals().length,
     userRules: getUserRules().length,
+    watchlistEntries: getWatchlistEntries().length,
+    watchlistScanRecords: getWatchlistScanRuns().length,
     x402PaymentReceipts: getX402PaymentReceipts().length,
   };
 }

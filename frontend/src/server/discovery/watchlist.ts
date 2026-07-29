@@ -20,7 +20,7 @@ import {
   addWatchlistScanRun,
   createAgentRunRecord,
   createDiscoveryAlert,
-  getWatchlistEntry,
+  getWatchlistEntry as getWatchlistEntryFromStore,
   listWatchlistEntries,
   listWatchlistScanRuns,
   removeWatchlistEntry as removeEntry,
@@ -36,6 +36,24 @@ export type AddWatchlistEntryResult =
   | { ok: false; error: string };
 
 export function deriveCanonicalChainIdentity(input: WatchlistEntryInput & { resolved?: ResolvedTokenIdentity }) {
+  if (input.assetType === "native") {
+    return {
+      resolved: {
+        ...input,
+        chain: input.chain?.trim().toLowerCase(),
+        identityKey: "native",
+        confidence: 0.72,
+        confidenceLabel: "high" as const,
+        matchReasons: ["native Stellar asset (XLM)"],
+        warnings: [],
+        identityGraph: { nodes: [], edges: [] },
+        symbolCollision: { risk: "low" as const, detail: "" },
+        officialLinkVerification: { verified: false, conflicts: [], confidenceBoost: 0 },
+      },
+      identityKey: "native",
+    };
+  }
+
   const identity = input.resolved ?? resolveTokenIdentity({
     chain: input.chain,
     contractAddress: input.contractAddress,
@@ -74,7 +92,7 @@ export async function rescanWatchlistEntry(
   entryId: string,
   options: { walletAddress?: string; providers?: DiscoveryCandidateProviders } = {},
 ) {
-  const entry = getWatchlistEntry(entryId);
+  const entry = getWatchlistEntryFromStore(entryId);
   if (!entry) {
     return { ok: false as const, error: "Entry not found" };
   }
@@ -245,6 +263,10 @@ export async function scanEntry(entry: WatchlistEntry, options: { walletAddress?
 
 export async function removeFromWatchlist(entryId: string) {
   return removeEntry(entryId);
+}
+
+export function getWatchlistEntry(id: string): WatchlistEntry | undefined {
+  return getWatchlistEntryFromStore(id);
 }
 
 export function listWatchlist(walletAddress: string): WatchlistEntry[] {

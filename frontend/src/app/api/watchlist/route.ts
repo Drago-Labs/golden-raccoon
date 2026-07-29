@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { checkRateLimit } from "@/server/security/rateLimit";
-import { addToWatchlist, listWatchlist, removeFromWatchlist } from "@/server/discovery/watchlist";
+import { addToWatchlist, getWatchlistEntry, listWatchlist, removeFromWatchlist } from "@/server/discovery/watchlist";
 
 const addBodySchema = z.object({
   action: z.enum(["add"]).default("add"),
@@ -14,13 +14,14 @@ const addBodySchema = z.object({
   assetKey: z.string().max(180).optional(),
   issuer: z.string().max(64).optional(),
   assetType: z.enum(["native", "classic", "contract", "issuer_account"]).optional(),
-  source: z.enum(["dexscreener", "stellar_market", "manual"]).default("manual"),
+  source: z.enum(["dexscreener", "stellar_market", "manual", "manual_watchlist"]).default("manual"),
   note: z.string().max(280).optional(),
 });
 
 const removeBodySchema = z.object({
   action: z.literal("remove"),
   entryId: z.string().min(1).max(120),
+  walletAddress: z.string().min(1).max(80),
 });
 
 const listQuerySchema = z.object({
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
       assetKey: parsedAdd.data.assetKey,
       issuer: parsedAdd.data.issuer,
       assetType: parsedAdd.data.assetType,
-      source: parsedAdd.data.source === "manual" ? "manual_watchlist" : parsedAdd.data.source,
+      source: parsedAdd.data.source,
       note: parsedAdd.data.note,
     });
 
@@ -77,6 +78,16 @@ export async function POST(request: Request) {
   const parsedRemove = removeBodySchema.safeParse({ ...body, action: "remove" });
 
   if (parsedRemove.success) {
+    const entry = getWatchlistEntry(parsedRemove.data.entryId);
+
+    if (!entry) {
+      return NextResponse.json({ error: "Entry not found" }, { status: 404 });
+    }
+
+    if (entry.walletAddress.toLowerCase() !== parsedRemove.data.walletAddress.toLowerCase()) {
+      return NextResponse.json({ error: "Wallet does not own this entry" }, { status: 403 });
+    }
+
     const ok = await removeFromWatchlist(parsedRemove.data.entryId);
 
     return NextResponse.json({ ok });

@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { checkRateLimit } from "@/server/security/rateLimit";
-import { rescanWatchlistEntry } from "@/server/discovery/watchlist";
+import { checkRateLimit, checkRateLimitProfile } from "@/server/security/rateLimit";
+import { getWatchlistEntry, rescanWatchlistEntry } from "@/server/discovery/watchlist";
 import { listWatchlistHistory } from "@/server/discovery/watchlist";
 
 const bodySchema = z.object({
-  walletAddress: z.string().min(1).max(80).optional(),
+  walletAddress: z.string().min(1).max(80),
 });
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const rateLimited = checkRateLimit(request, { namespace: "watchlist:rescan", limit: 15, windowMs: 60_000 });
+  const rateLimited = checkRateLimitProfile(request, "watchlistRescan");
 
   if (rateLimited) {
     return rateLimited;
@@ -24,6 +24,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   try {
     const { id } = await params;
+    const entry = getWatchlistEntry(id);
+
+    if (!entry) {
+      return NextResponse.json({ error: "Entry not found" }, { status: 404 });
+    }
+
+    if (entry.walletAddress.toLowerCase() !== parsed.data.walletAddress.toLowerCase()) {
+      return NextResponse.json({ error: "Wallet does not own this entry" }, { status: 403 });
+    }
+
     const result = await rescanWatchlistEntry(id, { walletAddress: parsed.data.walletAddress });
 
     if (!result.ok) {
