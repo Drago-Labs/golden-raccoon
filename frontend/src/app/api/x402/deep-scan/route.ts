@@ -37,23 +37,37 @@ async function deepScanHandler(request: NextRequest): Promise<NextResponse<unkno
   const guard = assertFreshX402Payment({ request, requestBody: parsed.data, config });
 
   if (!guard.ok) {
-    return NextResponse.json({ error: guard.error, detail: guard.detail, receiptId: guard.receiptId }, { status: guard.status });
+    return NextResponse.json(
+      { error: guard.error, detail: guard.detail, receiptId: guard.receiptId },
+      { status: guard.status },
+    );
   }
 
+  // Persist a chain-aware receipt. Payment details come from the x402
+  // middleware headers (verified by facilitator) — never from unverified
+  // client claims.
   const receipt = createX402PaymentReceipt({
     requestId: guard.requestId,
     paymentHeaderHash: guard.paymentHeaderHash,
     walletAddress: parsed.data.walletAddress,
-    network: config.network,
-    asset: config.asset,
-    amount: config.priceUsd,
+    network: guard.paymentDetails.network,
+    asset: guard.paymentDetails.asset,
+    amount: guard.paymentDetails.amount,
     priceUsd: config.priceUsd,
     payTo: config.payTo,
     facilitatorUrl: config.facilitatorUrl,
     protectedResource: config.protectedResource,
     requestBodyHash: guard.requestBodyHash,
     verificationStatus: "verified",
+    chainFamily: guard.paymentDetails.chainFamily,
+    payer: guard.paymentDetails.payer,
+    transactionHash: guard.paymentDetails.transactionHash,
+    paymentExpiry: guard.paymentDetails.settlementTimestamp
+      ? new Date(Date.now() + config.paymentExpirySeconds * 1000).toISOString()
+      : undefined,
   });
+
+  // Premium agents only run after payment verification succeeds.
   const scan = await runTokenScan(parsed.data.query, parsed.data.chain, parsed.data.walletAddress);
 
   return NextResponse.json({
@@ -63,6 +77,7 @@ async function deepScanHandler(request: NextRequest): Promise<NextResponse<unkno
       provider: "x402",
       protectedResource: config.protectedResource,
       receiptId: receipt.id,
+      chainFamily: config.chainFamily,
       note: "x402 payment was verified before premium analysis ran. Settlement is handled by the x402 resource server after this successful response.",
     },
     scan,

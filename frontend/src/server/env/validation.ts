@@ -20,6 +20,8 @@ const serverEnvKeys = [
   "X402_NETWORK",
   "X402_FACILITATOR_URL",
   "X402_ASSET",
+  "X402_STELLAR_ENABLED",
+  "X402_PAYMENT_EXPIRY_SECONDS",
   "CDP_API_KEY_ID",
   "CDP_API_KEY_SECRET",
   "SUPABASE_URL",
@@ -48,6 +50,16 @@ const publicEnvKeys = [
 function isX402Ready() {
   const baseConfigReady = Boolean(process.env.X402_PAY_TO && process.env.X402_PRICE_USD && process.env.X402_NETWORK && process.env.X402_FACILITATOR_URL);
   const usesCdpFacilitator = process.env.X402_FACILITATOR_URL?.includes("api.cdp.coinbase.com");
+  const stellarEnabled = process.env.X402_STELLAR_ENABLED === "1";
+  const network = process.env.X402_NETWORK ?? "";
+  const chainFamily = network.startsWith("stellar:") ? "stellar" : "evm";
+
+  if (stellarEnabled && chainFamily === "stellar") {
+    return (
+      baseConfigReady &&
+      /^G[A-Z2-7]{55}$/.test(process.env.X402_PAY_TO ?? "")
+    );
+  }
 
   return baseConfigReady && (!usesCdpFacilitator || Boolean(process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET));
 }
