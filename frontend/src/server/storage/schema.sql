@@ -323,6 +323,51 @@ begin
     alter table watchlist_entries alter column latest_scan_run_id type text using latest_scan_run_id::text;
   exception when others then null;
   end;
+  -- Add columns that the base schema may not have (fresh CREATE TABLE handles these already).
+  -- Existing deployments created before the V3 discovery migration need these added.
+  begin
+    alter table watchlist_entries add column if not exists network text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists latest_status text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists last_scanned_at timestamptz;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists latest_classification text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists latest_score integer;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists pair_address text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists token_name text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists asset_key text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists issuer text;
+  exception when others then null;
+  end;
+  -- Widen the asset_type check constraint to include sac and sep41 (added in V3).
+  begin
+    alter table watchlist_entries drop constraint if exists watchlist_entries_asset_type_check;
+    alter table watchlist_entries add constraint watchlist_entries_asset_type_check
+      check (asset_type in ('native', 'classic', 'contract', 'issuer_account', 'sac', 'sep41'));
+  exception when others then null;
+  end;
   begin
     alter table watchlist_scan_runs alter column id type text using id::text;
   exception when others then null;
@@ -333,6 +378,31 @@ begin
   end;
   begin
     alter table watchlist_scan_runs alter column previous_run_id type text using previous_run_id::text;
+  exception when others then null;
+  end;
+  -- Add missing columns on watchlist_scan_runs for existing deployments.
+  begin
+    alter table watchlist_scan_runs add column if not exists identity_key text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs add column if not exists classification_reasons jsonb not null default '[]'::jsonb;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs add column if not exists source_lineage jsonb not null default '[]'::jsonb;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs add column if not exists missing_data jsonb not null default '[]'::jsonb;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs add column if not exists risk_report jsonb;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs add column if not exists agent_run_id uuid;
   exception when others then null;
   end;
   begin

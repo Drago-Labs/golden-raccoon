@@ -54,6 +54,23 @@ export function deriveCanonicalChainIdentity(input: WatchlistEntryInput & { reso
 }
 
 export async function addToWatchlist(input: WatchlistEntryInput): Promise<AddWatchlistEntryResult> {
+  // Reject symbol-only Stellar identities: classic assets must include a full
+  // CODE:ISSUER (e.g. USDC:GA5ZSE...). A bare "USDC" without an issuer or
+  // contract address cannot be scanned and is explicitly out of scope.
+  if (
+    input.chain?.startsWith("stellar") &&
+    input.assetType === "classic" &&
+    !input.issuer &&
+    !input.contractAddress
+  ) {
+    return {
+      ok: false,
+      error:
+        "Stellar classic assets require a full CODE:ISSUER (e.g. USDC:GA5ZSE...). " +
+        "Symbol-only values are not accepted.",
+    };
+  }
+
   const { resolved, identityKey } = deriveCanonicalChainIdentity(input);
 
   if (!resolved.identityKey || resolved.identityKey === "unknown-token") {

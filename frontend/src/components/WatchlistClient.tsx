@@ -44,6 +44,14 @@ export function WatchlistAddForm({ wallet }: { wallet: string }) {
         body.assetType = "classic";
         body.assetKey = normalized;
       }
+      // Reject symbol-only Stellar inputs (e.g. just "USDC" without :ISSUER)
+      if (body.assetType === "classic" && !body.issuer && !body.contractAddress && body.assetKey !== "native") {
+        setError(
+          "Stellar classic assets require a full CODE:ISSUER (e.g. USDC:GA5ZSE...). " +
+            "Symbol-only values are not accepted.",
+        );
+        return;
+      }
       body.network = chain;
     } else {
       const address = input.trim().toLowerCase();

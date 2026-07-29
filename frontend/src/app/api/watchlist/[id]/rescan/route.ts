@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { checkRateLimit } from "@/server/security/rateLimit";
-import { rescanWatchlistEntry } from "@/server/discovery/watchlist";
-import { listWatchlistHistory } from "@/server/discovery/watchlist";
+import { rescanWatchlistEntry, listWatchlistHistory } from "@/server/discovery/watchlist";
+import { getWatchlistEntry } from "@/server/storage";
+import { ensureStorageReady } from "@/server/storage";
 
 const bodySchema = z.object({
-  walletAddress: z.string().min(1).max(80).optional(),
+  walletAddress: z.string().min(1).max(80),
+});
+
+const historyQuerySchema = z.object({
+  walletAddress: z.string().min(1).max(80),
 });
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -14,6 +19,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (rateLimited) {
     return rateLimited;
   }
+
+  await ensureStorageReady();
 
   const body = await request.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);
@@ -54,7 +61,21 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return rateLimited;
   }
 
+  await ensureStorageReady();
+
   const { id } = await params;
+  const url = new URL(request.url);
+  const parsed = historyQuerySchema.safeParse({ walletAddress: url.searchParams.get("walletAddress") ?? "" });
+
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  // Ownership check: entry must belong to the requesting wallet
+  const entry = getWatchlistEntry(id);
+  if (!entry || entry.walletAddress.toLowerCase() !== parsed.data.walletAddress.toLowerCase()) {
+    return NextResponse.json({ error: "Entry not found or does not belong to this wallet." }, { status: 404 });
+  }
 
   return NextResponse.json({ runs: listWatchlistHistory(id) });
 }

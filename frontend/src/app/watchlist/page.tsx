@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { getScanNetwork } from "@/lib/scanNetworks";
-import { listWatchlistEntries } from "@/server/storage";
-import { listWatchlistScanRuns } from "@/server/storage";
+import { listWatchlistEntries, listWatchlistScanRuns, ensureStorageReady } from "@/server/storage";
 import { WatchlistAddForm, WatchlistRemoveButton, WatchlistRescanButton } from "@/components/WatchlistClient";
 import type { DiscoveryClassification, RiskLevel, WatchlistEntry, WatchlistScanRun } from "@/server/types";
 
@@ -96,6 +95,7 @@ function getAssetSubLabel(entry: WatchlistEntry): string | null {
 
 async function loadWatchlistWithScanMeta(wallet: string) {
   try {
+    await ensureStorageReady();
     const entries = listWatchlistEntries(wallet);
     return entries.map((entry) => {
       const recentRuns = listWatchlistScanRuns(entry.id).slice(0, 3);

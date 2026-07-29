@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { addToWatchlist, listWatchlist, removeFromWatchlist } from "@/server/discovery/watchlist";
+import { ensureStorageReady } from "@/server/storage";
 
 const addBodySchema = z.object({
   action: z.enum(["add"]).default("add"),
@@ -36,6 +37,8 @@ export async function GET(request: Request) {
     return rateLimited;
   }
 
+  await ensureStorageReady();
+
   const url = new URL(request.url);
   const parsed = listQuerySchema.safeParse({ walletAddress: url.searchParams.get("walletAddress") ?? "" });
 
@@ -52,6 +55,8 @@ export async function POST(request: Request) {
   if (rateLimited) {
     return rateLimited;
   }
+
+  await ensureStorageReady();
 
   const body = await request.json().catch(() => ({}));
   const parsedAdd = addBodySchema.safeParse({ ...body, action: "add" });
