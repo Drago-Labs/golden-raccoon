@@ -47,8 +47,8 @@ export async function POST(request: Request) {
   }
 
   const { portfolio } = await getPortfolioSnapshot(parsed.data.walletAddress);
-  const rules = await getUserRuleRecord(parsed.data.walletAddress ?? portfolio.walletAddress);
-  const preview = buildExecutionPreviewFromPortfolio(portfolio, { ...parsed.data, rules });
+  const rules = getUserRuleRecord(parsed.data.walletAddress ?? portfolio.walletAddress);
+  const preview = await buildExecutionPreviewFromPortfolio(portfolio, { ...parsed.data, rules });
 
   return withCacheHeaders(NextResponse.json(preview), "execution");
 }
