@@ -196,8 +196,7 @@ async function gatherSpecialistResults(
       : runAgentSafely("portfolio", async () => {
           if (!options.walletAddress) {
             return buildUnavailablePortfolioResult(discovery);
-          }
-
+}
           return runPortfolioAgent(options.walletAddress, {
             contractAddress: candidate.contractAddress,
             symbol: candidate.symbol,
@@ -416,4 +415,3 @@ export async function scanDiscoveryCandidate(
     scannedAt: decisionAgent.createdAt,
   };
 }
-

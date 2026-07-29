@@ -258,4 +258,3 @@ export async function fetchLiveDiscoveryCandidates(chain?: string): Promise<{ ca
 export function isOfflineSnapshot(candidate: DiscoveryCandidate) {
   return Boolean(candidate.raw && (candidate.raw as Record<string, unknown>).offline === true);
 }
-
