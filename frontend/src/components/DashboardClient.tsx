@@ -836,6 +836,34 @@ export function DashboardClient() {
                 <button
                   type="button"
                   onClick={async () => {
+                    const riskyToken = dashboardRunSummary?.riskyToken;
+                    const holding = riskyToken
+                      ? portfolio?.holdings.find((h) => h.tokenAddress === riskyToken.tokenAddress)
+                      : undefined;
+                    const action = dashboardRunSummary?.final?.recommendedAction;
+                    const fromAddress = riskyToken?.tokenAddress;
+                    const toAddress = family === "stellar" ? "USDC" : undefined;
+                    const estimatedValue = holding?.valueUsd;
+
+                    // Build basic expected effects from the decision so the
+                    // prepared transaction is not empty
+                    const expectedEffects = riskyToken
+                      ? [
+                          {
+                            kind: "swap" as const,
+                            fromToken: riskyToken.tokenAddress,
+                            toToken: toAddress ?? "USDC",
+                            fromAddress: address ?? undefined,
+                            toAddress: undefined,
+                            amount: estimatedValue ? `${(estimatedValue * 0.3).toFixed(2)}` : undefined,
+                            contractAddress: fromAddress,
+                            // method omitted — the actual ABI signature is unknown
+                            // at this stage; selector validation will skip gracefully.
+                            assetKey: riskyToken.symbol,
+                          },
+                        ]
+                      : undefined;
+
                     try {
                       const prepareResponse = await fetch("/api/execute/prepare", {
                         method: "POST",
@@ -843,18 +871,19 @@ export function DashboardClient() {
                         body: JSON.stringify({
                           walletAddress: address,
                           network: chain,
-                          action: dashboardRunSummary.final?.recommendedAction,
-                          fromToken: dashboardRunSummary.riskyToken?.tokenAddress,
-                          estimatedValueUsd: dashboardRunSummary.riskyToken
-                            ? (portfolio?.holdings ?? []).find((h) => h.tokenAddress === dashboardRunSummary.riskyToken?.tokenAddress)?.valueUsd
-                            : undefined,
-                          idempotencyKey: `exec:${address}:${dashboardRunSummary.final.recommendedAction}:${Date.now()}`,
+                          chainFamily: (chain?.toLowerCase().startsWith("stellar") ? "stellar" : "evm") as "evm" | "stellar",
+                          action: action,
+                          fromToken: riskyToken?.tokenAddress,
+                          estimatedValueUsd: estimatedValue,
+                          expectedEffects,
+                          slippageBps: 100,
+                          idempotencyKey: `exec:${address}:${action ?? "unknown"}:${Date.now()}`,
                         }),
                       });
 
                       if (!prepareResponse.ok) {
                         const err = await prepareResponse.json().catch(() => ({}));
-                        throw new Error(err.error ?? "Prepare failed.");
+                        throw new Error(err.error ?? (err.detail ?? "Prepare failed."));
                       }
 
                       const prepareResult = await prepareResponse.json();
@@ -871,7 +900,11 @@ export function DashboardClient() {
                       setApprovalFlowOpen(true);
                     } catch (error) {
                       console.error("Prepare failed:", error);
-                      alert(error instanceof Error ? error.message : "Failed to prepare transaction.");
+                      setDashboardRunSummary((prev) =>
+                        prev
+                          ? { ...prev, error: error instanceof Error ? error.message : "Failed to prepare transaction." }
+                          : prev,
+                      );
                     }
                   }}
                   className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-emerald-500/20 px-5 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/30"

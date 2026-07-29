@@ -225,7 +225,7 @@ export function ApprovalFlowClient({
         message.toLowerCase().includes("canceled") ||
         message.toLowerCase().includes("denied")
       ) {
-        // Record rejection
+        // Record rejection server-side (best-effort)
         try {
           await fetch("/api/execute/approve", {
             method: "POST",
@@ -241,8 +241,10 @@ export function ApprovalFlowClient({
           // Best-effort
         }
 
+        // Set rejection as a visible terminal state — do NOT call
+        // onDismiss here so the rejection panel stays visible.
+        // The user must click Close in the StatusPanel to dismiss.
         setState({ phase: "rejected", reason: message });
-        onDismiss?.();
       } else {
         setState({ phase: "wallet_error", error: message });
       }
@@ -390,6 +392,16 @@ function TransactionFlowSteps({ phase }: { phase: ApprovalState["phase"] }) {
   );
 }
 
+function formatExpiry(expiryIso?: string): string | null {
+  if (!expiryIso) return null;
+  const expiry = new Date(expiryIso);
+  const now = Date.now();
+  const remainingMs = expiry.getTime() - now;
+  if (remainingMs <= 0) return "Expired";
+  const remainingMin = Math.ceil(remainingMs / 60_000);
+  return `in ${remainingMin} min (${expiry.toLocaleTimeString()})`;
+}
+
 function EvmPayloadDetails({ payload }: { payload: EvmPreparedTransactionPayload }) {
   const calldataPreview = payload.data && payload.data !== "0x"
     ? `${payload.data.slice(0, 42)}...`
@@ -397,21 +409,35 @@ function EvmPayloadDetails({ payload }: { payload: EvmPreparedTransactionPayload
   const disp = payload.displayParams ?? {};
   const valueUsd = typeof disp.valueUsd === "number" ? `$${disp.valueUsd.toFixed(2)}` : null;
   const action = typeof disp.action === "string" ? disp.action.replaceAll("_", " ") : "Unknown";
+  const expiryStr = formatExpiry(disp.preparationExpiry as string | undefined);
+  const minOutput = disp.minOutputAmount as string | undefined;
 
   return (
     <div className="space-y-2 rounded-xl border border-slate-700 bg-slate-950/50 px-4 py-3 text-xs">
       <div className="flex items-center justify-between">
-        <span className="text-slate-400">Target contract</span>
-        <span className="font-mono text-white text-[10px]">{payload.to}</span>
-      </div>
-      <div className="flex items-center justify-between">
         <span className="text-slate-400">Action</span>
         <span className="capitalize text-sky-300">{action}</span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-slate-400">Target contract</span>
+        <span className="font-mono text-white text-[10px]">{payload.to}</span>
       </div>
       {valueUsd && (
         <div className="flex items-center justify-between">
           <span className="text-slate-400">Estimated value</span>
           <span className="text-emerald-300">{valueUsd}</span>
+        </div>
+      )}
+      {minOutput && (
+        <div className="flex items-center justify-between">
+          <span className="text-slate-400">Min. output (est.)</span>
+          <span className="text-amber-300">{minOutput}</span>
+        </div>
+      )}
+      {expiryStr && (
+        <div className="flex items-center justify-between">
+          <span className="text-slate-400">Preparation expires</span>
+          <span className="text-rose-300">{expiryStr}</span>
         </div>
       )}
       <div className="flex items-center justify-between">
@@ -461,21 +487,35 @@ function StellarPayloadDetails({ payload }: { payload: StellarPreparedTransactio
   const disp = payload.displayParams ?? {};
   const valueUsd = typeof disp.valueUsd === "number" ? `$${disp.valueUsd.toFixed(2)}` : null;
   const action = typeof disp.action === "string" ? disp.action.replaceAll("_", " ") : "Unknown";
+  const expiryStr = formatExpiry(disp.preparationExpiry as string | undefined);
+  const minOutput = disp.minOutputAmount as string | undefined;
 
   return (
     <div className="space-y-2 rounded-xl border border-slate-700 bg-slate-950/50 px-4 py-3 text-xs">
       <div className="flex items-center justify-between">
-        <span className="text-slate-400">Source account</span>
-        <span className="font-mono text-white text-[10px]">{payload.sourceAccount}</span>
-      </div>
-      <div className="flex items-center justify-between">
         <span className="text-slate-400">Action</span>
         <span className="capitalize text-sky-300">{action}</span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-slate-400">Source account</span>
+        <span className="font-mono text-white text-[10px]">{payload.sourceAccount}</span>
       </div>
       {valueUsd && (
         <div className="flex items-center justify-between">
           <span className="text-slate-400">Estimated value</span>
           <span className="text-emerald-300">{valueUsd}</span>
+        </div>
+      )}
+      {minOutput && (
+        <div className="flex items-center justify-between">
+          <span className="text-slate-400">Min. output (est.)</span>
+          <span className="text-amber-300">{minOutput}</span>
+        </div>
+      )}
+      {expiryStr && (
+        <div className="flex items-center justify-between">
+          <span className="text-slate-400">Preparation expires</span>
+          <span className="text-rose-300">{expiryStr}</span>
         </div>
       )}
       <div className="flex items-center justify-between">

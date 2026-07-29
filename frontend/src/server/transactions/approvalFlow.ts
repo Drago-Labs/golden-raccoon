@@ -13,6 +13,7 @@
  * The server never sees the private key or seed phrase – the signed payload
  * goes to POST /api/execute/submit for broadcast.
  */
+import { toFunctionSelector } from "viem";
 import type {
   ApprovalValidationResult,
   ApproveTransactionInput,
@@ -239,6 +240,15 @@ function buildEvmPayload(record: TransactionRecord): EvmPreparedTransactionPaylo
   const toContract =
     record.expectedEffects?.find((e) => e.contractAddress)?.contractAddress ?? record.asset;
 
+  // Compute preparation expiry from the record's creation time
+  const createdAtMs = new Date(record.createdAt).getTime();
+  const preparationExpiry = new Date(createdAtMs + PREPARATION_TTL_MS).toISOString();
+
+  // Estimate minimum output from the first effect's amount at ~1% slippage
+  const firstEffect = record.expectedEffects?.[0];
+  const rawAmount = firstEffect?.amount ? parseFloat(firstEffect.amount) : undefined;
+  const minOutputAmount = rawAmount !== undefined ? (rawAmount * 0.99).toFixed(6) : undefined;
+
   return {
     chainFamily: "evm",
     to: toContract.startsWith("0x") ? toContract : `0x${toContract}`,
@@ -254,6 +264,8 @@ function buildEvmPayload(record: TransactionRecord): EvmPreparedTransactionPaylo
       valueUsd: record.valueUsd,
       policyAllowed: record.policyStatus?.allowed,
       policyViolations: record.policyStatus?.violations,
+      preparationExpiry,
+      minOutputAmount,
       expectedEffects: record.expectedEffects?.map((e) => ({
         kind: e.kind,
         from: e.fromAddress ?? record.walletAddress,
@@ -282,6 +294,15 @@ function buildStellarPayload(record: TransactionRecord): StellarPreparedTransact
     method: effect.method,
   }));
 
+  // Compute preparation expiry from the record's creation time
+  const createdAtMs = new Date(record.createdAt).getTime();
+  const preparationExpiry = new Date(createdAtMs + PREPARATION_TTL_MS).toISOString();
+
+  // Estimate minimum output from the first effect's amount at ~1% slippage
+  const firstEffect = record.expectedEffects?.[0];
+  const rawAmount = firstEffect?.amount ? parseFloat(firstEffect.amount) : undefined;
+  const minOutputAmount = rawAmount !== undefined ? (rawAmount * 0.99).toFixed(6) : undefined;
+
   return {
     chainFamily: "stellar",
     xdr: record.stellarDetails?.envelopeXdr ?? "",
@@ -299,15 +320,39 @@ function buildStellarPayload(record: TransactionRecord): StellarPreparedTransact
       operationCount: operations.length,
       policyAllowed: record.policyStatus?.allowed,
       policyViolations: record.policyStatus?.violations,
+      preparationExpiry,
+      minOutputAmount,
     },
   };
+}
+
+/**
+ * Extract the 4-byte method selector from 0x-prefixed EVM calldata.
+ * Returns lowercase hex string (e.g. "a9059cbb") or undefined.
+ */
+function extractEvmMethodSelector(calldata: string): string | undefined {
+  const hex = calldata.startsWith("0x") ? calldata.slice(2) : calldata;
+  return hex.length >= 8 ? hex.slice(0, 8).toLowerCase() : undefined;
+}
+
+/**
+ * Derive the expected 4-byte method selector from a human-readable
+ * method signature using viem's toFunctionSelector.
+ */
+function deriveMethodSelector(method: string | undefined): string | undefined {
+  if (!method) return undefined;
+  try {
+    return toFunctionSelector(method).toLowerCase().replace("0x", "");
+  } catch {
+    return undefined;
+  }
 }
 
 /**
  * Validate the built payload against the stored transaction record.
  * Ensures the server does not blindly return caller-supplied calldata/XDR
  * without cross-checking against stored expected effects, contract address,
- * and operation details.
+ * method selectors, amounts, and operation details.
  */
 function validatePayloadAgainstEffects(
   record: TransactionRecord,
@@ -354,13 +399,47 @@ function validatePayloadAgainstEffects(
       }
     }
 
-    // Validate calldata is present when effects expect a method call
+    // Validate method selector from calldata matches expected method
     const methodEffect = effects.find((e) => e.method);
-    if (methodEffect?.method && (!evmP.data || evmP.data === "0x")) {
-      return {
-        valid: false,
-        reason: `EVM payload is missing calldata for method "${methodEffect.method}".`,
-      };
+    if (methodEffect?.method) {
+      if (!evmP.data || evmP.data === "0x") {
+        return {
+          valid: false,
+          reason: `EVM payload is missing calldata for method "${methodEffect.method}".`,
+        };
+      }
+
+      // Extract the actual method selector from calldata bytes [0..3]
+      const actualSelector = extractEvmMethodSelector(evmP.data);
+      const expectedSelector = deriveMethodSelector(methodEffect.method);
+
+      if (actualSelector && expectedSelector && actualSelector !== expectedSelector) {
+        return {
+          valid: false,
+          reason: `EVM calldata method selector 0x${actualSelector} does not match expected selector 0x${expectedSelector} for method "${methodEffect.method}".`,
+        };
+      }
+    }
+
+    // Validate amounts specified in effects are reflected in display params
+    for (const effect of effects) {
+      if (effect.amount && effect.kind) {
+        // The effect amount must be present in displayParams.expectedEffects
+        const matched = evmP.displayParams?.expectedEffects as
+          | Array<{ kind?: string; amount?: string }>
+          | undefined;
+        if (matched) {
+          const match = matched.find(
+            (m) => m.kind === effect.kind && m.amount !== effect.amount,
+          );
+          if (match) {
+            return {
+              valid: false,
+              reason: `EVM effect "${effect.kind}" amount ${match.amount} does not match expected amount ${effect.amount}.`,
+            };
+          }
+        }
+      }
     }
   }
 
@@ -378,6 +457,36 @@ function validatePayloadAgainstEffects(
         valid: false,
         reason: `Stellar payload operation count (${stP.operations.length}) does not match expected effects (${effects.length}).`,
       };
+    }
+
+    // Validate source account matches
+    if (record.sourceAccount && stP.sourceAccount) {
+      const expectedSrc = record.sourceAccount.trim().toUpperCase();
+      const actualSrc = stP.sourceAccount.trim().toUpperCase();
+      if (actualSrc !== expectedSrc) {
+        return {
+          valid: false,
+          reason: `Stellar payload source account ${actualSrc} does not match expected ${expectedSrc}.`,
+        };
+      }
+    }
+
+    // Validate operation types match effect kinds
+    for (let i = 0; i < effects.length; i++) {
+      const effectKind = effects[i].kind;
+      const opType = stP.operations[i]?.type;
+      if (effectKind === "contract_call" && opType !== "invokeHostFunction") {
+        return {
+          valid: false,
+          reason: `Stellar effect #${i} is "contract_call" but XDR operation type is "${opType}".`,
+        };
+      }
+      if (effectKind === "transfer" && opType !== "payment") {
+        return {
+          valid: false,
+          reason: `Stellar effect #${i} is "transfer" but XDR operation type is "${opType}".`,
+        };
+      }
     }
   }
 
