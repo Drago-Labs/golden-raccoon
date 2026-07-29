@@ -1,6 +1,11 @@
 import type {
   AgentResult,
   AgentRunRecord,
+  Alert,
+  AlertDelivery,
+  AlertDeliveryChannel,
+  AlertObservation,
+  AlertRule,
   ChainFamily,
   DiscoveryAlert,
   RecommendationRecord,
@@ -21,10 +26,148 @@ import type {
   DiscoveryClassification,
   RiskLevel,
 } from "@/server/types";
-import { isTransactionHashForChain } from "@/lib/chainIdentity";
 import { getDefaultRules } from "@/server/rules/defaultRules";
+import { isTransactionHashForChain } from "@/lib/chainIdentity";
 import { validateAgentResult } from "@/server/agents/schema";
-import { isSupabaseConfigured } from "@/lib/supabase";
+import {
+  getPostgresStorageAdapter,
+  mirrorAlertDeliveryUpdate,
+  mirrorAlertDeliveryWrite,
+  mirrorAlertObservationWrite,
+  mirrorAlertRuleWrite,
+  mirrorAlertUpdate,
+  mirrorAlertWrite,
+  mirrorTransactionLifecycleEvent,
+  mirrorTransactionRecord,
+} from "@/server/storage/postgresAdapter";
+
+/**
+ * Hydration gate. When the Postgres adapter has rows on disk, this
+ * promise merges them back into the in-memory stores on first import.
+ * Audit finding #38: writes were mirrored to SQL but reads never
+ * re-hydrated from SQL after a restart, so alert history looked empty.
+ *
+ * The gate uses a single bootPromise stored on globalThis: cold starts
+ * kick off the hydrate; subsequent re-evaluations (HMR, route reloads)
+ * await the same promise so the hydrate runs at most once per process.
+ */
+  type GoldenRaccoonMemoryGlobal = typeof globalThis & {
+  __goldenRaccoonAlertRules?: AlertRule[];
+  __goldenRaccoonAlertObservations?: AlertObservation[];
+  __goldenRaccoonAlerts?: Alert[];
+  __goldenRaccoonAlertDeliveries?: AlertDelivery[];
+  __goldenRaccoonAgentRuns?: AgentRunRecord[];
+  __goldenRaccoonRecommendations?: RecommendationRecord[];
+  __goldenRaccoonTransactions?: TransactionRecord[];
+  __goldenRaccoonTransactionEvents?: TransactionLifecycleEvent[];
+  __goldenRaccoonApprovals?: UserApprovalRecord[];
+  __goldenRaccoonUserRules?: UserRule[];
+  __goldenRaccoonX402PaymentReceipts?: X402PaymentReceipt[];
+  __goldenRaccoonWatchlistEntries?: WatchlistEntry[];
+  __goldenRaccoonWatchlistScanRuns?: WatchlistScanRun[];
+  __goldenRaccoonDiscoveryAlerts?: DiscoveryAlert[];
+  __goldenRaccoonHydrationStarted?: boolean;
+  __goldenRaccoonHydrationPromise?: Promise<{ tried: boolean; hydrated: number; skipped: number; detail: string }>;
+  __goldenRaccoonLastHydration?: { tried: boolean; hydrated: number; skipped: number; detail: string; at: string };
+};
+
+const memoryStore = globalThis as GoldenRaccoonMemoryGlobal;
+
+export function ensureStorageReady(): Promise<{ tried: boolean; hydrated: number; skipped: number; detail: string }> {
+  const store = memoryStore as GoldenRaccoonMemoryGlobal;
+
+  if (store.__goldenRaccoonHydrationPromise) return store.__goldenRaccoonHydrationPromise;
+
+  store.__goldenRaccoonHydrationStarted = true;
+  store.__goldenRaccoonHydrationPromise = (async () => {
+    const adapter = getPostgresStorageAdapter();
+
+    if (!adapter.isConfigured()) {
+      const result = { tried: false, hydrated: 0, skipped: 0, detail: "no DATABASE_URL configured" };
+      store.__goldenRaccoonLastHydration = { ...result, at: new Date().toISOString() };
+
+      return result;
+    }
+
+    try {
+      const hydrate = await adapter.hydrateAlertTables({
+        rules: getAlertRulesStore(),
+        observations: getAlertObservationsStore(),
+        alerts: getAlertsStore(),
+        deliveries: getAlertDeliveriesStore(),
+      });
+      const result = { tried: true, hydrated: hydrate.hydrated, skipped: hydrate.skipped, detail: "ok" };
+      store.__goldenRaccoonLastHydration = { ...result, at: new Date().toISOString() };
+
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const result = { tried: true, hydrated: 0, skipped: 0, detail: message };
+      store.__goldenRaccoonLastHydration = { ...result, at: new Date().toISOString() };
+
+      return result;
+    }
+  })();
+
+  return store.__goldenRaccoonHydrationPromise;
+}
+
+export function getLastHydrationSummary() {
+  return memoryStore.__goldenRaccoonLastHydration
+    ? { ...memoryStore.__goldenRaccoonLastHydration }
+    : null;
+}
+
+// Eager hydration on module init. Subsequent reads (SSR pages, API
+// routes, fixtures) see the same globalThis.__goldenRaccoon* arrays
+// already populated from SQL where available. Errors are absorbed by
+// `ensureStorageReady()` and surfaced via `getStorageHealth()`.
+void ensureStorageReady();
+
+/**
+ * Mirror alert-table writes to Postgres so the SQL contract in
+ * `schema.sql` is actually populated. The in-memory store remains the
+ * synchronous source of truth; mirror failures are surfaced via
+ * `getStorageHealth()` and never block the caller.
+ */
+function mirrorAlertRuleWriteDeferred(input: AlertRule) {
+  mirrorAlertRuleWrite(input);
+}
+function mirrorAlertObservationWriteDeferred(input: AlertObservation) {
+  mirrorAlertObservationWrite(input);
+}
+function mirrorAlertWriteDeferred(input: Alert) {
+  mirrorAlertWrite(input);
+}
+function mirrorAlertDeliveryWriteDeferred(input: AlertDelivery) {
+  mirrorAlertDeliveryWrite(input);
+}
+function mirrorAlertUpdateDeferred(input: Alert) {
+  mirrorAlertUpdate(input);
+}
+function mirrorAlertDeliveryUpdateDeferred(input: AlertDelivery) {
+  mirrorAlertDeliveryUpdate(input);
+}
+
+async function persistTransactionRecord(record: TransactionRecord) {
+  if (!getPostgresStorageAdapter().isConfigured()) return;
+  try { await mirrorTransactionRecord(record); } catch { /* best-effort */ }
+}
+
+async function persistTransactionUpdate(hash: string, updates: Partial<TransactionRecord>) {
+  if (!getPostgresStorageAdapter().isConfigured()) return;
+  try { await mirrorTransactionRecord({ hash, ...updates } as TransactionRecord); } catch { /* best-effort */ }
+}
+
+async function persistTransactionEvent(event: TransactionLifecycleEvent) {
+  if (!getPostgresStorageAdapter().isConfigured()) return;
+  try { await mirrorTransactionLifecycleEvent(event); } catch { /* best-effort */ }
+}
+
+function getTransactionEvents() {
+  memoryStore.__goldenRaccoonTransactionEvents ??= [];
+  return memoryStore.__goldenRaccoonTransactionEvents;
+}
 
 type CreateAgentRunInput = {
   walletAddress: string;
@@ -48,6 +191,10 @@ export const storageSchemaContract = {
     "x402_payment_receipts",
     "token_identities",
     "source_snapshots",
+    "alert_rules",
+    "alert_observations",
+    "alerts",
+    "alert_deliveries",
     "watchlist_entries",
     "watchlist_scan_runs",
     "discovery_alerts",
@@ -72,6 +219,20 @@ export const storageSchemaContract = {
     "createX402PaymentReceipt",
     "getUserRuleRecord",
     "upsertUserRuleRecord",
+    "listAlertRules",
+    "getAlertRule",
+    "upsertAlertRule",
+    "deleteAlertRule",
+    "listAlertObservations",
+    "createAlertObservation",
+    "listAlerts",
+    "getAlert",
+    "createAlert",
+    "updateAlert",
+    "listAlertDeliveries",
+    "createAlertDelivery",
+    "updateAlertDelivery",
+    "ensureAlertRulesForWallet",
     "listWatchlistEntries",
     "getWatchlistEntry",
     "addWatchlistEntry",
@@ -84,19 +245,6 @@ export const storageSchemaContract = {
     "updateWatchlistEntryLatestScan",
   ],
   migration: "frontend/src/server/storage/schema.sql",
-};
-
-const memoryStore = globalThis as typeof globalThis & {
-  __goldenRaccoonAgentRuns?: AgentRunRecord[];
-  __goldenRaccoonRecommendations?: RecommendationRecord[];
-  __goldenRaccoonTransactions?: TransactionRecord[];
-  __goldenRaccoonTransactionEvents?: TransactionLifecycleEvent[];
-  __goldenRaccoonApprovals?: UserApprovalRecord[];
-  __goldenRaccoonUserRules?: UserRule[];
-  __goldenRaccoonX402PaymentReceipts?: X402PaymentReceipt[];
-  __goldenRaccoonWatchlistEntries?: WatchlistEntry[];
-  __goldenRaccoonWatchlistScanRuns?: WatchlistScanRun[];
-  __goldenRaccoonDiscoveryAlerts?: DiscoveryAlert[];
 };
 
 function getAgentRuns() {
@@ -113,32 +261,8 @@ function getRecommendations() {
 
 function getTransactions() {
   memoryStore.__goldenRaccoonTransactions ??= [];
+
   return memoryStore.__goldenRaccoonTransactions;
-}
-
-function getTransactionEvents() {
-  memoryStore.__goldenRaccoonTransactionEvents ??= [];
-  return memoryStore.__goldenRaccoonTransactionEvents;
-}
-
-async function persistTransactionRecord(record: TransactionRecord) {
-  if (!isSupabaseConfigured()) return;
-  const { createTransactionRecord: supabaseCreate } = await import("@/server/storage/supabase");
-  try { await supabaseCreate(record); } catch { /* best-effort persistence */ }
-}
-
-async function persistTransactionUpdate(hash: string, updates: Partial<TransactionRecord>) {
-  if (!isSupabaseConfigured()) return;
-  const { updateTransactionRecord: supabaseUpdate } = await import("@/server/storage/supabase");
-  try { await supabaseUpdate(hash, updates); } catch { /* best-effort persistence */ }
-}
-
-async function persistTransactionEvent(event: Record<string, unknown>) {
-  if (!isSupabaseConfigured()) return;
-  try {
-    const { createTransactionLifecycleEvent: supabaseCreate } = await import("@/server/storage/supabase");
-    await supabaseCreate(event as unknown as TransactionLifecycleEvent);
-  } catch { /* best-effort persistence */ }
 }
 
 function getApprovals() {
@@ -157,6 +281,30 @@ function getX402PaymentReceipts() {
   memoryStore.__goldenRaccoonX402PaymentReceipts ??= [];
 
   return memoryStore.__goldenRaccoonX402PaymentReceipts;
+}
+
+function getAlertRulesStore() {
+  memoryStore.__goldenRaccoonAlertRules ??= [];
+
+  return memoryStore.__goldenRaccoonAlertRules;
+}
+
+function getAlertObservationsStore() {
+  memoryStore.__goldenRaccoonAlertObservations ??= [];
+
+  return memoryStore.__goldenRaccoonAlertObservations;
+}
+
+function getAlertsStore() {
+  memoryStore.__goldenRaccoonAlerts ??= [];
+
+  return memoryStore.__goldenRaccoonAlerts;
+}
+
+function getAlertDeliveriesStore() {
+  memoryStore.__goldenRaccoonAlertDeliveries ??= [];
+
+  return memoryStore.__goldenRaccoonAlertDeliveries;
 }
 
 function getWatchlistEntries() {
@@ -183,6 +331,10 @@ function createId() {
 
 function createRecordId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createAlertId() {
+  return `alert_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function stableStringify(value: unknown): string {
@@ -212,13 +364,20 @@ export function hashSourceSnapshot(value: unknown) {
 }
 
 export function getStorageHealth(): StorageHealth {
-  const supabaseConfigured = isSupabaseConfigured();
+  const adapter = getPostgresStorageAdapter();
+  const snapshot = adapter.getHealthSnapshot();
 
-  if (supabaseConfigured) {
+  if (snapshot.connectionStringPresent) {
+    const detail = snapshot.connected
+      ? `Postgres adapter connected (since ${snapshot.connectedAt}). ${snapshot.mirrorSuccessCount} mirror writes succeeded, ${snapshot.mirrorFailureCount} failed.`
+      : snapshot.pgInstalled
+        ? `Postgres connection string present but adapter has not connected yet (${snapshot.lastError ?? "no attempt yet"}). The in-memory store stays the source of truth at runtime; mirror writes resume once the connection succeeds.`
+        : `Postgres connection string is configured but the \`pg\` client is not installed in this deployment. Run \`npm install pg\` to enable durable persistence; the runtime currently uses the in-memory store and the schema contract is fixed for adapter parity.`;
+
     return {
       provider: "supabase_postgres",
-      persistent: true,
-      detail: "Using persistent Supabase Postgres storage. Transaction records survive server restarts.",
+      persistent: snapshot.connected,
+      detail,
       schema: storageSchemaContract,
     };
   }
@@ -226,8 +385,217 @@ export function getStorageHealth(): StorageHealth {
   return {
     provider: "memory",
     persistent: false,
-    detail: "Using in-memory MVP storage. Records reset when the server process restarts.",
+    detail: "Using in-memory MVP storage. Records reset when the server process restarts. Set SUPABASE_DB_URL/POSTGRES_URL/DATABASE_URL plus `pg` to make alert storage durable.",
     schema: storageSchemaContract,
+  };
+}
+
+export function getStorageCounts(): StorageCounts {
+  return {
+    agentRuns: getAgentRuns().length,
+    recommendations: getRecommendations().length,
+    transactions: getTransactions().length,
+    approvals: getApprovals().length,
+    userRules: getUserRules().length,
+    x402PaymentReceipts: getX402PaymentReceipts().length,
+    alertRules: getAlertRulesStore().length,
+    alertObservations: getAlertObservationsStore().length,
+    alerts: getAlertsStore().length,
+    alertDeliveries: getAlertDeliveriesStore().length,
+  };
+}
+
+function normalizeWallet(walletAddress?: string | null): string | undefined {
+  return walletAddress?.trim().toLowerCase() || undefined;
+}
+
+function withNormalizedWallet<T extends { walletAddress: string }>(walletAddress?: string) {
+  const normalized = normalizeWallet(walletAddress);
+
+  return (record: T) => !normalized || record.walletAddress === normalized;
+}
+
+// ---------------- Alert Engine Storage ----------------
+
+export function ensureAlertRulesForWallet(walletAddress?: string) {
+  const normalized = normalizeWallet(walletAddress);
+
+  if (!normalized) return [];
+
+  return [...ensureAlertRulesForWalletRaw().filter((rule) => rule.walletAddress === normalized)];
+}
+
+function ensureAlertRulesForWalletRaw() {
+  // The store holds every wallet's rules. Filters are applied on read.
+  return getAlertRulesStore();
+}
+
+export function listAlertRules(walletAddress?: string) {
+  return [...getAlertRulesStore()]
+    .filter(withNormalizedWallet(walletAddress))
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+export function getAlertRule(id: string) {
+  return getAlertRulesStore().find((rule) => rule.id === id);
+}
+
+export function upsertAlertRule(input: AlertRule) {
+  const now = new Date().toISOString();
+  const normalized: AlertRule = {
+    ...input,
+    observationKey: input.observationKey?.trim() || undefined,
+    hysteresis: Number.isFinite(input.hysteresis) ? Math.max(0, input.hysteresis) : 0,
+    cooldownMinutes: Number.isFinite(input.cooldownMinutes) ? Math.max(0, Math.round(input.cooldownMinutes)) : 60,
+    updatedAt: now,
+    createdAt: input.createdAt ?? now,
+    walletAddress: input.walletAddress.trim().toLowerCase(),
+  };
+  const existingIndex = getAlertRulesStore().findIndex((rule) => rule.id === normalized.id && rule.walletAddress === normalized.walletAddress);
+
+  if (existingIndex >= 0) {
+    getAlertRulesStore()[existingIndex] = normalized;
+  } else {
+    getAlertRulesStore().unshift(normalized);
+  }
+  mirrorAlertRuleWriteDeferred(normalized);
+
+  return normalized;
+}
+
+export function deleteAlertRule(id: string, walletAddress?: string) {
+  const store = getAlertRulesStore();
+  const normalized = normalizeWallet(walletAddress);
+  const targetIndex = store.findIndex((rule) => rule.id === id && (!normalized || rule.walletAddress === normalized));
+
+  if (targetIndex < 0) return false;
+
+  store.splice(targetIndex, 1);
+
+  return true;
+}
+
+export function listAlertObservations(walletAddress?: string, limit = 200) {
+  return [...getAlertObservationsStore()]
+    .filter(withNormalizedWallet(walletAddress))
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, limit);
+}
+
+export function createAlertObservation(input: Omit<AlertObservation, "id" | "createdAt">) {
+  const observation: AlertObservation = {
+    id: createRecordId("obs"),
+    createdAt: new Date().toISOString(),
+    ...input,
+    walletAddress: input.walletAddress.trim().toLowerCase(),
+  };
+
+  getAlertObservationsStore().unshift(observation);
+  mirrorAlertObservationWriteDeferred(observation);
+
+  return observation;
+}
+
+export function listAlerts(walletAddress?: string, status?: Alert["status"], limit = 200) {
+  const normalizedWallet = normalizeWallet(walletAddress);
+
+  return [...getAlertsStore()]
+    .filter((alert) => !normalizedWallet || alert.walletAddress === normalizedWallet)
+    .filter((alert) => !status || alert.status === status)
+    .sort((left, right) => new Date(right.triggeredAt).getTime() - new Date(left.triggeredAt).getTime())
+    .slice(0, limit);
+}
+
+export function getAlert(id: string, walletAddress?: string) {
+  const alert = getAlertsStore().find((record) => record.id === id);
+
+  if (!alert) return undefined;
+  if (walletAddress && alert.walletAddress !== normalizeWallet(walletAddress)) return undefined;
+
+  return alert;
+}
+
+export function createAlert(input: Omit<Alert, "id" | "triggeredAt">) {
+  const alert: Alert = {
+    id: createAlertId(),
+    triggeredAt: new Date().toISOString(),
+    ...input,
+    walletAddress: input.walletAddress.trim().toLowerCase(),
+  };
+
+  getAlertsStore().unshift(alert);
+  mirrorAlertWriteDeferred(alert);
+
+  return alert;
+}
+
+export function updateAlert(id: string, walletAddress: string, patch: Partial<Alert>) {
+  const store = getAlertsStore();
+  const normalized = normalizeWallet(walletAddress);
+  const index = store.findIndex((record) => record.id === id && record.walletAddress === normalized);
+
+  if (index < 0) return undefined;
+
+  store[index] = { ...store[index], ...patch };
+  mirrorAlertUpdateDeferred(store[index]);
+
+  return store[index];
+}
+
+export function listAlertDeliveries(alertId?: string, walletAddress?: string) {
+  return [...getAlertDeliveriesStore()]
+    .filter((delivery) => !alertId || delivery.alertId === alertId)
+    .filter(withNormalizedWallet(walletAddress))
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+export function createAlertDelivery(input: Omit<AlertDelivery, "id" | "createdAt">) {
+  const delivery: AlertDelivery = {
+    id: createRecordId("delivery"),
+    createdAt: new Date().toISOString(),
+    ...input,
+    walletAddress: input.walletAddress.trim().toLowerCase(),
+  };
+
+  getAlertDeliveriesStore().unshift(delivery);
+  mirrorAlertDeliveryWriteDeferred(delivery);
+
+  return delivery;
+}
+
+export function updateAlertDelivery(id: string, walletAddress: string, patch: Partial<AlertDelivery>) {
+  const store = getAlertDeliveriesStore();
+  const index = store.findIndex((record) => record.id === id && record.walletAddress === walletAddress.toLowerCase());
+
+  if (index < 0) return undefined;
+
+  store[index] = { ...store[index], ...patch };
+  mirrorAlertDeliveryUpdateDeferred(store[index]);
+
+  return store[index];
+}
+
+export function summarizeDeliveries(deliveries: AlertDelivery[]) {
+  const deliverableByChannel: Record<AlertDeliveryChannel, string> = {
+    in_app: "delivered",
+    email: "no_env",
+    telegram: "no_env",
+    discord: "no_env",
+  };
+
+  return {
+    delivered: deliveries.filter((delivery) => delivery.status === "delivered").map((delivery) => delivery.channel),
+    failed: deliveries
+      .filter((delivery) => delivery.status === "failed")
+      .map((delivery) => ({ channel: delivery.channel, error: delivery.errorDetail ?? "delivery failed" })),
+    skipped: [
+      ...deliveries
+        .filter((delivery) => delivery.status === "skipped")
+        .map((delivery) => ({ channel: delivery.channel, reason: delivery.errorDetail ?? "skipped" })),
+      ...(["in_app", "email", "telegram", "discord"] as AlertDeliveryChannel[])
+        .filter((channel) => !deliveries.some((delivery) => delivery.channel === channel))
+        .map((channel) => ({ channel, reason: deliverableByChannel[channel] === "delivered" ? "in-app inbox is always available" : "delivery channel is not configured" })),
+    ],
   };
 }
 
@@ -335,7 +703,7 @@ export function listTransactionRecords(walletAddress?: string) {
 }
 
 export function getTransactionRecord(hash: string) {
-  const family = isTransactionHashForChain(hash, "evm")
+  const family: ChainFamily = isTransactionHashForChain(hash, "evm")
     ? "evm"
     : isTransactionHashForChain(hash, "stellar")
       ? "stellar"
@@ -422,7 +790,7 @@ export function createTransactionLifecycleEvent(input: Omit<TransactionLifecycle
   return event;
 }
 
-export function canonicalizeTransactionHash(hash: string, family: TransactionRecord["chainFamily"] = "evm") {
+export function canonicalizeTransactionHash(hash: string, family: ChainFamily = "evm") {
   const trimmed = hash.trim();
   return family === "stellar" ? trimmed.toUpperCase() : trimmed.toLowerCase();
 }
@@ -502,7 +870,7 @@ export function getX402PaymentReceiptByHeaderHash(paymentHeaderHash: string) {
 }
 
 export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string }) {
-  const existing = getX402PaymentReceiptByHeaderHash(input.paymentHeaderHash);
+  const existing =  getX402PaymentReceiptByHeaderHash(input.paymentHeaderHash);
 
   if (existing) {
     return {
@@ -524,18 +892,6 @@ export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | 
 
   return record;
 }
-
-export function getStorageCounts(): StorageCounts {
-  return {
-    agentRuns: getAgentRuns().length,
-    recommendations: getRecommendations().length,
-    transactions: getTransactions().length,
-    approvals: getApprovals().length,
-    userRules: getUserRules().length,
-    x402PaymentReceipts: getX402PaymentReceipts().length,
-  };
-}
-
 type CreateWatchlistInput = WatchlistEntryInput & {
   identityKey: string;
 };
@@ -678,7 +1034,6 @@ export function updateWatchlistEntryLatestScan(
   entry.latestStatus = update.status === "failed" ? "stale" : update.status;
 
   if (update.status === "failed") {
-    // Preserve last successful observation as the latest visible result.
     const hasPriorSuccess = entry.successfulScanRunIds && entry.successfulScanRunIds.length > 0;
 
     if (!hasPriorSuccess) {

@@ -917,4 +917,146 @@ export type StorageCounts = {
   approvals: number;
   userRules: number;
   x402PaymentReceipts: number;
+  alertRules: number;
+  alertObservations: number;
+  alerts: number;
+  alertDeliveries: number;
+};
+
+export type AlertTriggerType =
+  | "critical_risk"
+  | "liquidity_drop"
+  | "holder_concentration_change"
+  | "tax_control_change"
+  | "phishing_detected"
+  | "exploit_news"
+  | "portfolio_concentration"
+  | "stable_reserve_change"
+  | "stellar_issuer_auth"
+  | "stellar_clawback"
+  | "stellar_trustline"
+  | "stellar_contract_ttl"
+  | "rpc_degradation";
+
+export type AlertDeliveryChannel = "in_app" | "email" | "telegram" | "discord";
+
+export type AlertDeliveryStatus = "pending" | "delivered" | "failed" | "skipped";
+
+export type AlertStatus = "triggered" | "recovered" | "acknowledged";
+
+export type AlertSeverity = "low" | "medium" | "high" | "critical";
+
+export type AlertObservationDirection = "high_is_bad" | "low_is_bad";
+
+/**
+ * A user-defined alert rule scoped to a wallet. Threshold semantics depend
+ * on `direction` on the trigger type. Cooldown prevents re-triggering
+ * immediately after recovery; hysteresis prevents flapping near the threshold.
+ */
+export type AlertRule = {
+  id: string;
+  walletAddress: string;
+  triggerType: AlertTriggerType;
+  observationKey?: string;
+  threshold: number;
+  hysteresis: number;
+  cooldownMinutes: number;
+  direction?: AlertObservationDirection;
+  severity: AlertSeverity;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/**
+ * Immutable observation extracted from an AgentRunRecord. The evidence only
+ * includes the minimum data the alert needs (no wallet secrets, no PII).
+ */
+export type AlertObservation = {
+  id: string;
+  walletAddress: string;
+  triggerType: AlertTriggerType;
+  observationKey: string;
+  value: number;
+  direction: AlertObservationDirection;
+  evidence: {
+    runId: string;
+    agent: AgentResult["agent"];
+    label: string;
+    detail: string;
+    sourceLabels: string[];
+    sourceSnapshotHash?: string;
+    beforeValue?: number;
+    afterValue?: number;
+    meta?: Record<string, string | number | boolean | null | undefined>;
+  };
+  createdAt: string;
+  /**
+   * True when the observation was extracted from an AgentResult that had at
+   * least one unavailable source. Incomplete observations are intentionally
+   * excluded from risk-change alerts at extraction time so a degraded
+   * provider cannot generate phantom alerts.
+   */
+  incompleteData?: boolean;
+};
+
+export type Alert = {
+  id: string;
+  walletAddress: string;
+  ruleId: string;
+  triggerType: AlertTriggerType;
+  observationKey: string;
+  status: AlertStatus;
+  severity: AlertSeverity;
+  message: string;
+  beforeValue: number;
+  afterValue: number;
+  /**
+   * Immutable evidence captured at trigger time. NEVER overwritten once the
+   * alert is created — subsequent deterioration events extend the chain in
+   * `deteriorationObservationIds` and refresh only the latest-at-time field
+   * (`evidenceAfter`) with a snapshot from the new observation.
+   */
+  evidenceBefore: AlertObservation["evidence"];
+  evidenceAfter: AlertObservation["evidence"];
+  evidenceData: {
+    runId: string;
+    observationId: string;
+    sourceSnapshotHashAfter: string;
+    sourceSnapshotHashBefore?: string;
+    evidenceBeforeObservationId?: string;
+    evidenceAfterObservationId: string;
+    evidenceBeforeHash?: string;
+    evidenceAfterHash: string;
+    deteriorationObservationIds: string[];
+  };
+  triggeredAt: string;
+  recoveredAt?: string;
+  acknowledgedAt?: string;
+  deliverySummary?: {
+    delivered: AlertDeliveryChannel[];
+    failed: Array<{ channel: AlertDeliveryChannel; error: string }>;
+    skipped: Array<{ channel: AlertDeliveryChannel; reason: string }>;
+  };
+};
+
+export type AlertDelivery = {
+  id: string;
+  alertId: string;
+  walletAddress: string;
+  channel: AlertDeliveryChannel;
+  status: AlertDeliveryStatus;
+  errorDetail?: string;
+  sanitizedPayload: {
+    triggerType: AlertTriggerType;
+    severity: AlertSeverity;
+    summary: string;
+    beforeValue: number;
+    afterValue: number;
+    observationKey: string;
+    evidenceLinks: string[];
+  };
+  attemptCount: number;
+  createdAt: string;
+  sentAt?: string;
 };

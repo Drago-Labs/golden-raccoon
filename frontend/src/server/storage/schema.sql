@@ -3,6 +3,10 @@
 -- MVP can apply the schema in one clean migration.
 
 create extension if not exists pgcrypto;
+-- pgcrypto is preserved for backwards compatibility with deployments that
+-- still hold legacy uuid alert tables; the active alert schema now uses
+-- text primary keys so that string ids minted by the storage layer
+-- (e.g. "alert_…") mirror directly without an implicit cast.
 
 create table if not exists wallets (
   id uuid primary key default gen_random_uuid(),
@@ -203,6 +207,133 @@ create index if not exists transactions_wallet_created_idx on transactions(walle
 create index if not exists approvals_wallet_created_idx on approvals(wallet_address, created_at desc);
 create index if not exists x402_payment_receipts_resource_created_idx on x402_payment_receipts(protected_resource, created_at desc);
 
+-- Idempotent migration for the V3 alert engine. The original schema
+-- declared alert_*.id as `uuid primary key default gen_random_uuid()`,
+-- but the storage layer mints prefixed string ids (`alert_…`, `rule_…`)
+-- for portability with downstream in-memory + Postgres parity. Existing
+-- deployments created under the previous contract therefore need their
+-- primary keys and the rule_id / alert_id reference columns widened
+-- from `uuid` to `text` so the new mirror INSERTs succeed. The blocks
+-- below are no-ops on a fresh deployment that already declares the
+-- tables with text columns, because Postgres treats `text` and
+-- `varchar` as already widened.
+do $$
+begin
+  begin
+    alter table alert_rules alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table alert_observations alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table alerts alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table alerts alter column rule_id type text using rule_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table alert_deliveries alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table alert_deliveries alter column alert_id type text using alert_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table alert_observations add column if not exists incomplete_data boolean default false;
+  exception when others then null;
+  end;
+end $$;
+
+-- V3 alert engine contract.
+-- alert_rules: durable, scope-bound (wallet_address) alert definitions.
+-- alert_observations: append-only typed signal observations extracted from agent runs.
+-- alerts: persisted trigger/recovery lifecycle bound to a rule.
+-- alert_deliveries: fan-out audit row per channel per alert (in_app, email, telegram, discord).
+create table if not exists alert_rules (
+  id text primary key,
+  wallet_address text not null,
+  trigger_type text not null check (trigger_type in (
+    'critical_risk',
+    'liquidity_drop',
+    'holder_concentration_change',
+    'tax_control_change',
+    'phishing_detected',
+    'exploit_news',
+    'portfolio_concentration',
+    'stable_reserve_change',
+    'stellar_issuer_auth',
+    'stellar_clawback',
+    'stellar_trustline',
+    'stellar_contract_ttl',
+    'rpc_degradation'
+  )),
+  observation_key text,
+  threshold numeric not null,
+  hysteresis numeric not null default 0,
+  cooldown_minutes integer not null default 60,
+  direction text not null default 'high_is_bad' check (direction in ('high_is_bad', 'low_is_bad')),
+  severity text not null default 'medium' check (severity in ('low', 'medium', 'high', 'critical')),
+  enabled boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists alert_observations (
+  id text primary key,
+  wallet_address text not null,
+  trigger_type text not null,
+  observation_key text not null,
+  value numeric not null,
+  direction text not null check (direction in ('high_is_bad', 'low_is_bad')),
+  evidence jsonb not null default '{}'::jsonb,
+  incomplete_data boolean default false,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists alerts (
+  id text primary key,
+  wallet_address text not null,
+  rule_id text not null references alert_rules(id) on delete cascade,
+  trigger_type text not null,
+  observation_key text not null,
+  status text not null check (status in ('triggered', 'recovered', 'acknowledged')),
+  severity text not null check (severity in ('low', 'medium', 'high', 'critical')),
+  message text not null,
+  before_value numeric not null,
+  after_value numeric not null,
+  evidence_before jsonb not null default '{}'::jsonb,
+  evidence_after jsonb not null default '{}'::jsonb,
+  evidence_data jsonb not null default '{}'::jsonb,
+  delivery_summary jsonb not null default '{}'::jsonb,
+  triggered_at timestamptz not null default now(),
+  recovered_at timestamptz,
+  acknowledged_at timestamptz
+);
+
+create table if not exists alert_deliveries (
+  id text primary key,
+  alert_id text not null references alerts(id) on delete cascade,
+  wallet_address text not null,
+  channel text not null check (channel in ('in_app', 'email', 'telegram', 'discord')),
+  status text not null check (status in ('pending', 'delivered', 'failed', 'skipped')),
+  error_detail text,
+  sanitized_payload jsonb not null default '{}'::jsonb,
+  attempt_count integer not null default 0,
+  created_at timestamptz not null default now(),
+  sent_at timestamptz
+);
+
+create index if not exists alert_rules_wallet_enabled_idx on alert_rules(wallet_address, enabled);
+create index if not exists alert_observations_wallet_trigger_idx on alert_observations(wallet_address, trigger_type, observation_key, created_at desc);
+create index if not exists alerts_wallet_status_idx on alerts(wallet_address, status, triggered_at desc);
+create index if not exists alert_deliveries_alert_idx on alert_deliveries(alert_id, channel);
+
+-- Watchlist & discovery tables (upstream V3 discovery).
 create table if not exists watchlist_entries (
   id uuid primary key default gen_random_uuid(),
   wallet_address text not null,

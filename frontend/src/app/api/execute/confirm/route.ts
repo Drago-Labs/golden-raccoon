@@ -96,13 +96,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  // Validate transaction hash format based on network chain family
-  const chainFamily = getChainFamily(parsed.data.network);
-
-  if (!isTransactionHashForChain(parsed.data.txHash, chainFamily)) {
+  if (!isTransactionHashForChain(parsed.data.txHash, getChainFamily(parsed.data.network))) {
     return NextResponse.json({
       error: "invalid_tx_hash",
-      detail: `Transaction hash does not match expected format for ${chainFamily} chain. Stellar hashes are 64 hex chars; EVM hashes are 0x-prefixed 64 hex chars.`,
+      detail: `Transaction hash does not match expected format for ${getChainFamily(parsed.data.network)} chain. Stellar hashes are 64 hex chars; EVM hashes are 0x-prefixed 64 hex chars.`,
     }, { status: 400 });
   }
 
