@@ -13,7 +13,8 @@
     "test:stellar-config": "tsx --tsconfig tsconfig.json scripts/stellar-config-check.ts",
     "test:alerts:ui": "tsx --tsconfig tsconfig.json scripts/alert-fixture-check.ts",
     "test:stellar-portfolio": "tsx --tsconfig tsconfig.json scripts/stellar-portfolio-check.ts",
-    "verify": "npm run test:agents && npm run test:stellar-portfolio && npm run test:alerts && npm run lint && npm run build"
+    "test:quote-validation": "tsx --tsconfig tsconfig.json scripts/quote-validation-check.ts",
+    "verify": "npm run test:agents && npm run test:stellar-portfolio && npm run test:alerts && npm run test:quote-validation && npm run lint && npm run build"
   },
   "dependencies": {
     "@coinbase/x402": "^2.1.0",

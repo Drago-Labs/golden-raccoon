@@ -41,6 +41,14 @@ export type ExecutionPolicyInput = {
   stellarReserveRequiredXlm?: number;
   stellarCurrentXlmBalance?: number;
   stellarQuoteStatus?: "fresh" | "stale" | "unavailable" | "simulated";
+  // Quote-specific policy checks
+  quoteFresh?: boolean;
+  quoteExpiresAt?: string;
+  quoteSlippageBps?: number;
+  quotePriceImpactBps?: number;
+  quoteMinReceiveAmount?: number;
+  quoteExpectedOutput?: number;
+  quoteProvider?: string;
 };
 
 function uniqueStrings(values: string[] | undefined, fallback: string[]) {
@@ -131,7 +139,49 @@ export function evaluateExecutionPolicy(input: ExecutionPolicyInput, policy: Exe
     violations.push("Simulation failed. Confirmation is blocked until the issue is resolved.");
   }
 
-  // Stellar-specific policy checks
+  // Quote-specific policy checks
+  if (tradeAction) {
+    // Block if quote is none (no real provider)
+    if (input.quoteProvider === "none") {
+      violations.push("No live quote provider is available. A fresh validated quote is required for executable plans.");
+    }
+
+    // Block if quote is not fresh
+    if (input.quoteFresh === false) {
+      violations.push("The quote is stale or expired. A fresh quote is required.");
+    }
+
+    // Block if quote has expired
+    if (typeof input.quoteExpiresAt === "string" && new Date(input.quoteExpiresAt).getTime() < Date.now()) {
+      violations.push("The quote has expired. Refresh to obtain a fresh executable quote.");
+    }
+
+    // Validate quote slippage against policy max
+    if (typeof input.quoteSlippageBps === "number" && input.quoteSlippageBps > policy.maxSlippageBps) {
+      violations.push(`Quote slippage ${input.quoteSlippageBps} bps exceeds policy max slippage ${policy.maxSlippageBps} bps.`);
+    }
+
+    // Validate quote output doesn't violate daily value limit
+    if (typeof input.quoteExpectedOutput === "number" && input.quoteExpectedOutput > policy.maxDailyTransactionValueUsd) {
+      violations.push(`Quote expected output $${Math.round(input.quoteExpectedOutput).toLocaleString("en-US")} exceeds daily transaction value limit $${policy.maxDailyTransactionValueUsd.toLocaleString("en-US")}.`);
+    }
+
+    // Re-evaluate estimated value against daily limit using quote output
+    if (typeof input.estimatedValueUsd === "number" && input.estimatedValueUsd > policy.maxDailyTransactionValueUsd) {
+      violations.push(`Estimated value $${Math.round(input.estimatedValueUsd).toLocaleString("en-US")} exceeds daily transaction value limit $${policy.maxDailyTransactionValueUsd.toLocaleString("en-US")}.`);
+    }
+
+    // Stellar-specific: block if Stellar quote is unavailable for Stellar chains
+    if (isStellarChain(input.network) && input.stellarQuoteStatus === "unavailable") {
+      violations.push("Stellar swap requires a fresh quote before execution preparation.");
+    }
+
+    if (isStellarChain(input.network) && input.stellarQuoteStatus === "stale") {
+      violations.push("The Stellar swap quote is stale. A fresh quote must be obtained.");
+    }
+  }
+
+  // Stellar-specific policy checks (trustline only — swap quote checks are handled in the quote-specific block above)
   if (isStellarChain(input.network)) {
     // Trustline creation is only allowed for Stellar chains
     if (input.action === "create_trustline") {
@@ -167,17 +217,6 @@ export function evaluateExecutionPolicy(input: ExecutionPolicyInput, policy: Exe
             violations.push(`Insufficient XLM reserve: ${availableXlm.toFixed(2)} XLM available after trustline, needs at least ${policy.stellar.minXlmReserve} XLM.`);
           }
         }
-      }
-    }
-
-    // For Stellar swaps, require a fresh quote
-    if (input.action === "swap_to_stable" || input.action === "reduce_exposure" || input.action === "prepare_transaction") {
-      if (input.stellarQuoteStatus === "unavailable") {
-        violations.push("Stellar swap requires a fresh quote before execution preparation.");
-      }
-
-      if (input.stellarQuoteStatus === "stale") {
-        violations.push("The Stellar swap quote is stale. A fresh quote must be obtained.");
       }
     }
   } else if (input.action === "create_trustline") {

@@ -320,14 +320,22 @@ export type StellarTrustlinePreview = {
 };
 
 export type StellarSwapQuote = {
-  provider: "soroswap" | "stellar_aggregator" | "planned_stellar_dex";
+  provider: "soroswap" | "stellar_aggregator";
   routeType: "classic_path_payment" | "soroban_swap" | "mixed";
+  /** Human-readable route with asset code and issuer for classic assets (e.g. "USDC:GBB...") */
   route: string[];
+  /** Exact input amount in atomic units from the quote */
+  exactInputAmount: number;
+  /** Exact output amount from the quote */
+  exactOutputAmount: number;
   expectedOutputAmount: number;
   estimatedValueUsd: number;
   priceImpactBps: number;
   slippageBps: number;
   minReceiveAmount: number;
+  /** Total estimated fees in XLM (stroops converted) */
+  feesXlm: number;
+  network: string;
   pathPaymentOps?: Array<{
     type: "path_payment_strict_send" | "path_payment_strict_receive";
     sendAsset: string;
@@ -397,15 +405,30 @@ export type TransactionPreview = {
     violations: string[];
   };
   quote?: {
-    provider: "planned_dex_aggregator" | "soroswap" | "stellar_aggregator";
+    provider: "soroswap" | "stellar_aggregator" | "none";
     route: string[];
+    /** Exact input token and amount from the quote */
+    exactInput: { token: string; amount: number };
+    /** Exact output token and amount from the quote */
+    exactOutput: { token: string; amount: number };
     expectedOutputToken: string;
     expectedOutputAmount?: number;
+    /** Minimum amount received after slippage (in output token units) */
+    minReceiveAmount: number;
     estimatedValueUsd: number;
     priceImpactBps: number;
     slippageBps: number;
+    /** Total fees (gas + protocol fees) in USD */
+    feesUsd: number;
     gasEstimateUsd: number;
-    status: "planned" | "fresh" | "simulated" | "unavailable";
+    network: string;
+    /** ISO timestamp when the quote expires — approval must be disabled after this time */
+    expiresAt: string;
+    /** ISO timestamp when the quote was fetched */
+    fetchedAt: string;
+    /** When true, the quote's assets or network do not match the action request */
+    quoteMismatch: boolean;
+    status: "fresh" | "stale" | "unavailable" | "simulated";
     detail: string;
   };
   simulation?: {
