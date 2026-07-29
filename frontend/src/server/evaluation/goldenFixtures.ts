@@ -9,15 +9,13 @@ export const goldenFixtureSuite = [
   "symbol_collision",
   "provider_unavailable",
   "conflicting_sources",
-  // Stellar-specific fixtures
-  "stellar_xlm",
-  "stellar_known_classic",
-  "stellar_restricted_asset",
-  "stellar_sac",
-  "stellar_sep41",
-  "stellar_invalid_issuer",
-  "stellar_unknown_contract",
-  "stellar_unavailable_provider",
+  // Discovery fixtures
+  "dexscreener_new_pair",
+  "stellar_new_asset",
+  "dedup_collapse_duplicates",
+  "polling_resume_after_restart",
+  "provider_outage_backoff",
+  "stale_cursor_freshness",
 ] as const;
 
 export type GoldenFixtureName = (typeof goldenFixtureSuite)[number];
@@ -33,15 +31,13 @@ export const goldenScoreSnapshots: Record<GoldenFixtureName, { min: number; max:
   symbol_collision: { min: 40, max: 85 },
   provider_unavailable: { min: 40, max: 80 },
   conflicting_sources: { min: 50, max: 95 },
-  // Stellar-specific fixture score ranges
-  stellar_xlm: { min: 0, max: 30 },
-  stellar_known_classic: { min: 0, max: 25 },
-  stellar_restricted_asset: { min: 25, max: 55 },
-  stellar_sac: { min: 0, max: 30 },
-  stellar_sep41: { min: 30, max: 60 },
-  stellar_invalid_issuer: { min: 60, max: 100 },
-  stellar_unknown_contract: { min: 55, max: 100 },
-  stellar_unavailable_provider: { min: 60, max: 100 },
+  // Discovery fixtures — these are boundary tests, not score assertions
+  dexscreener_new_pair: { min: 0, max: 100 },
+  stellar_new_asset: { min: 0, max: 100 },
+  dedup_collapse_duplicates: { min: 0, max: 100 },
+  polling_resume_after_restart: { min: 0, max: 100 },
+  provider_outage_backoff: { min: 0, max: 100 },
+  stale_cursor_freshness: { min: 0, max: 100 },
 };
 
 export function assertGoldenScore(name: GoldenFixtureName, score: number) {

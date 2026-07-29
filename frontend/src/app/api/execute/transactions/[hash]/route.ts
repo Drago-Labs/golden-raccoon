@@ -26,7 +26,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ error: "transaction_not_found", detail: `No transaction record found for hash ${hash}.` }, { status: 404 });
   }
 
-  const poll = await pollTransaction(hash, { network: parameters.data.network });
+  const poll = await pollTransaction(hash);
 
   const explorerUrl = attachExplorerUrl({ hash: poll.transaction.hash, network: poll.transaction.network, chainFamily: poll.transaction.chainFamily });
 
