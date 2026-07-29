@@ -1,6 +1,8 @@
 import type { AgentInputIdentity, ResolvedTokenIdentity } from "@/server/types";
 import { buildTokenIdentityGraph } from "@/server/identity/identityGraph";
 
+import { StrKey } from "@stellar/stellar-sdk";
+
 const evmAddressPattern = /^0x[a-fA-F0-9]{40}$/;
 const genericSymbols = new Set(["AI", "GOAT", "MOON", "PEPE", "MEME", "DOGE", "CAT", "BTC", "ETH"]);
 
@@ -22,7 +24,11 @@ function normalizeChain(value?: string) {
 }
 
 function normalizeAddress(value?: string) {
-  return evmAddressPattern.test(value ?? "") ? value?.toLowerCase() : undefined;
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (evmAddressPattern.test(trimmed)) return trimmed.toLowerCase();
+  if (StrKey.isValidContract(trimmed) || StrKey.isValidEd25519PublicKey(trimmed)) return trimmed.toUpperCase();
+  return undefined;
 }
 
 function getConfidenceLabel(confidence: number): ResolvedTokenIdentity["confidenceLabel"] {
@@ -49,7 +55,7 @@ export function resolveTokenIdentity(input: AgentInputIdentity): ResolvedTokenId
     confidence += 0.38;
     matchReasons.push("contract address");
   } else if (input.contractAddress) {
-    warnings.push("contract address is not a valid EVM address");
+    warnings.push("contract address is not a valid address");
   }
 
   if (chain) {

@@ -4,6 +4,7 @@ import type { AgentResult } from "@/server/types";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { runDecisionAgent } from "@/server/agents/decision";
 import { checkRateLimit } from "@/server/security/rateLimit";
+import { getUserRuleRecord } from "@/server/storage";
 
 const agentResultSchema = z.object({
   agent: z.enum(["portfolio", "news", "social", "onchain", "decision", "execution"]),
@@ -160,13 +161,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
+  // Load the wallet's stored rules for strategy enforcement
+  const walletAddress = parsed.data.context?.walletAddress ?? parsed.data.userRules?.walletAddress;
+  const storedRules = walletAddress ? getUserRuleRecord(walletAddress) : undefined;
+  const mergedRules = { ...storedRules, ...(parsed.data.userRules ?? {}) };
+
   return withCacheHeaders(
     NextResponse.json(
       runDecisionAgent({
         results: parsed.data.results as AgentResult[] | undefined,
         context: parsed.data.context,
         executionReadiness: parsed.data.executionReadiness,
-        userRules: parsed.data.userRules,
+        userRules: mergedRules,
         userRiskProfile: parsed.data.userRiskProfile,
       }),
     ),

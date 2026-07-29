@@ -1,7 +1,11 @@
-import type { AgentRecommendedAction, UserRule } from "@/server/types";
+import type { AgentRecommendedAction, StrategyPolicyResult, UserRule } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
+import { evaluateStrategy, type StrategyEnforcerContext } from "@/server/agents/strategy";
 import { getChainFamily } from "@/lib/chainIdentity";
-import { resolveChainId } from "@/server/rules/strategyProfile";
+import {
+  evaluateImmutableBuyBlockers,
+  type ImmutableBuySafetySignals,
+} from "@/server/autoMode/policy";
 
 export type StellarPolicyOverrides = {
   allowedIssuers?: string[];
@@ -35,6 +39,8 @@ export type ExecutionPolicyInput = {
   estimatedValueUsd?: number;
   slippageBps?: number;
   simulationStatus?: "not_required" | "pending" | "passed" | "failed" | "unavailable";
+  autoModeBuy?: boolean;
+  autoModeBuySafetySignals?: ImmutableBuySafetySignals;
   // Stellar-specific trustline fields
   stellarIssuer?: string;
   stellarIssuerClawback?: boolean;
@@ -73,7 +79,10 @@ export function buildExecutionPolicy(rules?: UserRule): ExecutionPolicy {
     blockedTokens: uniqueStrings(safeRules.blockedTokens, []),
     allowedActions: new Set(safeRules.allowedActions ?? defaultRules.allowedActions ?? ["reduce_exposure", "swap_to_stable", "prepare_transaction", "create_trustline", "watch", "hold", "no_action"]),
     walletAddress: safeRules.walletAddress,
-    stellar: getDefaultStellarPolicy(),
+    stellar: {
+      ...getDefaultStellarPolicy(),
+      allowedIssuers: safeRules.blockedIssuers?.length ? undefined : getDefaultStellarPolicy().allowedIssuers,
+    },
   };
 }
 
@@ -86,136 +95,84 @@ function isStellarChain(chain?: string) {
 }
 
 /**
- * Compare a chain the way a user means it.
- *
- * Stored profiles hold canonical scan-network ids ("goat"), while callers pass
- * whatever they have to hand — a display name ("GOAT Network"), an alias, or
- * the id itself. Resolving both sides to an id before comparing means the same
- * chain matches regardless of spelling; a value that resolves to nothing falls
- * back to a plain string compare so an unrecognized custom entry still behaves
- * as it did before.
+ * Evaluate execution policy using the shared strategy enforcer as the
+ * primary enforcement engine, plus execution-specific checks for
+ * immutable auto-buy blockers and Stellar issuer/XLM reserve limits.
  */
-function sameChain(left?: string, right?: string) {
-  if (!left || !right) {
-    return false;
-  }
+export function evaluateExecutionPolicy(
+  input: ExecutionPolicyInput,
+  policy: ExecutionPolicy,
+  rules?: UserRule,
+): StrategyPolicyResult {
+  // 1. Run the shared strategy enforcer for all standard rule checks
+  const context: StrategyEnforcerContext = {
+    action: input.action,
+    riskScore: input.riskScore,
+    percent: input.percent,
+    estimatedValueUsd: input.estimatedValueUsd,
+    network: input.network,
+    fromToken: input.fromToken,
+    toToken: input.toToken,
+    slippageBps: input.slippageBps,
+    simulationStatus: input.simulationStatus,
+    stellarIssuer: input.stellarIssuer,
+    stellarIssuerClawback: input.stellarIssuerClawback,
+    stellarIssuerRevocable: input.stellarIssuerRevocable,
+    stellarReserveRequiredXlm: input.stellarReserveRequiredXlm,
+    stellarCurrentXlmBalance: input.stellarCurrentXlmBalance,
+    stellarQuoteStatus: input.stellarQuoteStatus,
+    phase: "execution",
+  };
 
-  const leftId = resolveChainId(left);
-  const rightId = resolveChainId(right);
+  const result = evaluateStrategy(context, rules);
 
-  if (leftId && rightId) {
-    return leftId === rightId;
-  }
+  // 2. Append immutable auto-buy blockers (not covered by shared enforcer)
+  const immutableBuyBlockers = input.autoModeBuy
+    ? evaluateImmutableBuyBlockers(input.autoModeBuySafetySignals)
+    : [];
 
-  return normalized(left) === normalized(right);
-}
+  // 3. Append additional Stellar-specific checks not in the shared enforcer
+  //    (allowed-issuer list, XLM reserve minimum)
+  const extraViolations: typeof result.violations = [];
+  const extraMessages: string[] = [];
 
-export function evaluateExecutionPolicy(input: ExecutionPolicyInput, policy: ExecutionPolicy) {
-  const violations: string[] = [];
-  const tradeAction = input.action === "swap_to_stable" || input.action === "reduce_exposure" || input.action === "prepare_transaction";
-
-  if (policy.autoExecute) {
-    violations.push("Auto-execute is disabled. User wallet approval is mandatory.");
-  }
-
-  if (!policy.allowedActions.has(input.action)) {
-    violations.push(`Action ${input.action} is not allowed by execution policy.`);
-  }
-
-  if (input.action === "avoid" || input.action === "manual_review") {
-    violations.push(`Action ${input.action.replaceAll("_", " ")} cannot prepare a transaction until the user reviews the risk.`);
-  }
-
-  if (input.percent > policy.maxTradePercent) {
-    violations.push(`Requested ${input.percent}% exceeds max trade percent ${policy.maxTradePercent}%.`);
-  }
-
-  if (tradeAction && input.riskScore > policy.maxRiskScoreForTrade) {
-    violations.push(`Risk score ${input.riskScore} exceeds max trade risk threshold ${policy.maxRiskScoreForTrade}.`);
-  }
-
-  if (typeof input.estimatedValueUsd === "number" && input.estimatedValueUsd > policy.maxDailyTransactionValueUsd) {
-    violations.push(`Estimated value $${Math.round(input.estimatedValueUsd).toLocaleString("en-US")} exceeds daily transaction value limit $${policy.maxDailyTransactionValueUsd.toLocaleString("en-US")}.`);
-  }
-
-  if (typeof input.slippageBps === "number" && input.slippageBps > policy.maxSlippageBps) {
-    violations.push(`Slippage ${input.slippageBps} bps exceeds max slippage ${policy.maxSlippageBps} bps.`);
-  }
-
-  if (input.network && policy.allowedChains.length > 0 && !policy.allowedChains.some((chain) => sameChain(chain, input.network))) {
-    violations.push(`Network ${input.network} is not in allowed chains.`);
-  }
-
-  const blockedTokens = policy.blockedTokens.map(normalized);
-  for (const token of [input.fromToken, input.toToken]) {
-    if (token && blockedTokens.includes(normalized(token))) {
-      violations.push(`Token ${token} is blocked by user policy.`);
-    }
-  }
-
-  if (input.simulationStatus === "failed") {
-    violations.push("Simulation failed. Confirmation is blocked until the issue is resolved.");
-  }
-
-  // Stellar-specific policy checks
   if (isStellarChain(input.network)) {
-    // Trustline creation is only allowed for Stellar chains
-    if (input.action === "create_trustline") {
-      if (typeof input.stellarIssuer === "string") {
-        const allowedIssuers = policy.stellar.allowedIssuers;
-
-        if (allowedIssuers && allowedIssuers.length > 0) {
-          const normalizedIssuer = input.stellarIssuer.trim().toUpperCase();
-
-          if (!allowedIssuers.map((i) => i.trim().toUpperCase()).includes(normalizedIssuer)) {
-            violations.push(`Issuer ${input.stellarIssuer} is not in the allowed issuer list.`);
-          }
-        }
-
-        if (input.stellarIssuerClawback === true && policy.stellar.blockClawbackIssuers) {
-          violations.push(`Issuer ${input.stellarIssuer} has clawback enabled, which is blocked by policy.`);
-        }
-
-        if (input.stellarIssuerRevocable === true && policy.stellar.blockRevocableIssuers) {
-          violations.push(`Issuer ${input.stellarIssuer} has revocable authorization, which is blocked by policy.`);
+    // Allowed-issuer list check
+    if (input.action === "create_trustline" && typeof input.stellarIssuer === "string") {
+      const allowedIssuers = policy.stellar.allowedIssuers;
+      if (allowedIssuers && allowedIssuers.length > 0) {
+        const normalizedIssuer = input.stellarIssuer.trim().toUpperCase();
+        if (!allowedIssuers.map((i) => i.trim().toUpperCase()).includes(normalizedIssuer)) {
+          extraMessages.push(`Issuer ${input.stellarIssuer} is not in the allowed issuer list.`);
         }
       }
 
-      if (typeof input.stellarReserveRequiredXlm === "number") {
-        if (input.stellarReserveRequiredXlm > policy.stellar.maxTrustlineReserveXlm) {
-          violations.push(`Trustline reserve ${input.stellarReserveRequiredXlm} XLM exceeds max trustline reserve ${policy.stellar.maxTrustlineReserveXlm} XLM.`);
-        }
-
-        if (typeof input.stellarCurrentXlmBalance === "number") {
-          const availableXlm = input.stellarCurrentXlmBalance - input.stellarReserveRequiredXlm;
-
-          if (availableXlm < policy.stellar.minXlmReserve) {
-            violations.push(`Insufficient XLM reserve: ${availableXlm.toFixed(2)} XLM available after trustline, needs at least ${policy.stellar.minXlmReserve} XLM.`);
-          }
+      // XLM reserve minimum check
+      if (
+        typeof input.stellarReserveRequiredXlm === "number" &&
+        typeof input.stellarCurrentXlmBalance === "number"
+      ) {
+        const availableXlm = input.stellarCurrentXlmBalance - input.stellarReserveRequiredXlm;
+        if (availableXlm < policy.stellar.minXlmReserve) {
+          extraMessages.push(
+            `Insufficient XLM reserve: ${availableXlm.toFixed(2)} XLM available after trustline, needs at least ${policy.stellar.minXlmReserve} XLM.`,
+          );
         }
       }
     }
+  }
 
-    // For Stellar swaps, require a fresh quote
-    if (input.action === "swap_to_stable" || input.action === "reduce_exposure" || input.action === "prepare_transaction") {
-      if (input.stellarQuoteStatus === "unavailable") {
-        violations.push("Stellar swap requires a fresh quote before execution preparation.");
-      }
-
-      if (input.stellarQuoteStatus === "stale") {
-        violations.push("The Stellar swap quote is stale. A fresh quote must be obtained.");
-      }
-    }
-  } else if (input.action === "create_trustline") {
-    violations.push("Trustline creation is only supported on Stellar networks.");
+  for (const blocker of immutableBuyBlockers) {
+    extraMessages.push(`Immutable auto-buy blocker: ${blocker.replaceAll("_", " ")}.`);
   }
 
   return {
-    allowed: violations.length === 0,
-    violations,
+    allowed: result.allowed && extraMessages.length === 0,
+    violations: result.violations,
+    passed: result.passed,
+    warnings: result.warnings,
+    ruleVersion: result.ruleVersion,
+    ruleWalletAddress: result.ruleWalletAddress,
+    violationMessages: [...result.violationMessages, ...extraMessages],
   };
-}
-
-export function getBlockedReason(action: AgentRecommendedAction, percent: number, riskScore: number, policy: ExecutionPolicy) {
-  return evaluateExecutionPolicy({ action, percent, riskScore }, policy).violations[0];
 }

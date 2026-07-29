@@ -1,5 +1,14 @@
 import { z } from "zod";
-import { getChainFamily, isStellarAccountAddress, isStellarContractAddress, isTransactionHashForChain } from "@/lib/chainIdentity";
+import {
+  createContractIdentity,
+  createWalletIdentity,
+  getChainFamily,
+  isStellarAccountAddress,
+  isStellarContractAddress,
+  isTransactionHashForChain,
+  normalizeNetwork,
+  resolveChainContext,
+} from "@/lib/chainIdentity";
 
 const evmAddressPattern = /^0x[a-fA-F0-9]{40}$/;
 const safeChainPattern = /^[a-zA-Z0-9:_-]{1,40}$/;
@@ -15,6 +24,8 @@ export const anyWalletAddressSchema = z.string().refine(
   "Expected EVM or Stellar wallet address",
 ).optional();
 export const chainIdSchema = z.string().regex(safeChainPattern, "Invalid chain id").optional();
+export const chainFamilySchema = z.enum(["evm", "stellar"]);
+export const networkSchema = z.string().min(1).max(64).transform((value) => value.trim());
 export const tokenSymbolSchema = z.string().regex(safeSymbolPattern, "Invalid token symbol").optional();
 export const socialHandleSchema = z.string().regex(safeSocialHandlePattern, "Invalid social handle").optional();
 export const externalUrlSchema = z.string().url().refine((value) => {
@@ -37,6 +48,60 @@ export function validateContractAddressForChain(value: string | undefined, chain
 
 export function validateTransactionHashForChain(value: string, chain?: string) {
   return isTransactionHashForChain(value, getChainFamily(chain));
+}
+
+export function validateChainScopedWallet(input: {
+  chainFamily?: "evm" | "stellar";
+  network?: string;
+  walletAddress: string;
+}) {
+  try {
+    const context = resolveChainContext({
+      chainFamily: input.chainFamily,
+      network: input.network ?? (isStellarAccountAddress(input.walletAddress) ? "stellar-testnet" : "legacy-evm"),
+      identifier: input.walletAddress,
+    });
+    createWalletIdentity({ ...context, address: input.walletAddress });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function validateChainScopedContract(input: {
+  chainFamily?: "evm" | "stellar";
+  network?: string;
+  contractAddress: string;
+}) {
+  try {
+    const context = resolveChainContext({
+      chainFamily: input.chainFamily,
+      network: input.network,
+      identifier: input.contractAddress,
+    });
+    createContractIdentity({ ...context, address: input.contractAddress });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function validateChainScopedTransaction(input: {
+  chainFamily?: "evm" | "stellar";
+  network?: string;
+  txHash: string;
+}) {
+  try {
+    const family = input.chainFamily ?? (input.txHash.startsWith("0x") ? "evm" : "stellar");
+    const network = normalizeNetwork(
+      input.network ?? (family === "evm" ? "legacy-evm" : "stellar-testnet"),
+      family,
+    );
+
+    return isTransactionHashForChain(input.txHash, resolveChainContext({ chainFamily: family, network }).chainFamily);
+  } catch {
+    return false;
+  }
 }
 
 export function normalizeSymbol(value?: string) {
