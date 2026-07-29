@@ -406,19 +406,21 @@ create table if not exists watchlist_entries (
   wallet_address text not null,
   identity_key text not null,
   chain text not null,
+  network text,
   contract_address text,
   pair_address text,
   symbol text,
   token_name text,
   asset_key text,
   issuer text,
-  asset_type text check (asset_type in ('native', 'classic', 'contract', 'issuer_account')),
+  asset_type text check (asset_type in ('native', 'classic', 'contract', 'issuer_account', 'sac', 'sep41')),
   source text not null,
   note text,
   last_scanned_at timestamptz,
   latest_scan_run_id uuid,
   latest_classification text check (latest_classification in ('watch', 'risky', 'scam', 'early_opportunity')),
   latest_score integer,
+  latest_status text check (latest_status in ('completed', 'partial', 'failed', 'stale')),
   created_at timestamptz not null default now()
 );
 

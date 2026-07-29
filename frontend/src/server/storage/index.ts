@@ -960,6 +960,7 @@ export function addWatchlistEntry(input: CreateWatchlistInput): AddWatchlistEntr
     walletAddress: normalizedWallet,
     identityKey: input.identityKey,
     chain: input.chain,
+    network: input.network,
     contractAddress: input.contractAddress,
     pairAddress: input.pairAddress,
     symbol: input.symbol,

@@ -7,13 +7,14 @@ const addBodySchema = z.object({
   action: z.enum(["add"]).default("add"),
   walletAddress: z.string().min(1).max(80),
   chain: z.string().min(1).max(40),
+  network: z.string().max(40).optional(),
   contractAddress: z.string().max(80).optional(),
   pairAddress: z.string().max(120).optional(),
   symbol: z.string().max(32).optional(),
   tokenName: z.string().max(120).optional(),
   assetKey: z.string().max(180).optional(),
   issuer: z.string().max(64).optional(),
-  assetType: z.enum(["native", "classic", "contract", "issuer_account"]).optional(),
+  assetType: z.enum(["native", "classic", "contract", "issuer_account", "sac", "sep41"]).optional(),
   source: z.enum(["dexscreener", "stellar_market", "manual"]).default("manual"),
   note: z.string().max(280).optional(),
 });
@@ -58,6 +59,7 @@ export async function POST(request: Request) {
     const result = await addToWatchlist({
       walletAddress: parsedAdd.data.walletAddress,
       chain: parsedAdd.data.chain,
+      network: parsedAdd.data.network,
       contractAddress: parsedAdd.data.contractAddress,
       pairAddress: parsedAdd.data.pairAddress,
       symbol: parsedAdd.data.symbol,

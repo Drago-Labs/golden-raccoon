@@ -630,13 +630,14 @@ export type DiscoveryScanResult = {
 export type WatchlistEntryInput = {
   walletAddress: string;
   chain: string;
+  network?: string;
   contractAddress?: string;
   pairAddress?: string;
   symbol?: string;
   tokenName?: string;
   assetKey?: string;
   issuer?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   source: DiscoveryCandidate["source"] | "manual_watchlist";
   note?: string;
 };
@@ -646,13 +647,14 @@ export type WatchlistEntry = {
   walletAddress: string;
   identityKey: string;
   chain: string;
+  network?: string;
   contractAddress?: string;
   pairAddress?: string;
   symbol?: string;
   tokenName?: string;
   assetKey?: string;
   issuer?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "sac" | "sep41";
   source: WatchlistEntryInput["source"];
   note?: string;
   createdAt: string;
