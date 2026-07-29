@@ -6,6 +6,8 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 interface IPolicyValidator {
     function getIntentValidity(bytes32 intentHash, address token, uint256 amount) external view returns (bool valid, string memory reason);
+    function intents(bytes32 intentHash) external view returns (bytes32 intentHash_, bytes32 policyCommitment, address targetToken, uint256 amount, uint256 nonce, uint64 expiry, bool executed);
+    function policyDecisions(bytes32 decisionHash) external view returns (bytes32 decisionHash_, address user, address authorizedAgent, uint256 maxTransactionValue, uint256 maxSlippageBps, uint256 nonce, uint64 expiry, bool revoked);
 }
 
 contract GoldRaccoonVault {
@@ -15,6 +17,7 @@ contract GoldRaccoonVault {
     address public immutable agent;
 
     mapping(address => mapping(address => uint256)) public balances;
+    mapping(bytes32 => bool) public consumedIntents;
 
     event Deposited(address indexed user, address indexed token, uint256 amount);
     event Withdrawn(address indexed user, address indexed token, uint256 amount, bytes32 indexed intentHash);
@@ -39,9 +42,19 @@ contract GoldRaccoonVault {
         require(recipient != address(0), "Vault: zero recipient");
         require(token != address(0), "Vault: zero token");
         require(amount > 0, "Vault: zero amount");
+        require(!consumedIntents[intentHash], "Vault: intent consumed");
 
         (bool valid, string memory reason) = policy.getIntentValidity(intentHash, token, amount);
         require(valid, reason);
+
+        consumedIntents[intentHash] = true;
+
+        (, bytes32 policyCommitment, , , , , ) = policy.intents(intentHash);
+        (, address decisionUser, , , , , , ) = policy.policyDecisions(policyCommitment);
+        require(decisionUser == recipient, "Vault: intent user mismatch");
+
+        require(balances[recipient][token] >= amount, "Vault: insufficient balance");
+        balances[recipient][token] -= amount;
 
         IERC20(token).safeTransfer(recipient, amount);
         emit Withdrawn(recipient, token, amount, intentHash);

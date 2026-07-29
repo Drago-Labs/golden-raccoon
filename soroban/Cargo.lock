@@ -732,6 +732,7 @@ dependencies = [
 name = "golden-raccoon-vault"
 version = "0.1.0"
 dependencies = [
+ "golden-raccoon-policy",
  "soroban-sdk",
 ]
 

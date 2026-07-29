@@ -4,7 +4,7 @@ import { time, loadFixture } from "@nomicfoundation/hardhat-toolbox/network-help
 
 describe("GoldRaccoonVault", function () {
   async function deployFixture() {
-    const [owner, emergency, agent, user, recipient] = await ethers.getSigners();
+    const [owner, emergency, agent, user, recipient, otherUser] = await ethers.getSigners();
 
     const Policy = await ethers.getContractFactory("GoldRaccoonPolicy");
     const policy = await Policy.deploy();
@@ -24,7 +24,7 @@ describe("GoldRaccoonVault", function () {
     const vault = await Vault.deploy(policy.target, agent.address);
     await vault.waitForDeployment();
 
-    return { policy, vault, token, owner, emergency, agent, user, recipient };
+    return { policy, vault, token, owner, emergency, agent, user, recipient, otherUser };
   }
 
   describe("Deployment", function () {
@@ -78,9 +78,9 @@ describe("GoldRaccoonVault", function () {
     });
   });
 
-  describe("Policy integration", function () {
-    it("should reject withdraw for executed intent", async function () {
-      const { vault, policy, agent, user, recipient, token } = await loadFixture(deployFixture);
+  describe("Policy integration — Finding 1 security fixes", function () {
+    it("should reject intent reuse (replay protection)", async function () {
+      const { vault, policy, agent, user, token } = await loadFixture(deployFixture);
 
       await token.transfer(user.address, ethers.parseEther("100"));
       await token.connect(user).approve(vault.target, ethers.parseEther("50"));
@@ -98,15 +98,15 @@ describe("GoldRaccoonVault", function () {
       );
       await policy.connect(agent).createIntent(decision, token.target, ethers.parseEther("5"), intentExpiry, 25);
 
-      await policy.connect(agent).executeIntent(intentHash);
+      await vault.connect(agent).withdraw(token.target, ethers.parseEther("3"), user.address, intentHash);
 
       await expect(
-        vault.connect(agent).withdraw(token.target, ethers.parseEther("1"), recipient.address, intentHash),
-      ).to.be.revertedWith("already executed");
+        vault.connect(agent).withdraw(token.target, ethers.parseEther("1"), user.address, intentHash),
+      ).to.be.revertedWith("Vault: intent consumed");
     });
 
-    it("should allow withdraw with valid intent", async function () {
-      const { vault, policy, agent, user, recipient, token } = await loadFixture(deployFixture);
+    it("should reject withdraw with another user's intent", async function () {
+      const { vault, policy, agent, user, otherUser, token } = await loadFixture(deployFixture);
 
       await token.transfer(user.address, ethers.parseEther("100"));
       await token.connect(user).approve(vault.target, ethers.parseEther("50"));
@@ -124,10 +124,58 @@ describe("GoldRaccoonVault", function () {
       );
       await policy.connect(agent).createIntent(decision, token.target, ethers.parseEther("5"), intentExpiry, 25);
 
-      await vault.connect(agent).withdraw(token.target, ethers.parseEther("3"), recipient.address, intentHash);
+      await expect(
+        vault.connect(agent).withdraw(token.target, ethers.parseEther("3"), otherUser.address, intentHash),
+      ).to.be.revertedWith("Vault: intent user mismatch");
+    });
 
-      expect(await token.balanceOf(recipient.address)).to.equal(ethers.parseEther("3"));
-      expect(await vault.userBalance(user.address, token.target)).to.equal(ethers.parseEther("50"));
+    it("should reject withdraw exceeding tracked balance", async function () {
+      const { vault, policy, agent, user, token } = await loadFixture(deployFixture);
+
+      await token.transfer(user.address, ethers.parseEther("100"));
+      await token.connect(user).approve(vault.target, ethers.parseEther("50"));
+      await vault.connect(user).deposit(token.target, ethers.parseEther("50"));
+
+      const expiry = await time.latest() + 3600;
+      const decision = await policy.connect(agent).applyPolicy.staticCall(
+        user.address, ethers.parseEther("100"), 50, expiry,
+      );
+      await policy.connect(agent).applyPolicy(user.address, ethers.parseEther("100"), 50, expiry);
+
+      const intentExpiry = await time.latest() + 1800;
+      const intentHash = await policy.connect(agent).createIntent.staticCall(
+        decision, token.target, ethers.parseEther("100"), intentExpiry, 25,
+      );
+      await policy.connect(agent).createIntent(decision, token.target, ethers.parseEther("100"), intentExpiry, 25);
+
+      await expect(
+        vault.connect(agent).withdraw(token.target, ethers.parseEther("100"), user.address, intentHash),
+      ).to.be.revertedWith("Vault: insufficient balance");
+    });
+
+    it("should allow withdraw with valid intent and debit balance", async function () {
+      const { vault, policy, agent, user, token } = await loadFixture(deployFixture);
+
+      await token.transfer(user.address, ethers.parseEther("100"));
+      await token.connect(user).approve(vault.target, ethers.parseEther("50"));
+      await vault.connect(user).deposit(token.target, ethers.parseEther("50"));
+
+      const expiry = await time.latest() + 3600;
+      const decision = await policy.connect(agent).applyPolicy.staticCall(
+        user.address, ethers.parseEther("10"), 50, expiry,
+      );
+      await policy.connect(agent).applyPolicy(user.address, ethers.parseEther("10"), 50, expiry);
+
+      const intentExpiry = await time.latest() + 1800;
+      const intentHash = await policy.connect(agent).createIntent.staticCall(
+        decision, token.target, ethers.parseEther("5"), intentExpiry, 25,
+      );
+      await policy.connect(agent).createIntent(decision, token.target, ethers.parseEther("5"), intentExpiry, 25);
+
+      await vault.connect(agent).withdraw(token.target, ethers.parseEther("3"), user.address, intentHash);
+
+      expect(await token.balanceOf(user.address)).to.equal(ethers.parseEther("53"));
+      expect(await vault.userBalance(user.address, token.target)).to.equal(ethers.parseEther("47"));
     });
   });
 });
