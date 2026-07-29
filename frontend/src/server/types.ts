@@ -484,11 +484,14 @@ export type UserRule = {
   maxMemeExposurePercent: number;
   maxDailyTransactionValueUsd?: number;
   maxSlippageBps?: number;
+  minStableReservePercent?: number;
   allowedChains?: string[];
   blockedTokens?: string[];
+  blockedIssuers?: string[];
+  blockedCategories?: string[];
   allowedActions?: AgentRecommendedAction[];
   autoExecute: boolean;
-  version: number;
+  version?: number;
   createdAt: string;
 };
 

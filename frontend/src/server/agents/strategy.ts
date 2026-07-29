@@ -26,6 +26,8 @@ export type StrategyEnforcerContext = {
   holdingAllocationPercent?: number;
   /** Current stablecoin reserve as percent of portfolio */
   stableReservePercent?: number;
+  /** User-configured minimum stable reserve percent (from user rules/risk profile) */
+  minStableReservePercent?: number;
   /** Target network / chain for the trade */
   network?: string;
   /** Source token symbol or address */
@@ -36,6 +38,8 @@ export type StrategyEnforcerContext = {
   slippageBps?: number;
   /** Whether the token is categorized as a meme coin */
   isMemeToken?: boolean;
+  /** User-configured blocked token categories */
+  blockedCategories?: string[];
   /** Simulation status */
   simulationStatus?: "not_required" | "pending" | "passed" | "failed" | "unavailable";
   // Stellar-specific fields
@@ -337,7 +341,7 @@ export function evaluateStrategy(
     context.holdingAllocationPercent >= 25 &&
     context.riskScore >= 50
   ) {
-    const minStable = 15; // implied minimum stable reserve
+    const minStable = context.minStableReservePercent ?? 15;
     if (context.stableReservePercent < minStable) {
       decisions.push(
         makeDecision(
@@ -348,7 +352,7 @@ export function evaluateStrategy(
           context.stableReservePercent,
           minStable,
           true,
-          `Stable reserve ${context.stableReservePercent.toFixed(1)}% is below recommended minimum ${minStable}% for high-exposure positions.`,
+          `Stable reserve ${context.stableReservePercent.toFixed(1)}% is below configured minimum ${minStable}% for high-exposure positions.`,
         ),
       );
     }
@@ -414,10 +418,29 @@ export function evaluateStrategy(
     );
   }
 
-  // ---- 11. Blocked tokens ----
+  // ---- 11. Blocked tokens (chain-aware and issuer-aware) ----
+  const blockedIssuers = (
+    safeRules.blockedIssuers ?? []
+  ).map((i) => i.trim().toLowerCase()).filter(Boolean);
+
+  const chainAwareBlocked = new Set<string>();
+  for (const entry of safeRules.blockedTokens ?? []) {
+    const trimmed = entry.trim().toLowerCase();
+    if (!trimmed) continue;
+    // Register the entry as-is (bare token or chain-qualified: "chain:token")
+    chainAwareBlocked.add(trimmed);
+  }
+
   for (const token of [context.fromToken, context.toToken]) {
     const normalizedToken = normalized(token);
-    if (token && normalizedToken && blockedTokens.includes(normalizedToken)) {
+    if (!token || !normalizedToken) continue;
+
+    const chainIdent = normalized(context.network) ? `${normalized(context.network)}:${normalizedToken}` : normalizedToken;
+    // Block if the bare token OR the chain-qualified identity is in the set.
+    // A bare entry "scam" blocks on all chains; "ethereum:scam" blocks only on Ethereum.
+    const isBlocked = chainAwareBlocked.has(normalizedToken) || chainAwareBlocked.has(chainIdent);
+
+    if (isBlocked) {
       decisions.push(
         makeDecision(
           ruleId,
@@ -427,10 +450,43 @@ export function evaluateStrategy(
           token,
           "blocked list",
           true,
-          `Token "${token}" is blocked by user policy.`,
+          `Token "${token}"${context.network ? ` on ${context.network}` : ""} is blocked by user policy.`,
         ),
       );
     }
+  }
+
+  // ---- 11b. Blocked issuers (Stellar-specific) ----
+  if (context.stellarIssuer && blockedIssuers.includes(normalized(context.stellarIssuer) ?? "")) {
+    decisions.push(
+      makeDecision(
+        ruleId,
+        version,
+        "Blocked issuer",
+        "stellar_issuer",
+        context.stellarIssuer,
+        "blocked issuer list",
+        true,
+        `Issuer ${context.stellarIssuer} is blocked by user policy.`,
+      ),
+    );
+  }
+
+  // ---- 11c. Blocked categories ----
+  const blockedCategories = (context.blockedCategories ?? []).map((c) => c.trim().toLowerCase()).filter(Boolean);
+  if (blockedCategories.includes("meme") && context.isMemeToken) {
+    decisions.push(
+      makeDecision(
+        ruleId,
+        version,
+        "Blocked category: meme",
+        "blocked_category",
+        "meme",
+        "blocked category list",
+        true,
+        "Meme tokens are blocked by user policy.",
+      ),
+    );
   }
 
   // ---- 12. Simulation status ----

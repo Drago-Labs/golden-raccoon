@@ -72,7 +72,10 @@ export function buildExecutionPolicy(rules?: UserRule): ExecutionPolicy {
     blockedTokens: uniqueStrings(safeRules.blockedTokens, []),
     allowedActions: new Set(safeRules.allowedActions ?? defaultRules.allowedActions ?? ["reduce_exposure", "swap_to_stable", "prepare_transaction", "create_trustline", "watch", "hold", "no_action"]),
     walletAddress: safeRules.walletAddress,
-    stellar: getDefaultStellarPolicy(),
+    stellar: {
+      ...getDefaultStellarPolicy(),
+      allowedIssuers: safeRules.blockedIssuers?.length ? undefined : getDefaultStellarPolicy().allowedIssuers,
+    },
   };
 }
 

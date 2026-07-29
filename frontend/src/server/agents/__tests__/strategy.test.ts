@@ -263,6 +263,131 @@ describe("evaluateStrategy", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Chain-aware token blocking
+  // ---------------------------------------------------------------------------
+  it("blocks token on specific chain when chain-qualified blocked token is set", () => {
+    const rules = defaultRules({ blockedTokens: ["ethereum:SCAM"] });
+    const result = evaluateStrategy(
+      baseContext({ fromToken: "SCAM", network: "Ethereum" }),
+      rules,
+    );
+    expect(result.violations.some((v) => v.ruleCategory === "blocked_token")).toBe(true);
+  });
+
+  it("allows same token symbol on a different chain when chain-qualified", () => {
+    const rules = defaultRules({ blockedTokens: ["ethereum:SCAM"] });
+    const result = evaluateStrategy(
+      baseContext({ fromToken: "SCAM", network: "Base" }),
+      rules,
+    );
+    // The bare token "scam" is not blocked; only "ethereum:scam" is
+    expect(result.violations.some((v) => v.ruleCategory === "blocked_token")).toBe(false);
+  });
+
+  it("blocks bare token regardless of chain", () => {
+    const rules = defaultRules({ blockedTokens: ["SCAM"] });
+    const result = evaluateStrategy(
+      baseContext({ fromToken: "SCAM", network: "Solana" }),
+      rules,
+    );
+    expect(result.violations.some((v) => v.ruleCategory === "blocked_token")).toBe(true);
+  });
+
+  it("blocks token when chain+symbol identity matches", () => {
+    const rules = defaultRules({ blockedTokens: ["solana:fraud"] });
+    const result = evaluateStrategy(
+      baseContext({ fromToken: "FRAUD", network: "Solana" }),
+      rules,
+    );
+    expect(result.violations.some((v) => v.ruleCategory === "blocked_token")).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Issuer-specific blocking (Stellar)
+  // ---------------------------------------------------------------------------
+  it("blocks Stellar issuer when issuer is in blocked list", () => {
+    const rules = defaultRules({ blockedIssuers: ["GSCAM..."] });
+    const result = evaluateStrategy(
+      baseContext({
+        network: "Stellar Testnet",
+        stellarIssuer: "GSCAM...",
+        action: "create_trustline",
+      }),
+      rules,
+    );
+    expect(result.violations.some((v) => v.ruleCategory === "stellar_issuer")).toBe(true);
+  });
+
+  it("passes Stellar issuer not in blocked list", () => {
+    const rules = defaultRules({ blockedIssuers: ["GSCAM..."] });
+    const result = evaluateStrategy(
+      baseContext({
+        network: "Stellar Testnet",
+        stellarIssuer: "GOKAY...",
+        action: "create_trustline",
+      }),
+      rules,
+    );
+    expect(result.violations.some((v) => v.ruleCategory === "stellar_issuer")).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Blocked categories
+  // ---------------------------------------------------------------------------
+  it("blocks meme token when category is blocked", () => {
+    const rules = defaultRules();
+    const result = evaluateStrategy(
+      baseContext({ isMemeToken: true, blockedCategories: ["meme"] }),
+      rules,
+    );
+    expect(result.violations.some((v) => v.ruleCategory === "blocked_category")).toBe(true);
+  });
+
+  it("passes non-meme token when category is blocked", () => {
+    const rules = defaultRules();
+    const result = evaluateStrategy(
+      baseContext({ isMemeToken: false, blockedCategories: ["meme"] }),
+      rules,
+    );
+    expect(result.violations.some((v) => v.ruleCategory === "blocked_category")).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Configurable stable reserve threshold
+  // ---------------------------------------------------------------------------
+  it("uses configured minStableReservePercent instead of hardcoded default", () => {
+    const rules = defaultRules({ minStableReservePercent: 25 });
+    const result = evaluateStrategy(
+      baseContext({
+        phase: "decision",
+        holdingAllocationPercent: 35,
+        stableReservePercent: 20,
+        riskScore: 60,
+        minStableReservePercent: 25,
+      }),
+      rules,
+    );
+    // 20% is below configured 25%, so should violate
+    expect(result.violations.some((v) => v.ruleCategory === "stable_reserve")).toBe(true);
+  });
+
+  it("passes stable reserve when above configured threshold", () => {
+    const rules = defaultRules({ minStableReservePercent: 10 });
+    const result = evaluateStrategy(
+      baseContext({
+        phase: "decision",
+        holdingAllocationPercent: 35,
+        stableReservePercent: 15,
+        riskScore: 60,
+        minStableReservePercent: 10,
+      }),
+      rules,
+    );
+    // 15% is above configured 10%, so should pass
+    expect(result.violations.some((v) => v.ruleCategory === "stable_reserve")).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
   // Precedence: multiple violations
   // ---------------------------------------------------------------------------
   it("reports all violations when multiple rules are broken simultaneously", () => {
@@ -314,5 +439,157 @@ describe("evaluateStrategy", () => {
       rules,
     );
     expect(result.violations.some((v) => v.ruleCategory === "blocked_token")).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Critical-blocker precedence over strategy rules
+  // ---------------------------------------------------------------------------
+  it("reports critical-blocker violations alongside strategy violations without suppressing", () => {
+    // When a critical blocker (e.g., simulation failure) and strategy violation
+    // (e.g., blocked token) both exist, BOTH must be reported — the strategy
+    // enforcer does not suppress any violation.
+    const rules = defaultRules({
+      maxRiskScore: 70,
+      blockedTokens: ["DANGER"],
+    });
+    const result = evaluateStrategy(
+      baseContext({
+        riskScore: 85,
+        fromToken: "DANGER",
+        simulationStatus: "failed",
+      }),
+      rules,
+    );
+
+    expect(result.allowed).toBe(false);
+    const categories = result.violations.map((v) => v.ruleCategory);
+    expect(categories).toContain("risk_threshold");
+    expect(categories).toContain("blocked_token");
+    // Simulation failure is a separate violation
+    expect(result.violations.some((v) => v.ruleLabel === "Simulation")).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Versioned snapshot identity
+  // ---------------------------------------------------------------------------
+  it("carries rule version and wallet for snapshot traceability", () => {
+    const rules = defaultRules({ version: 7, walletAddress: "0xSnapshot" });
+    const result = evaluateStrategy(baseContext(), rules);
+
+    expect(result.ruleVersion).toBe(7);
+    expect(result.ruleWalletAddress).toBe("0xSnapshot");
+    // All decisions should reference the same versioned snapshot
+    for (const decision of [...result.violations, ...result.passed, ...result.warnings]) {
+      expect(decision.ruleVersion).toBe(7);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Decision-to-Execution snapshot propagation (contract test)
+  // ---------------------------------------------------------------------------
+  it("enforces the same rule snapshot for decision and execution phases", () => {
+    const rules = defaultRules({
+      version: 5,
+      maxRiskScore: 60,
+      walletAddress: "0xShared",
+    });
+
+    const decisionCtx = baseContext({
+      phase: "decision",
+      riskScore: 72,
+      confidence: 0.5,
+    });
+    const executionCtx = baseContext({
+      phase: "execution",
+      riskScore: 72,
+      action: "swap_to_stable",
+      percent: 15,
+    });
+
+    const decisionResult = evaluateStrategy(decisionCtx, rules);
+    const executionResult = evaluateStrategy(executionCtx, rules);
+
+    // Both phases must see the same versioned snapshot
+    expect(decisionResult.ruleVersion).toBe(5);
+    expect(executionResult.ruleVersion).toBe(5);
+    expect(decisionResult.ruleWalletAddress).toBe("0xShared");
+    expect(executionResult.ruleWalletAddress).toBe("0xShared");
+
+    // The same risk threshold violation should be detected in both phases
+    expect(decisionResult.violations.some((v) => v.ruleCategory === "risk_threshold")).toBe(true);
+    expect(executionResult.violations.some((v) => v.ruleCategory === "risk_threshold")).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Version auto-increment behavior
+  // ---------------------------------------------------------------------------
+  it("uses the version from the provided rule snapshot", () => {
+    // When a rule is passed with an explicit version, the enforcer must use that
+    // version, not the default (1). This verifies that versioned snapshots are
+    // propagated correctly.
+    const rules = defaultRules({ version: 12, walletAddress: "0xVersioned" });
+    const result = evaluateStrategy(baseContext(), rules);
+
+    expect(result.ruleVersion).toBe(12);
+  });
+
+  it("falls back to default version 1 when no rules provided", () => {
+    const result = evaluateStrategy(baseContext());
+    expect(result.ruleVersion).toBeGreaterThanOrEqual(1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Action downgrade on strategy violation (Decision integration contract)
+  // ---------------------------------------------------------------------------
+  it("strategy violation should be detectable by decision agent to downgrade action", () => {
+    // This test verifies that the enforcer correctly reports violations so the
+    // Decision Agent can downgrade the recommendedAction. The actual downgrade
+    // logic lives in the Decision Agent; this test validates the contract.
+    const rules = defaultRules({
+      allowedActions: ["hold", "watch"],
+      maxRiskScore: 30,
+    });
+    const result = evaluateStrategy(
+      baseContext({ action: "swap_to_stable", riskScore: 72 }),
+      rules,
+    );
+
+    // The enforcer must report at least one blocked violation
+    expect(result.allowed).toBe(false);
+    const blockedViolations = result.violations.filter((v) => v.action === "blocked");
+    expect(blockedViolations.length).toBeGreaterThan(0);
+    // At least one violation should be an allowed_action violation
+    expect(blockedViolations.some((v) => v.ruleCategory === "allowed_action")).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Liquidity and network context checks
+  // ---------------------------------------------------------------------------
+  it("blocks when liquidity risk is critical", () => {
+    const rules = defaultRules();
+    const result = evaluateStrategy(
+      baseContext({ liquidityRiskScore: 85, network: "Base" }),
+      rules,
+    );
+    expect(result.violations.some((v) => v.ruleCategory === "liquidity")).toBe(true);
+  });
+
+  it("warns when liquidity risk is elevated", () => {
+    const rules = defaultRules();
+    const result = evaluateStrategy(
+      baseContext({ liquidityRiskScore: 55, network: "Base" }),
+      rules,
+    );
+    expect(result.warnings.some((w) => w.ruleCategory === "liquidity")).toBe(true);
+  });
+
+  it("does not trigger liquidity check when score is normal", () => {
+    const rules = defaultRules();
+    const result = evaluateStrategy(
+      baseContext({ liquidityRiskScore: 30, network: "Base" }),
+      rules,
+    );
+    expect(result.violations.some((v) => v.ruleCategory === "liquidity")).toBe(false);
+    expect(result.warnings.some((w) => w.ruleCategory === "liquidity")).toBe(false);
   });
 });

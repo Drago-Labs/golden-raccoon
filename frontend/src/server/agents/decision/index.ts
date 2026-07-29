@@ -644,6 +644,12 @@ function enforceStrategy(
   confidence: number,
   context: ReturnType<typeof inferContext>,
   userRules?: Partial<UserRule>,
+  userRiskProfile?: UserRiskProfile,
+  network?: string,
+  fromToken?: string,
+  liquidityRiskScore?: number,
+  isMemeToken?: boolean,
+  estimatedValueUsd?: number,
 ): DecisionStrategyEnforcement {
   if (!userRules) {
     return {
@@ -654,6 +660,8 @@ function enforceStrategy(
     };
   }
 
+  const minStableReservePercent = userRiskProfile?.minStableReservePercent ?? userRules.minStableReservePercent;
+
   const strategyContext: StrategyEnforcerContext = {
     action: recommendedAction,
     riskScore: score,
@@ -662,6 +670,12 @@ function enforceStrategy(
     stableReservePercent: context.stableReservePercent,
     confidence,
     phase: "decision",
+    network,
+    fromToken,
+    liquidityRiskScore,
+    isMemeToken,
+    estimatedValueUsd,
+    minStableReservePercent,
   };
 
   const result = evaluateStrategy(strategyContext, userRules as UserRule);
@@ -1015,6 +1029,18 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
     userRules: input.userRules,
     userRiskProfile: input.userRiskProfile,
   });
+  // Extract additional context fields from agent results for strategy enforcement
+  const onchainResult = getResult(results, "onchain");
+  const derivedNetwork = input.context?.discoveryContext?.chainFamily ?? onchainResult?.rawSignals?.network as string | undefined;
+  const derivedFromToken = input.context?.tokenSymbol;
+  const derivedLiquidityRiskScore = onchainResult?.rawSignals?.liquidityRiskScore as number | undefined
+    ?? (onchainResult?.findings.some((f) => f.label.toLowerCase().includes("liquidity") && f.severity === "high") ? 75 : undefined);
+  const derivedIsMemeToken = input.context?.discoveryContext?.metrics?.memeToken as boolean | undefined
+    ?? (derivedFromToken ? /meme|pepe|doge|shib|wojak|chad/i.test(derivedFromToken) : undefined);
+  const derivedEstimatedValueUsd = context.holdingAllocationPercent > 0 && input.context?.targetExposurePercent !== undefined
+    ? (input.context.targetExposurePercent / 100) * 10_000 // rough estimate
+    : undefined;
+
   // Enforce user strategy rules and capture structured policy decisions
   const strategyEnforcement = enforceStrategy(
     recommendedAction,
@@ -1022,11 +1048,26 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
     confidence,
     context,
     input.userRules,
+    input.userRiskProfile,
+    derivedNetwork,
+    derivedFromToken,
+    derivedLiquidityRiskScore,
+    derivedIsMemeToken,
+    derivedEstimatedValueUsd,
   );
+
+  // Strategy violations must constrain the final recommendation.
+  // If any rule was violated, downgrade to manual_review so downstream
+  // code cannot consume a buy/prepare action the user's rules blocked.
+  let finalAction = recommendedAction;
+  if (strategyEnforcement.strategyBlockers.length > 0) {
+    finalAction = "manual_review";
+  }
+
   // Strategy rule violations become additional blockers (always secondary to critical ones)
   const allBlockers = [...blockers, ...strategyEnforcement.strategyBlockers];
   const explanation = buildExplanation({
-    action: recommendedAction,
+    action: finalAction,
     score,
     confidence,
     results,
@@ -1038,7 +1079,7 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
   const findings = buildDecisionFindings({
     results,
     score,
-    action: recommendedAction,
+    action: finalAction,
     confidence,
     coverage,
     weightedScore,
@@ -1051,15 +1092,15 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
   return buildAgentResult({
     agent: "decision",
     score,
-    verdict: verdictForAction(recommendedAction),
+    verdict: verdictForAction(finalAction),
     summary:
       results.length > 0
-        ? `Decision Agent combined ${results.map((result) => result.agent).join(", ")} signals into a ${recommendedAction.replaceAll("_", " ")} recommendation.`
+        ? `Decision Agent combined ${results.map((result) => result.agent).join(", ")} signals into a ${finalAction.replaceAll("_", " ")} recommendation.`
         : "Decision Agent needs specialist agent results before producing a recommendation.",
     findings,
     sources: getDecisionSources(results, invalidMessages.length),
     confidence,
-    recommendedAction,
+    recommendedAction: finalAction,
     blockingReasons: allBlockers.map((blocker) => `${blocker.label}: ${blocker.detail}`),
     missingData,
     rawSignals: {
@@ -1072,7 +1113,7 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
       confidenceFormula,
       strategyEnforcement,
       deterministicCore: getDecisionCoreAudit({
-        action: recommendedAction,
+        action: finalAction,
         score,
         confidence,
         confidenceFormula,
