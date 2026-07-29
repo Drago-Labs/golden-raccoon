@@ -1,6 +1,11 @@
 import type { AgentRecommendedAction, StrategyPolicyResult, UserRule } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { evaluateStrategy, type StrategyEnforcerContext } from "@/server/agents/strategy";
+import { getChainFamily } from "@/lib/chainIdentity";
+import {
+  evaluateImmutableBuyBlockers,
+  type ImmutableBuySafetySignals,
+} from "@/server/autoMode/policy";
 
 export type StellarPolicyOverrides = {
   allowedIssuers?: string[];
@@ -34,6 +39,8 @@ export type ExecutionPolicyInput = {
   estimatedValueUsd?: number;
   slippageBps?: number;
   simulationStatus?: "not_required" | "pending" | "passed" | "failed" | "unavailable";
+  autoModeBuy?: boolean;
+  autoModeBuySafetySignals?: ImmutableBuySafetySignals;
   // Stellar-specific trustline fields
   stellarIssuer?: string;
   stellarIssuerClawback?: boolean;
@@ -79,17 +86,25 @@ export function buildExecutionPolicy(rules?: UserRule): ExecutionPolicy {
   };
 }
 
+function normalized(value?: string) {
+  return value?.trim().toLowerCase();
+}
+
+function isStellarChain(chain?: string) {
+  return getChainFamily(chain) === "stellar";
+}
+
 /**
- * Evaluate execution policy using the shared strategy enforcer.
- * Returns the legacy { allowed, violations } shape PLUS structured
- * policy decisions so the UI can show which rule blocked/changed the
- * recommendation.
+ * Evaluate execution policy using the shared strategy enforcer as the
+ * primary enforcement engine, plus execution-specific checks for
+ * immutable auto-buy blockers and Stellar issuer/XLM reserve limits.
  */
 export function evaluateExecutionPolicy(
   input: ExecutionPolicyInput,
-  _policy: ExecutionPolicy,
+  policy: ExecutionPolicy,
   rules?: UserRule,
 ): StrategyPolicyResult {
+  // 1. Run the shared strategy enforcer for all standard rule checks
   const context: StrategyEnforcerContext = {
     action: input.action,
     riskScore: input.riskScore,
@@ -109,8 +124,55 @@ export function evaluateExecutionPolicy(
     phase: "execution",
   };
 
-  // Note: _policy (ExecutionPolicy) is kept for backward compatibility.
-  // All enforcement logic now lives in evaluateStrategy() for shared use
-  // by both the Decision Agent and the Execution Agent.
-  return evaluateStrategy(context, rules);
+  const result = evaluateStrategy(context, rules);
+
+  // 2. Append immutable auto-buy blockers (not covered by shared enforcer)
+  const immutableBuyBlockers = input.autoModeBuy
+    ? evaluateImmutableBuyBlockers(input.autoModeBuySafetySignals)
+    : [];
+
+  // 3. Append additional Stellar-specific checks not in the shared enforcer
+  //    (allowed-issuer list, XLM reserve minimum)
+  const extraViolations: typeof result.violations = [];
+  const extraMessages: string[] = [];
+
+  if (isStellarChain(input.network)) {
+    // Allowed-issuer list check
+    if (input.action === "create_trustline" && typeof input.stellarIssuer === "string") {
+      const allowedIssuers = policy.stellar.allowedIssuers;
+      if (allowedIssuers && allowedIssuers.length > 0) {
+        const normalizedIssuer = input.stellarIssuer.trim().toUpperCase();
+        if (!allowedIssuers.map((i) => i.trim().toUpperCase()).includes(normalizedIssuer)) {
+          extraMessages.push(`Issuer ${input.stellarIssuer} is not in the allowed issuer list.`);
+        }
+      }
+
+      // XLM reserve minimum check
+      if (
+        typeof input.stellarReserveRequiredXlm === "number" &&
+        typeof input.stellarCurrentXlmBalance === "number"
+      ) {
+        const availableXlm = input.stellarCurrentXlmBalance - input.stellarReserveRequiredXlm;
+        if (availableXlm < policy.stellar.minXlmReserve) {
+          extraMessages.push(
+            `Insufficient XLM reserve: ${availableXlm.toFixed(2)} XLM available after trustline, needs at least ${policy.stellar.minXlmReserve} XLM.`,
+          );
+        }
+      }
+    }
+  }
+
+  for (const blocker of immutableBuyBlockers) {
+    extraMessages.push(`Immutable auto-buy blocker: ${blocker.replaceAll("_", " ")}.`);
+  }
+
+  return {
+    allowed: result.allowed && extraMessages.length === 0,
+    violations: result.violations,
+    passed: result.passed,
+    warnings: result.warnings,
+    ruleVersion: result.ruleVersion,
+    ruleWalletAddress: result.ruleWalletAddress,
+    violationMessages: [...result.violationMessages, ...extraMessages],
+  };
 }

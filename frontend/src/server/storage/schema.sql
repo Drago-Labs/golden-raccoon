@@ -140,6 +140,28 @@ create table if not exists transactions (
   created_at timestamptz not null default now()
 );
 
+-- Migrate existing transactions table: add lifecycle columns that may not exist
+alter table transactions add column if not exists lifecycle_status text;
+alter table transactions add column if not exists chain_family text not null default 'evm';
+alter table transactions add column if not exists source_account text;
+alter table transactions add column if not exists expected_effects jsonb not null default '[]'::jsonb;
+alter table transactions add column if not exists idempotency_key text;
+alter table transactions add column if not exists explorer_url text;
+alter table transactions add column if not exists failure_reason text;
+alter table transactions add column if not exists submitted_at timestamptz;
+alter table transactions add column if not exists terminal_at timestamptz;
+alter table transactions add column if not exists last_polled_at timestamptz;
+alter table transactions add column if not exists user_approved boolean not null default false;
+alter table transactions add column if not exists simulation_status text;
+alter table transactions add column if not exists policy_status jsonb not null default '{}'::jsonb;
+alter table transactions add column if not exists decision_action text;
+alter table transactions add column if not exists decision_id text;
+
+-- Add check constraint for lifecycle_status if the table already existed
+alter table transactions drop constraint if exists transactions_lifecycle_status_check;
+alter table transactions add constraint transactions_lifecycle_status_check
+  check (lifecycle_status in ('prepared', 'user_rejected', 'submitted', 'confirmed', 'failed', 'replaced', 'expired', 'pending'));
+
 -- Backfill (idempotent): for rows that pre-date the V2 columns, lift the legacy status into
 -- the lifecycle_status column. Existing rows that already carry a curated lifecycle_status
 -- value are left untouched.
@@ -150,7 +172,6 @@ update transactions
 create unique index if not exists transactions_idempotency_wallet_idx
   on transactions(wallet_address, idempotency_key)
   where idempotency_key is not null;
-
 create table if not exists transaction_lifecycle_events (
   id uuid primary key default gen_random_uuid(),
   transaction_hash text not null references transactions(tx_hash) on delete cascade,
@@ -198,6 +219,52 @@ create table if not exists user_rules (
   auto_execute boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+-- V3 auto-mode onboarding is deliberately isolated from mutable V2 rules.
+-- Missing policy/authorization fields remain null so a migrated row can
+-- never become eligible through server defaults.
+create table if not exists auto_mode_policies (
+  wallet_address text primary key,
+  policy_version integer not null check (policy_version > 0),
+  policy jsonb not null,
+  policy_hash text,
+  requested_enabled boolean not null default false,
+  effective_enabled boolean not null default false,
+  explanation_accepted_at timestamptz,
+  authorization_status text not null default 'pending'
+    check (authorization_status in ('pending', 'authorized', 'cancelled', 'rejected', 'expired')),
+  authorization_policy_hash text,
+  authorization_proof_id text,
+  signed_payload_hash text,
+  authorized_at timestamptz,
+  authorization_expires_at timestamptz,
+  allowance_usd numeric,
+  contract_address text,
+  contract_network text,
+  contract_policy_version text,
+  contract_verified boolean not null default false,
+  contract_verification_id text,
+  contract_checked_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists auto_mode_authorization_events (
+  id text primary key,
+  wallet_address text not null references auto_mode_policies(wallet_address) on delete cascade,
+  event text not null
+    check (event in ('policy_saved', 'expansion_confirmed', 'authorization_requested', 'authorized', 'cancelled', 'rejected', 'expired')),
+  policy_hash text,
+  detail jsonb not null default '{}'::jsonb,
+  occurred_at timestamptz not null default now()
+);
+
+create index if not exists auto_mode_authorization_events_wallet_occurred_idx
+  on auto_mode_authorization_events(wallet_address, occurred_at desc);
+
+-- Legacy strategy rows are never an auto-mode authorization. Applying this
+-- additive migration is intentionally fail-closed for all pre-V3 users.
+update user_rules set auto_execute = false where auto_execute is distinct from false;
 
 create index if not exists agent_runs_wallet_created_idx on agent_runs(wallet_address, created_at desc);
 create index if not exists agent_results_run_agent_idx on agent_results(run_id, agent);
