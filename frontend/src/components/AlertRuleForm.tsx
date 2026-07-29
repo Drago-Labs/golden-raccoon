@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import type { AlertRule, AlertSeverity, AlertTriggerType } from "@/server/types";
 import { useWalletSession } from "@/hooks/useWalletSession";
+import { LiveRegion } from "@/components/a11y/LiveRegion";
 
 const triggerOptions: Array<{ value: AlertTriggerType; label: string; description: string; direction: "high_is_bad" | "low_is_bad" }> = [
   { value: "critical_risk", label: "Critical risk", description: "Trigger when AgentResult.riskScore ≥ threshold.", direction: "high_is_bad" },
@@ -57,6 +58,7 @@ function getDefaultState(trigger: AlertTriggerType): FormState {
 
 export function AlertRuleForm({ initialRule, onSaved }: { initialRule?: AlertRule; onSaved?: () => void }) {
   const router = useRouter();
+  const errorId = useId();
   const { address, isConnected } = useWalletSession();
   const [state, setState] = useState<FormState>(initialRule ? {
     triggerType: initialRule.triggerType,
@@ -230,13 +232,14 @@ export function AlertRuleForm({ initialRule, onSaved }: { initialRule?: AlertRul
         <button
           type="submit"
           disabled={saving || !isConnected}
+          aria-describedby={error ? errorId : undefined}
           className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#d9a441] px-6 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {saving ? "Saving…" : initialRule ? "Save changes" : "Create rule"}
         </button>
-        {error ? <span className="text-sm text-red-200">{error}</span> : null}
         {savedAt ? <span className="text-sm text-emerald-200">Saved {new Date(savedAt).toLocaleTimeString()}</span> : null}
       </div>
+      <LiveRegion id={errorId} message={error} politeness="assertive" visible className={error ? "mt-3 text-sm text-red-200" : undefined} />
     </form>
   );
 }

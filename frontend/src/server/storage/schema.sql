@@ -41,6 +41,7 @@ create table if not exists agent_runs (
   target_name text,
   target_address text,
   target_chain text,
+  target_token_data jsonb,
   status text not null check (status in ('completed', 'partial', 'failed')),
   recommendation text not null,
   decision_score integer not null,
@@ -140,6 +141,28 @@ create table if not exists transactions (
   created_at timestamptz not null default now()
 );
 
+-- Migrate existing transactions table: add lifecycle columns that may not exist
+alter table transactions add column if not exists lifecycle_status text;
+alter table transactions add column if not exists chain_family text not null default 'evm';
+alter table transactions add column if not exists source_account text;
+alter table transactions add column if not exists expected_effects jsonb not null default '[]'::jsonb;
+alter table transactions add column if not exists idempotency_key text;
+alter table transactions add column if not exists explorer_url text;
+alter table transactions add column if not exists failure_reason text;
+alter table transactions add column if not exists submitted_at timestamptz;
+alter table transactions add column if not exists terminal_at timestamptz;
+alter table transactions add column if not exists last_polled_at timestamptz;
+alter table transactions add column if not exists user_approved boolean not null default false;
+alter table transactions add column if not exists simulation_status text;
+alter table transactions add column if not exists policy_status jsonb not null default '{}'::jsonb;
+alter table transactions add column if not exists decision_action text;
+alter table transactions add column if not exists decision_id text;
+
+-- Add check constraint for lifecycle_status if the table already existed
+alter table transactions drop constraint if exists transactions_lifecycle_status_check;
+alter table transactions add constraint transactions_lifecycle_status_check
+  check (lifecycle_status in ('prepared', 'user_rejected', 'submitted', 'confirmed', 'failed', 'replaced', 'expired', 'pending'));
+
 -- Backfill (idempotent): for rows that pre-date the V2 columns, lift the legacy status into
 -- the lifecycle_status column. Existing rows that already carry a curated lifecycle_status
 -- value are left untouched.
@@ -150,7 +173,6 @@ update transactions
 create unique index if not exists transactions_idempotency_wallet_idx
   on transactions(wallet_address, idempotency_key)
   where idempotency_key is not null;
-
 create table if not exists transaction_lifecycle_events (
   id uuid primary key default gen_random_uuid(),
   transaction_hash text not null references transactions(tx_hash) on delete cascade,
@@ -171,6 +193,8 @@ create table if not exists x402_payment_receipts (
   wallet_address text,
   payer text,
   transaction_hash text,
+  chain_family text not null default 'evm' check (chain_family in ('evm', 'stellar')),
+  payer_identity jsonb not null default '{}'::jsonb,
   network text not null,
   asset text not null,
   amount text not null,
@@ -179,10 +203,45 @@ create table if not exists x402_payment_receipts (
   facilitator_url text not null,
   protected_resource text not null,
   request_body_hash text not null,
+  payment_expiry timestamptz,
   verification_status text not null check (verification_status in ('payment_required', 'verified', 'settled', 'failed', 'duplicate', 'expired')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- V3 emergency pause / agent revoke / allowance / trustline recovery
+create table if not exists recovery_requests (
+  id uuid primary key default gen_random_uuid(),
+  wallet_address text not null,
+  recovery_type text not null check (recovery_type in ('pause_agent', 'revoke_agent', 'reduce_allowance', 'revoke_allowance', 'remove_trustline')),
+  asset text,
+  consumer text,
+  chain_id text,
+  chain_family text,
+  status text not null check (status in ('requested', 'prepared', 'submitted', 'confirmed', 'failed', 'stale')),
+  incident_mode boolean not null default false,
+  consequences jsonb not null default '[]'::jsonb,
+  reserved_native_amount text,
+  expected_fee text,
+  policy_version text not null default 'v3.0.0',
+  last_verified_ledger bigint,
+  last_verified_block_number bigint,
+  amount text,
+  reason text,
+  error text,
+  requested_at timestamptz not null default now(),
+  prepared_at timestamptz,
+  submitted_at timestamptz,
+  tx_hash text,
+  confirmed_at timestamptz,
+  stale_at timestamptz,
+  updated_at timestamptz not null default now(),
+  expires_at timestamptz
+);
+create index if not exists recovery_requests_wallet_updated_idx on recovery_requests(wallet_address, updated_at desc);
+create index if not exists recovery_requests_status_idx on recovery_requests(status);
+create unique index if not exists recovery_requests_active_unique on recovery_requests(wallet_address, recovery_type, coalesce(asset, E'\0'), coalesce(consumer, E'\0'))
+  where status in ('requested', 'prepared');
 
 create table if not exists user_rules (
   id uuid primary key default gen_random_uuid(),
@@ -198,6 +257,52 @@ create table if not exists user_rules (
   auto_execute boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+-- V3 auto-mode onboarding is deliberately isolated from mutable V2 rules.
+-- Missing policy/authorization fields remain null so a migrated row can
+-- never become eligible through server defaults.
+create table if not exists auto_mode_policies (
+  wallet_address text primary key,
+  policy_version integer not null check (policy_version > 0),
+  policy jsonb not null,
+  policy_hash text,
+  requested_enabled boolean not null default false,
+  effective_enabled boolean not null default false,
+  explanation_accepted_at timestamptz,
+  authorization_status text not null default 'pending'
+    check (authorization_status in ('pending', 'authorized', 'cancelled', 'rejected', 'expired')),
+  authorization_policy_hash text,
+  authorization_proof_id text,
+  signed_payload_hash text,
+  authorized_at timestamptz,
+  authorization_expires_at timestamptz,
+  allowance_usd numeric,
+  contract_address text,
+  contract_network text,
+  contract_policy_version text,
+  contract_verified boolean not null default false,
+  contract_verification_id text,
+  contract_checked_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists auto_mode_authorization_events (
+  id text primary key,
+  wallet_address text not null references auto_mode_policies(wallet_address) on delete cascade,
+  event text not null
+    check (event in ('policy_saved', 'expansion_confirmed', 'authorization_requested', 'authorized', 'cancelled', 'rejected', 'expired')),
+  policy_hash text,
+  detail jsonb not null default '{}'::jsonb,
+  occurred_at timestamptz not null default now()
+);
+
+create index if not exists auto_mode_authorization_events_wallet_occurred_idx
+  on auto_mode_authorization_events(wallet_address, occurred_at desc);
+
+-- Legacy strategy rows are never an auto-mode authorization. Applying this
+-- additive migration is intentionally fail-closed for all pre-V3 users.
+update user_rules set auto_execute = false where auto_execute is distinct from false;
 
 create index if not exists agent_runs_wallet_created_idx on agent_runs(wallet_address, created_at desc);
 create index if not exists agent_results_run_agent_idx on agent_results(run_id, agent);
@@ -245,6 +350,148 @@ begin
   end;
   begin
     alter table alert_observations add column if not exists incomplete_data boolean default false;
+  exception when others then null;
+  end;
+  -- Widen watchlist table IDs from uuid to text to match in-memory string IDs.
+  -- On existing PostgreSQL deployments the base schema declared watchlist_entries.id
+  -- and watchlist_scan_runs.id as uuid with foreign keys between them.  PostgreSQL
+  -- rejects ALTER COLUMN TYPE on a referenced primary key unless the child foreign
+  -- keys are dropped first.  We therefore drop every FK that involves a watchlist
+  -- UUID column, widen all affected columns, then recreate the FKs.
+  begin
+    alter table watchlist_scan_runs drop constraint if exists watchlist_scan_runs_entry_id_fkey;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs drop constraint if exists watchlist_scan_runs_previous_run_id_fkey;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts drop constraint if exists discovery_alerts_entry_id_fkey;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts drop constraint if exists discovery_alerts_run_id_fkey;
+  exception when others then null;
+  end;
+  -- Now widen all watchlist/discovery columns from uuid to text.
+  begin
+    alter table watchlist_entries alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries alter column latest_scan_run_id type text using latest_scan_run_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs alter column id type text using id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs alter column entry_id type text using entry_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs alter column previous_run_id type text using previous_run_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts alter column entry_id type text using entry_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts alter column run_id type text using run_id::text;
+  exception when others then null;
+  end;
+  -- Recreate the foreign key constraints that were dropped above.
+  begin
+    alter table watchlist_scan_runs add constraint watchlist_scan_runs_entry_id_fkey
+      foreign key (entry_id) references watchlist_entries(id) on delete cascade;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs add constraint watchlist_scan_runs_previous_run_id_fkey
+      foreign key (previous_run_id) references watchlist_scan_runs(id) on delete set null;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts add constraint discovery_alerts_entry_id_fkey
+      foreign key (entry_id) references watchlist_entries(id) on delete cascade;
+  exception when others then null;
+  end;
+  begin
+    alter table discovery_alerts add constraint discovery_alerts_run_id_fkey
+      foreign key (run_id) references watchlist_scan_runs(id) on delete set null;
+  exception when others then null;
+  end;
+  -- Add columns that the base schema may not have (fresh CREATE TABLE handles these already).
+  -- Existing deployments created before the V3 discovery migration need these added.
+  begin
+    alter table watchlist_entries add column if not exists network text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists latest_status text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists last_scanned_at timestamptz;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists latest_classification text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists latest_score integer;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists pair_address text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists token_name text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists asset_key text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_entries add column if not exists issuer text;
+  exception when others then null;
+  end;
+  -- Widen the asset_type check constraint to include sac and sep41 (added in V3).
+  begin
+    alter table watchlist_entries drop constraint if exists watchlist_entries_asset_type_check;
+    alter table watchlist_entries add constraint watchlist_entries_asset_type_check
+      check (asset_type in ('native', 'classic', 'contract', 'issuer_account', 'sac', 'sep41'));
+  exception when others then null;
+  end;
+  -- Add missing columns on watchlist_scan_runs for existing deployments.
+  begin
+    alter table watchlist_scan_runs add column if not exists identity_key text;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs add column if not exists classification_reasons jsonb not null default '[]'::jsonb;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs add column if not exists source_lineage jsonb not null default '[]'::jsonb;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs add column if not exists missing_data jsonb not null default '[]'::jsonb;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs add column if not exists risk_report jsonb;
+  exception when others then null;
+  end;
+  begin
+    alter table watchlist_scan_runs add column if not exists agent_run_id uuid;
   exception when others then null;
   end;
 end $$;
@@ -335,23 +582,25 @@ create index if not exists alert_deliveries_alert_idx on alert_deliveries(alert_
 
 -- Watchlist & discovery tables (upstream V3 discovery).
 create table if not exists watchlist_entries (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key,
   wallet_address text not null,
   identity_key text not null,
   chain text not null,
+  network text,
   contract_address text,
   pair_address text,
   symbol text,
   token_name text,
   asset_key text,
   issuer text,
-  asset_type text check (asset_type in ('native', 'classic', 'contract', 'issuer_account')),
+  asset_type text check (asset_type in ('native', 'classic', 'contract', 'issuer_account', 'sac', 'sep41')),
   source text not null,
   note text,
   last_scanned_at timestamptz,
-  latest_scan_run_id uuid,
+  latest_scan_run_id text,
   latest_classification text check (latest_classification in ('watch', 'risky', 'scam', 'early_opportunity')),
   latest_score integer,
+  latest_status text check (latest_status in ('completed', 'partial', 'failed', 'stale')),
   created_at timestamptz not null default now()
 );
 
@@ -359,8 +608,8 @@ create unique index if not exists watchlist_entries_wallet_identity_uniq on watc
 create index if not exists watchlist_entries_wallet_created_idx on watchlist_entries(wallet_address, created_at desc);
 
 create table if not exists watchlist_scan_runs (
-  id uuid primary key default gen_random_uuid(),
-  entry_id uuid not null references watchlist_entries(id) on delete cascade,
+  id text primary key,
+  entry_id text not null references watchlist_entries(id) on delete cascade,
   wallet_address text not null,
   identity_key text not null,
   agent_run_id uuid references agent_runs(id) on delete set null,
@@ -372,7 +621,7 @@ create table if not exists watchlist_scan_runs (
   missing_data jsonb not null default '[]'::jsonb,
   risk_report jsonb,
   status text not null check (status in ('completed', 'partial', 'failed', 'stale')),
-  previous_run_id uuid references watchlist_scan_runs(id) on delete set null,
+  previous_run_id text references watchlist_scan_runs(id) on delete set null,
   scanned_at timestamptz not null default now()
 );
 
@@ -380,10 +629,10 @@ create index if not exists watchlist_scan_runs_entry_scanned_idx on watchlist_sc
 create index if not exists watchlist_scan_runs_wallet_scanned_idx on watchlist_scan_runs(wallet_address, scanned_at desc);
 
 create table if not exists discovery_alerts (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key,
   wallet_address text not null,
-  entry_id uuid references watchlist_entries(id) on delete cascade,
-  run_id uuid references watchlist_scan_runs(id) on delete set null,
+  entry_id text references watchlist_entries(id) on delete cascade,
+  run_id text references watchlist_scan_runs(id) on delete set null,
   kind text not null check (kind in ('critical_risk', 'liquidity_drop', 'holder_concentration', 'social_phishing', 'news_incident', 'classification_change')),
   title text not null,
   detail text not null,

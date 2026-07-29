@@ -1,7 +1,7 @@
 import { Contract, StrKey, xdr } from "@stellar/stellar-sdk";
 import type { AgentFinding, AgentResult, AgentSource } from "@/server/types";
 import { buildAgentResult, weightedScore } from "@/server/agents/shared";
-import { parseStellarAssetInput, type StellarAssetIdentity } from "@/server/stellar/assetIdentity";
+import { fetchSep1Metadata, parseStellarAssetInput, type StellarAssetIdentity } from "@/server/stellar/assetIdentity";
 import { createStellarDataServer, createStellarRpcServer, getStellarRpcHealth } from "@/server/stellar/client";
 
 export type StellarOnchainAgentInput = {
@@ -10,12 +10,53 @@ export type StellarOnchainAgentInput = {
   symbol?: string;
   issuer?: string;
   assetKey?: string;
-  assetType?: "native" | "classic" | "contract" | "issuer_account";
+  assetType?: "native" | "classic" | "contract" | "issuer_account" | "deterministic_sac" | "sep41_token" | "unsupported_contract";
+  homeDomain?: string;
+};
+
+export type StellarOnchainProviders = {
+  fetchRpcHealth?: () => Promise<{
+    healthy: boolean;
+    status: string;
+    network: string;
+    passphrase: string;
+    protocolVersion: number;
+    latestLedger: number;
+    closeTime: number;
+    checkedAt: string;
+    latencyMs: number;
+    providerUrl: string;
+    fallbackUsed: boolean;
+    attempts: number;
+  }>;
+  fetchContractState?: (contractId: string, chain: string) => Promise<{
+    deployed: boolean;
+    type: string;
+    wasmHash?: string;
+    lastModifiedLedgerSeq?: number;
+    liveUntilLedgerSeq?: number;
+    latestLedger?: number;
+  } | null>;
+  fetchClassicAssetRecord?: (chain: string, code: string, issuer: string) => Promise<StellarAssetRecord | null>;
+  fetchIssuerAccount?: (chain: string, issuer: string) => Promise<{
+    id?: string;
+    accountId?: string;
+    sequence?: string;
+    subentryCount?: number;
+    flags?: {
+      auth_required?: boolean;
+      auth_revocable?: boolean;
+      auth_immutable?: boolean;
+      auth_clawback_enabled?: boolean;
+    };
+    balances?: Array<Record<string, unknown>>;
+  } | null>;
 };
 
 type StellarAssetRecord = {
   asset_code: string;
   asset_issuer: string;
+  home_domain?: string;
   contract_id?: string;
   num_liquidity_pools?: number;
   liquidity_pools_amount?: string;
@@ -24,6 +65,16 @@ type StellarAssetRecord = {
     authorized_to_maintain_liabilities?: number;
     unauthorized?: number;
   };
+  flags?: {
+    auth_required?: boolean;
+    auth_revocable?: boolean;
+    auth_immutable?: boolean;
+    auth_clawback_enabled?: boolean;
+  };
+};
+
+type StellarAccountRecord = {
+  home_domain?: string;
   flags?: {
     auth_required?: boolean;
     auth_revocable?: boolean;
@@ -46,6 +97,7 @@ function resolveIdentity(input: StellarOnchainAgentInput): StellarAssetIdentity 
 
   if (input.assetType === "native") return parseStellarAssetInput("native", input.chain);
   if (input.contractAddress) return parseStellarAssetInput(input.contractAddress, input.chain);
+  if (input.symbol && input.issuer) return parseStellarAssetInput(`${input.symbol}:${input.issuer}`, input.chain);
 
   return null;
 }
@@ -91,10 +143,10 @@ async function getIssuerAccount(identity: StellarAssetIdentity, chain: string) {
 
   const { server } = createStellarDataServer(chain);
 
-  return server.loadAccount(issuer);
+  return (await server.loadAccount(issuer)) as unknown as StellarAccountRecord;
 }
 
-export async function runStellarOnchainAgent(input: StellarOnchainAgentInput): Promise<AgentResult> {
+export async function runStellarOnchainAgent(input: StellarOnchainAgentInput, providers?: StellarOnchainProviders): Promise<AgentResult> {
   const identity = resolveIdentity(input);
 
   if (!identity) {
@@ -112,16 +164,34 @@ export async function runStellarOnchainAgent(input: StellarOnchainAgentInput): P
 
   const startedAt = performance.now();
   const [healthResult, contractResult, assetResult, issuerResult] = await Promise.allSettled([
-    getStellarRpcHealth(input.chain),
-    "contractId" in identity ? getContractState(identity.contractId, input.chain) : Promise.resolve(null),
-    getClassicAssetRecord(identity, input.chain),
-    getIssuerAccount(identity, input.chain),
+    providers?.fetchRpcHealth ? providers.fetchRpcHealth() : getStellarRpcHealth(input.chain),
+    "contractId" in identity
+      ? providers?.fetchContractState
+        ? providers.fetchContractState(identity.contractId, input.chain)
+        : getContractState(identity.contractId, input.chain)
+      : Promise.resolve(null),
+    providers?.fetchClassicAssetRecord && identity.type === "classic"
+      ? providers.fetchClassicAssetRecord(input.chain, identity.symbol, identity.issuer)
+      : getClassicAssetRecord(identity, input.chain),
+    providers?.fetchIssuerAccount && (identity.type === "classic" || identity.type === "issuer_account")
+      ? providers.fetchIssuerAccount(input.chain, identity.issuer)
+      : getIssuerAccount(identity, input.chain),
   ]);
   const checkedAt = new Date().toISOString();
   const health = healthResult.status === "fulfilled" ? healthResult.value : null;
   const contractState = contractResult.status === "fulfilled" ? contractResult.value : null;
   const assetRecord = assetResult.status === "fulfilled" ? assetResult.value : null;
   const issuerAccount = issuerResult.status === "fulfilled" ? issuerResult.value : null;
+  const homeDomain = input.homeDomain ?? assetRecord?.home_domain ?? issuerAccount?.home_domain;
+
+  const sep1Result = homeDomain
+    ? await fetchSep1Metadata(homeDomain, {
+        symbol: "symbol" in identity ? identity.symbol : undefined,
+        issuer: "issuer" in identity ? identity.issuer : undefined,
+        contractId: "contractId" in identity ? identity.contractId : undefined,
+      }).catch(() => null)
+    : null;
+
   const issuerFlags = assetRecord?.flags ?? issuerAccount?.flags;
   const native = identity.type === "native";
   const issuerExists = native || issuerAccount !== null;
@@ -133,11 +203,31 @@ export async function runStellarOnchainAgent(input: StellarOnchainAgentInput): P
   const liquidityAmount = Number(assetRecord?.liquidity_pools_amount ?? 0);
   const authorizedAccounts = assetRecord?.accounts?.authorized ?? 0;
   const unauthorizedAccounts = assetRecord?.accounts?.unauthorized ?? 0;
-  const identityScore = native || assetRecord || contractState || issuerAccount ? 8 : 80;
-  const issuerControlScore = native ? 0 : !issuerExists ? 90 : authClawback ? 70 : authRequired && authRevocable ? 62 : authRevocable ? 48 : authRequired ? 42 : authImmutable ? 8 : 25;
+  const issuerConflict = Boolean(sep1Result?.issuerConflict);
+  const sep1Blocked = Boolean(sep1Result && !sep1Result.fetched && sep1Result.issues.length > 0);
+
+  const identityScore = native || assetRecord || contractState || issuerAccount ? (issuerConflict ? 68 : 8) : 80;
+  const issuerControlScore = native
+    ? 0
+    : !issuerExists
+      ? 90
+      : issuerConflict
+        ? 78
+        : authClawback
+          ? 70
+          : authRequired && authRevocable
+            ? 62
+            : authRevocable
+              ? 48
+              : authRequired
+                ? 42
+                : authImmutable
+                  ? 8
+                  : 25;
   const liquidityScore = native ? 8 : identity.type === "contract" ? 55 : liquidityPools === 0 ? 72 : liquidityAmount <= 0 ? 58 : liquidityPools < 3 ? 42 : 18;
   const contractScore = contractState ? (contractState.type === "stellar_asset_contract" ? 8 : 28) : identity.type === "issuer_account" ? 35 : 78;
-  const sourceScore = health && (assetRecord || contractState || native) ? 10 : health ? 42 : 78;
+  const sourceScore = health && (assetRecord || contractState || native) ? (issuerConflict || sep1Blocked ? 45 : 10) : health ? 42 : 78;
+
   const score = weightedScore([
     { score: identityScore, weight: 0.2 },
     { score: issuerControlScore, weight: 0.3 },
@@ -145,6 +235,7 @@ export async function runStellarOnchainAgent(input: StellarOnchainAgentInput): P
     { score: contractScore, weight: 0.2 },
     { score: sourceScore, weight: 0.1 },
   ]);
+
   const findings: AgentFinding[] = [
     {
       label: "Asset identity",
@@ -221,6 +312,25 @@ export async function runStellarOnchainAgent(input: StellarOnchainAgentInput): P
         : "Stellar RPC health or network identity could not be verified.",
     },
   ];
+
+  if (issuerConflict) {
+    findings.push({
+      label: "SEP-1 Metadata Conflict",
+      severity: "high",
+      scoreImpact: 78,
+      detail: sep1Result?.issues.join("; ") ?? "SEP-1 metadata issuer conflicts with asset record issuer.",
+    });
+  }
+
+  if (sep1Blocked) {
+    findings.push({
+      label: "Metadata Security Block",
+      severity: "medium",
+      scoreImpact: 45,
+      detail: `SEP-1 metadata URL could not be fetched: ${sep1Result?.issues.join("; ")}`,
+    });
+  }
+
   const sources: AgentSource[] = [
     {
       label: "Stellar RPC",
@@ -252,27 +362,42 @@ export async function runStellarOnchainAgent(input: StellarOnchainAgentInput): P
       reliability: contractState ? 0.96 : 0.15,
     },
   ];
-  const criticalIdentityFailure = identityScore >= 75;
-  const recommendedAction = criticalIdentityFailure || score >= 75 ? "avoid" : score >= 50 ? "manual_review" : score >= 25 ? "watch" : "hold";
+
+  if (sep1Result) {
+    sources.push({
+      label: "SEP-1 stellar.toml",
+      status: sep1Result.fetched ? "connected" : "unavailable",
+      detail: sep1Result.fetched
+        ? `Fetched SEP-1 metadata for ${sep1Result.homeDomain}${sep1Result.issuerMatched ? " (issuer matched)" : sep1Result.issuerConflict ? " (ISSUER CONFLICT)" : ""}.`
+        : `SEP-1 metadata unavailable: ${sep1Result.issues.join("; ")}`,
+      checkedAt,
+      reliability: sep1Result.fetched ? (sep1Result.issuerConflict ? 0.3 : 0.9) : 0.2,
+    });
+  }
+
+  const criticalIdentityFailure = identityScore >= 75 || issuerConflict;
+  const recommendedAction = criticalIdentityFailure || score >= 75 || issuerConflict ? (issuerConflict ? "manual_review" : "avoid") : score >= 50 ? "manual_review" : score >= 25 ? "watch" : "hold";
 
   return buildAgentResult({
     agent: "onchain",
     score,
-    verdict: score >= 75 ? "Critical Stellar risk" : score >= 50 ? "High Stellar risk" : score >= 25 ? "Stellar review needed" : "No major Stellar flags",
-    summary: `Checked ${identity.assetKey} on ${input.chain}. Issuer-control score ${issuerControlScore}/100, liquidity score ${liquidityScore}/100, contract score ${contractScore}/100.`,
+    verdict: issuerConflict ? "SEP-1 issuer conflict" : score >= 75 ? "Critical Stellar risk" : score >= 50 ? "High Stellar risk" : score >= 25 ? "Stellar review needed" : "No major Stellar flags",
+    summary: `Checked ${identity.assetKey} on ${input.chain}. Issuer-control score ${issuerControlScore}/100, liquidity score ${liquidityScore}/100, contract score ${contractScore}/100.${issuerConflict ? " Conflicting SEP-1 issuer detected." : ""}`,
     findings,
     sources,
-    confidence: health && (assetRecord || contractState || native) ? 0.84 : health ? 0.58 : 0.28,
+    confidence: issuerConflict ? 0.35 : health && (assetRecord || contractState || native) ? 0.84 : health ? 0.58 : 0.28,
     recommendedAction,
-    blockingReasons: criticalIdentityFailure ? ["Stellar asset identity could not be confirmed from connected sources."] : [],
+    blockingReasons: criticalIdentityFailure ? ["Stellar asset identity or metadata could not be confirmed consistently."] : [],
     rawSignals: {
       chainSupport: { requestedChain: input.chain, chainFamily: "stellar" },
       stellarIdentity: identity,
-      issuerControls: { issuerExists, authRequired, authRevocable, authClawback, authImmutable },
+      issuerControls: { issuerExists, authRequired, authRevocable, authClawback, authImmutable, issuerConflict },
       holders: { authorizedAccounts, unauthorizedAccounts },
       liquidity: { poolCount: liquidityPools, poolAmount: liquidityAmount },
       contractIdentity: contractState,
       rpcHealth: health,
+      sep1Metadata: sep1Result,
     },
   });
 }
+

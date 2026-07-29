@@ -11,7 +11,7 @@ const bodySchema = z.object({
   symbol: z.string().max(32).optional(),
   issuer: z.string().max(64).optional(),
   assetKey: z.string().max(180).optional(),
-  assetType: z.enum(["native", "classic", "contract", "issuer_account"]).optional(),
+  assetType: z.enum(["native", "classic", "sac", "sep41", "issuer_account"]).optional(),
 }).superRefine((value, context) => {
   if (value.contractAddress && !validateContractAddressForChain(value.contractAddress, value.chain)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["contractAddress"], message: "Asset address does not match the selected chain" });
