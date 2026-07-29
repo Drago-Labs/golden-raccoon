@@ -115,7 +115,7 @@ create table if not exists approvals (
 
 create table if not exists transactions (
   id uuid primary key default gen_random_uuid(),
-  wallet_address text not null,
+  wallet_address text,
   decision_id text,
   decision_action text,
   tx_hash text not null unique,
@@ -241,6 +241,10 @@ begin
   end;
   begin
     alter table alert_deliveries alter column alert_id type text using alert_id::text;
+  exception when others then null;
+  end;
+  begin
+    alter table transactions alter column wallet_address drop not null;
   exception when others then null;
   end;
   begin

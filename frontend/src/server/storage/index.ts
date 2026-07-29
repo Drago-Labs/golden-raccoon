@@ -32,7 +32,17 @@ import {
   mirrorAlertRuleWrite,
   mirrorAlertUpdate,
   mirrorAlertWrite,
+  deleteWalletDataFromPg,
+  exportWalletDataFromPg,
+  pruneExpiredRecordsFromPg,
 } from "@/server/storage/postgresAdapter";
+
+export {
+  deleteWalletDataFromPg,
+  exportWalletDataFromPg,
+  pruneExpiredRecordsFromPg,
+};
+import { clearPortfolioCacheForWallet } from "@/server/stellar/portfolio";
 
 /**
  * Hydration gate. When the Postgres adapter has rows on disk, this
@@ -209,6 +219,8 @@ export const storageSchemaContract = {
     "acknowledgeDiscoveryAlert",
     "createDiscoveryAlert",
     "updateWatchlistEntryLatestScan",
+    "exportWalletData",
+    "deleteWalletData",
   ],
   migration: "frontend/src/server/storage/schema.sql",
 };
@@ -672,10 +684,12 @@ export function getTransactionRecord(hash: string) {
   return getTransactions().find((record) => record.hash.toLowerCase() === hash.toLowerCase());
 }
 
-export function createTransactionRecord(input: Omit<TransactionRecord, "createdAt"> & { createdAt?: string }) {
-  const existingIndex = getTransactions().findIndex((record) => record.hash.toLowerCase() === input.hash.toLowerCase());
+export function createTransactionRecord(input: Omit<TransactionRecord, "createdAt"> & { createdAt?: string; txHash?: string }) {
+  const hash = input.hash ?? input.txHash ?? `tx_${Date.now().toString(36)}`;
+  const existingIndex = getTransactions().findIndex((record) => record.hash?.toLowerCase() === hash.toLowerCase());
   const record: TransactionRecord = {
     ...input,
+    hash,
     createdAt: input.createdAt ?? new Date().toISOString(),
   };
 
@@ -982,4 +996,217 @@ export function acknowledgeDiscoveryAlert(id: string) {
   alert.acknowledged = true;
 
   return alert;
+}
+
+function matchesWalletAddress(
+  fieldWallet: string | undefined | null,
+  targetWallet: string,
+  fieldNetwork?: string,
+  targetNetwork?: string
+): boolean {
+  if (!fieldWallet) return false;
+  const rawTarget = targetWallet.trim();
+  const rawField = fieldWallet.trim();
+  const walletMatches = rawTarget.startsWith("0x")
+    ? rawField.toLowerCase() === rawTarget.toLowerCase()
+    : rawField === rawTarget || rawField.toLowerCase() === rawTarget.toLowerCase();
+  if (!walletMatches) return false;
+  if (targetNetwork && fieldNetwork) {
+    return fieldNetwork.trim().toLowerCase() === targetNetwork.trim().toLowerCase();
+  }
+  return true;
+}
+
+export async function exportWalletData(walletAddress: string, network?: string, chainFamily?: "evm" | "stellar") {
+  const normalized = walletAddress.trim();
+  const isEvm = normalized.startsWith("0x");
+  const canonicalWallet = isEvm ? normalized.toLowerCase() : normalized;
+  const targetNetwork = network?.trim();
+
+  const memoryData = {
+    agentRuns: getAgentRuns().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
+    recommendations: getRecommendations().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
+    approvals: getApprovals().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet, r.network, targetNetwork)),
+    transactions: getTransactions().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet, r.network, targetNetwork)),
+    x402PaymentReceipts: getX402PaymentReceipts().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet, r.network, targetNetwork)),
+    userRules: getUserRules().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
+    alertRules: getAlertRulesStore().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
+    alertObservations: getAlertObservationsStore().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
+    alerts: getAlertsStore().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
+    alertDeliveries: getAlertDeliveriesStore().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
+    watchlistEntries: getWatchlistEntries().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
+    watchlistScanRuns: getWatchlistScanRuns().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
+    discoveryAlerts: getDiscoveryAlerts().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
+  };
+
+  let pgData: Record<string, unknown[]> = {};
+  try {
+    pgData = await exportWalletDataFromPg(canonicalWallet, network, chainFamily);
+  } catch {
+    // optional PG export
+  }
+
+  return {
+    exportedAt: new Date().toISOString(),
+    schemaVersion: "v1",
+    walletAddress: canonicalWallet,
+    network: targetNetwork ?? (isEvm ? "ethereum" : "soroban-testnet"),
+    chainFamily: chainFamily ?? (isEvm ? ("evm" as const) : ("stellar" as const)),
+    memoryData,
+    pgData,
+  };
+}
+
+export async function deleteWalletData(
+  walletAddress: string,
+  network?: string,
+  chainFamily?: "evm" | "stellar"
+): Promise<{
+  ok: boolean;
+  deletedAt: string;
+  walletAddress: string;
+  network?: string;
+  chainFamily: "evm" | "stellar";
+  memoryRecordsRemoved: number;
+  memoryAuditRecordsUnlinked: number;
+  portfolioCacheEvicted: number;
+  pgResult: { deletedCount: number; unlinkedAuditCount: number };
+}> {
+  const normalized = walletAddress.trim();
+  const isEvm = normalized.startsWith("0x");
+  const canonicalWallet = isEvm ? normalized.toLowerCase() : normalized;
+  const targetChainFamily = chainFamily ?? (isEvm ? "evm" : "stellar");
+  const targetNetwork = network?.trim();
+
+  const portfolioCacheEvicted = clearPortfolioCacheForWallet(canonicalWallet);
+
+  let memoryRecordsRemoved = 0;
+  let memoryAuditRecordsUnlinked = 0;
+
+  if (memoryStore.__goldenRaccoonAgentRuns && !targetNetwork) {
+    const before = memoryStore.__goldenRaccoonAgentRuns.length;
+    memoryStore.__goldenRaccoonAgentRuns = memoryStore.__goldenRaccoonAgentRuns.filter(
+      (r) => !matchesWalletAddress(r.walletAddress, canonicalWallet)
+    );
+    memoryRecordsRemoved += before - memoryStore.__goldenRaccoonAgentRuns.length;
+  }
+
+  if (memoryStore.__goldenRaccoonRecommendations && !targetNetwork) {
+    const before = memoryStore.__goldenRaccoonRecommendations.length;
+    memoryStore.__goldenRaccoonRecommendations = memoryStore.__goldenRaccoonRecommendations.filter(
+      (r) => !matchesWalletAddress(r.walletAddress, canonicalWallet)
+    );
+    memoryRecordsRemoved += before - memoryStore.__goldenRaccoonRecommendations.length;
+  }
+
+  if (memoryStore.__goldenRaccoonApprovals) {
+    const before = memoryStore.__goldenRaccoonApprovals.length;
+    memoryStore.__goldenRaccoonApprovals = memoryStore.__goldenRaccoonApprovals.filter(
+      (r) => !matchesWalletAddress(r.walletAddress, canonicalWallet, r.network, targetNetwork)
+    );
+    memoryRecordsRemoved += before - memoryStore.__goldenRaccoonApprovals.length;
+  }
+
+  if (memoryStore.__goldenRaccoonUserRules && !targetNetwork) {
+    const before = memoryStore.__goldenRaccoonUserRules.length;
+    memoryStore.__goldenRaccoonUserRules = memoryStore.__goldenRaccoonUserRules.filter(
+      (r) => !matchesWalletAddress(r.walletAddress, canonicalWallet)
+    );
+    memoryRecordsRemoved += before - memoryStore.__goldenRaccoonUserRules.length;
+  }
+
+  if (memoryStore.__goldenRaccoonAlertRules && !targetNetwork) {
+    const before = memoryStore.__goldenRaccoonAlertRules.length;
+    memoryStore.__goldenRaccoonAlertRules = memoryStore.__goldenRaccoonAlertRules.filter(
+      (r) => !matchesWalletAddress(r.walletAddress, canonicalWallet)
+    );
+    memoryRecordsRemoved += before - memoryStore.__goldenRaccoonAlertRules.length;
+  }
+
+  if (memoryStore.__goldenRaccoonAlertObservations && !targetNetwork) {
+    const before = memoryStore.__goldenRaccoonAlertObservations.length;
+    memoryStore.__goldenRaccoonAlertObservations = memoryStore.__goldenRaccoonAlertObservations.filter(
+      (r) => !matchesWalletAddress(r.walletAddress, canonicalWallet)
+    );
+    memoryRecordsRemoved += before - memoryStore.__goldenRaccoonAlertObservations.length;
+  }
+
+  if (memoryStore.__goldenRaccoonAlerts && !targetNetwork) {
+    const before = memoryStore.__goldenRaccoonAlerts.length;
+    memoryStore.__goldenRaccoonAlerts = memoryStore.__goldenRaccoonAlerts.filter(
+      (r) => !matchesWalletAddress(r.walletAddress, canonicalWallet)
+    );
+    memoryRecordsRemoved += before - memoryStore.__goldenRaccoonAlerts.length;
+  }
+
+  if (memoryStore.__goldenRaccoonAlertDeliveries && !targetNetwork) {
+    const before = memoryStore.__goldenRaccoonAlertDeliveries.length;
+    memoryStore.__goldenRaccoonAlertDeliveries = memoryStore.__goldenRaccoonAlertDeliveries.filter(
+      (r) => !matchesWalletAddress(r.walletAddress, canonicalWallet)
+    );
+    memoryRecordsRemoved += before - memoryStore.__goldenRaccoonAlertDeliveries.length;
+  }
+
+  if (memoryStore.__goldenRaccoonWatchlistEntries && !targetNetwork) {
+    const before = memoryStore.__goldenRaccoonWatchlistEntries.length;
+    memoryStore.__goldenRaccoonWatchlistEntries = memoryStore.__goldenRaccoonWatchlistEntries.filter(
+      (r) => !matchesWalletAddress(r.walletAddress, canonicalWallet)
+    );
+    memoryRecordsRemoved += before - memoryStore.__goldenRaccoonWatchlistEntries.length;
+  }
+
+  if (memoryStore.__goldenRaccoonWatchlistScanRuns && !targetNetwork) {
+    const before = memoryStore.__goldenRaccoonWatchlistScanRuns.length;
+    memoryStore.__goldenRaccoonWatchlistScanRuns = memoryStore.__goldenRaccoonWatchlistScanRuns.filter(
+      (r) => !matchesWalletAddress(r.walletAddress, canonicalWallet)
+    );
+    memoryRecordsRemoved += before - memoryStore.__goldenRaccoonWatchlistScanRuns.length;
+  }
+
+  if (memoryStore.__goldenRaccoonDiscoveryAlerts && !targetNetwork) {
+    const before = memoryStore.__goldenRaccoonDiscoveryAlerts.length;
+    memoryStore.__goldenRaccoonDiscoveryAlerts = memoryStore.__goldenRaccoonDiscoveryAlerts.filter(
+      (r) => !matchesWalletAddress(r.walletAddress, canonicalWallet)
+    );
+    memoryRecordsRemoved += before - memoryStore.__goldenRaccoonDiscoveryAlerts.length;
+  }
+
+  if (memoryStore.__goldenRaccoonTransactions) {
+    for (const tx of memoryStore.__goldenRaccoonTransactions) {
+      if (matchesWalletAddress(tx.walletAddress, canonicalWallet, tx.network, targetNetwork)) {
+        tx.walletAddress = "";
+        tx.sourceAccount = undefined;
+        memoryAuditRecordsUnlinked++;
+      }
+    }
+  }
+
+  if (memoryStore.__goldenRaccoonX402PaymentReceipts) {
+    for (const rec of memoryStore.__goldenRaccoonX402PaymentReceipts) {
+      if (matchesWalletAddress(rec.walletAddress, canonicalWallet, rec.network, targetNetwork) || matchesWalletAddress(rec.payer, canonicalWallet, rec.network, targetNetwork)) {
+        rec.walletAddress = undefined;
+        rec.payer = undefined;
+        memoryAuditRecordsUnlinked++;
+      }
+    }
+  }
+
+  let pgResult = { deletedCount: 0, unlinkedAuditCount: 0 };
+  try {
+    pgResult = await deleteWalletDataFromPg(canonicalWallet, targetNetwork, targetChainFamily);
+  } catch {
+    // best-effort PG deletion
+  }
+
+  return {
+    ok: true,
+    deletedAt: new Date().toISOString(),
+    walletAddress: canonicalWallet,
+    network: targetNetwork,
+    chainFamily: targetChainFamily,
+    memoryRecordsRemoved,
+    memoryAuditRecordsUnlinked,
+    portfolioCacheEvicted,
+    pgResult,
+  };
 }
