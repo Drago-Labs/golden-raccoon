@@ -9,11 +9,18 @@ import type {
   UserRule,
   WatchlistEntry,
   WatchlistEntryInput,
+  WatchlistScanRecord,
   X402PaymentReceipt,
 } from "@/server/types";
 import { canonicalizeAddress } from "@/lib/chainIdentity";
 import { getDefaultRules } from "@/server/rules/defaultRules";
 import { validateAgentResult } from "@/server/agents/schema";
+import {
+  loadWatchlistFromDisk,
+  mutateWatchlistSnapshot,
+  readWatchlistSnapshotSync,
+} from "@/server/storage/persistence";
+import { buildWatchlistIdentity, identityKey } from "@/server/watchlist/validation";
 
 type CreateAgentRunInput = {
   walletAddress: string;
@@ -35,6 +42,7 @@ export const storageSchemaContract = {
     "transactions",
     "x402_payment_receipts",
     "watchlist_entries",
+    "watchlist_scan_records",
     "token_identities",
     "source_snapshots",
   ],
@@ -53,6 +61,17 @@ export const storageSchemaContract = {
     "createX402PaymentReceipt",
     "getUserRuleRecord",
     "upsertUserRuleRecord",
+    "listWatchlistEntries",
+    "getWatchlistEntryForWallet",
+    "findWatchlistEntry",
+    "createWatchlistEntry",
+    "deleteWatchlistEntryForWallet",
+    "updateWatchlistEntry",
+    "createWatchlistScanRecord",
+    "getWatchlistScanRecord",
+    "getLatestScanForEntry",
+    "getPreviousScanForEntry",
+    "listWatchlistScanRecordsForEntry",
   ],
   migration: "frontend/src/server/storage/schema.sql",
 };
@@ -63,7 +82,6 @@ const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonTransactions?: TransactionRecord[];
   __goldenRaccoonApprovals?: UserApprovalRecord[];
   __goldenRaccoonUserRules?: UserRule[];
-  __goldenRaccoonWatchlistEntries?: WatchlistEntry[];
   __goldenRaccoonX402PaymentReceipts?: X402PaymentReceipt[];
 };
 
@@ -101,12 +119,6 @@ function getX402PaymentReceipts() {
   memoryStore.__goldenRaccoonX402PaymentReceipts ??= [];
 
   return memoryStore.__goldenRaccoonX402PaymentReceipts;
-}
-
-function getWatchlistEntries() {
-  memoryStore.__goldenRaccoonWatchlistEntries ??= [];
-
-  return memoryStore.__goldenRaccoonWatchlistEntries;
 }
 
 function createId() {
@@ -150,15 +162,15 @@ export function getStorageHealth(): StorageHealth {
     return {
       provider: "supabase_postgres",
       persistent: false,
-      detail: "Supabase env vars are configured. The MVP adapter still uses in-memory storage, but the function API and schema contract are fixed for adapter parity.",
+      detail: "Supabase env vars are configured. The MVP adapter still uses in-memory storage for some tables, but watchlist entries and immutable scan records are persisted to a JSON snapshot under `frontend/.data/`. The function API and schema contract are fixed for adapter parity.",
       schema: storageSchemaContract,
     };
   }
 
   return {
     provider: "memory",
-    persistent: false,
-    detail: "Using in-memory MVP storage. Records reset when the server process restarts.",
+    persistent: true,
+    detail: "MVP storage with watchlist persisted to disk under frontend/.data/watchlist.json. Other tables reset when the server process restarts. The function API and schema contract are fixed for adapter parity.",
     schema: storageSchemaContract,
   };
 }
@@ -370,42 +382,94 @@ export function createX402PaymentReceipt(input: Omit<X402PaymentReceipt, "id" | 
   return record;
 }
 
-export function listWatchlistEntries(walletAddress?: string): WatchlistEntry[] {
-  const normalizedWallet = walletAddress ? canonicalizeAddress(walletAddress, inferFamily(walletAddress)) : undefined;
+/* -------------------------------------------------------------------------- */
+/* Watchlist helpers (file-backed)                                            */
+/* -------------------------------------------------------------------------- */
 
-  return getWatchlistEntries()
+
+export async function listWatchlistEntries(walletAddress?: string): Promise<WatchlistEntry[]> {
+  const shape = await loadWatchlistFromDisk();
+  const normalizedWallet = walletAddress
+    ? canonicalizeAddress(walletAddress, inferFamily(walletAddress))
+    : undefined;
+
+  return shape.entries
     .filter((entry) => !normalizedWallet || canonicalizeAddress(entry.walletAddress, entry.chainFamily) === normalizedWallet)
     .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
 }
 
-export function getWatchlistEntry(id: string): WatchlistEntry | undefined {
-  return getWatchlistEntries().find((entry) => entry.id === id);
+export async function getWatchlistEntry(id: string): Promise<WatchlistEntry | undefined> {
+  const shape = await loadWatchlistFromDisk();
+
+  return shape.entries.find((entry) => entry.id === id);
+}
+
+export async function getWatchlistEntryForWallet(
+  id: string,
+  walletAddress: string,
+): Promise<WatchlistEntry | undefined> {
+  const entry = await getWatchlistEntry(id);
+
+  if (!entry) return undefined;
+
+  const expected = canonicalizeAddress(walletAddress, entry.chainFamily);
+
+  if (canonicalizeAddress(entry.walletAddress, entry.chainFamily) !== expected) return undefined;
+
+  return entry;
 }
 
 /**
- * Infer chain family from an address for normalisation purposes.
+ * Infer chain family from a wallet address for normalisation purposes.
+ * Only used to choose the canonical form for list filtering; for actual asset
+ * decisions use `chainFamily` from the entry itself.
  */
 function inferFamily(address: string): "evm" | "stellar" {
   return address.startsWith("G") && address.length === 56 ? "stellar" : "evm";
 }
 
 /**
- * Find a watchlist entry by canonical identity (wallet + chain + assetIdentifier).
- * Prevents duplicate-wallet-for-identity and keeps same-code/different-issuer Stellar assets distinct.
+ * Find a watchlist entry by canonical identity (wallet + chainFamily + network
+ * + canonical assetIdentifier). Includes `network` so the same EVM contract on
+ * different chains is treated as a distinct entry. Canonicalisation is delegated
+ * to the validation module to keep the rules in one place.
  */
-export function findWatchlistEntry(walletAddress: string, chainFamily: string, assetIdentifier: string): WatchlistEntry | undefined {
-  const normalizedWallet = canonicalizeAddress(walletAddress, chainFamily as "evm" | "stellar");
+export async function findWatchlistEntry(input: {
+  walletAddress: string;
+  chainFamily: "evm" | "stellar";
+  network: string;
+  assetIdentifier: string;
+}): Promise<WatchlistEntry | undefined> {
+  const shape = await loadWatchlistFromDisk();
+  const targetIdentity = identityKey(
+    buildWatchlistIdentity({
+      walletAddress: input.walletAddress,
+      chainFamily: input.chainFamily,
+      network: input.network,
+      assetIdentifier: input.assetIdentifier,
+    }),
+  );
 
-  return getWatchlistEntries().find(
+  return shape.entries.find(
     (entry) =>
-      canonicalizeAddress(entry.walletAddress, entry.chainFamily) === normalizedWallet &&
-      entry.chainFamily === chainFamily &&
-      entry.assetIdentifier.toLowerCase() === assetIdentifier.toLowerCase(),
+      identityKey(
+        buildWatchlistIdentity({
+          walletAddress: entry.walletAddress,
+          chainFamily: entry.chainFamily,
+          network: entry.network,
+          assetIdentifier: entry.assetIdentifier,
+        }),
+      ) === targetIdentity,
   );
 }
 
-export function createWatchlistEntry(input: WatchlistEntryInput): WatchlistEntry {
-  const existing = findWatchlistEntry(input.walletAddress, input.chainFamily, input.assetIdentifier);
+export async function createWatchlistEntry(input: WatchlistEntryInput): Promise<WatchlistEntry> {
+  const existing = await findWatchlistEntry({
+    walletAddress: input.walletAddress,
+    chainFamily: input.chainFamily,
+    network: input.network,
+    assetIdentifier: input.assetIdentifier,
+  });
 
   if (existing) {
     throw new Error(
@@ -429,41 +493,158 @@ export function createWatchlistEntry(input: WatchlistEntryInput): WatchlistEntry
     updatedAt: now,
   };
 
-  getWatchlistEntries().unshift(entry);
+  await mutateWatchlistSnapshot((current) => ({
+    ...current,
+    entries: [entry, ...current.entries],
+  }));
 
   return entry;
 }
 
-export function deleteWatchlistEntry(id: string): boolean {
-  const entries = getWatchlistEntries();
-  const index = entries.findIndex((entry) => entry.id === id);
+export async function deleteWatchlistEntry(id: string): Promise<boolean> {
+  const snapshot = await mutateWatchlistSnapshot((current) => {
+    const nextEntries = current.entries.filter((entry) => entry.id !== id);
 
-  if (index === -1) return false;
+    if (nextEntries.length === current.entries.length) {
+      // No row removed; return current so the persistence layer skips a write.
+      return current;
+    }
 
-  entries.splice(index, 1);
+    // Cascade delete scan records that belong to the removed entry.
+    const nextScans = current.scans.filter((scan) => scan.watchlistEntryId !== id);
 
-  return true;
+    return { ...current, entries: nextEntries, scans: nextScans };
+  });
+
+  const stillThere = snapshot.entries.some((entry) => entry.id === id);
+
+  return !stillThere;
 }
 
-export function updateWatchlistEntry(id: string, update: Partial<Pick<WatchlistEntry, "latestScanAt" | "latestScanStatus" | "latestVerdict" | "latestRiskScore" | "previousScanAvailable">>): WatchlistEntry | undefined {
-  const entries = getWatchlistEntries();
-  const entry = entries.find((e) => e.id === id);
+export async function deleteWatchlistEntryForWallet(id: string, walletAddress: string): Promise<boolean> {
+  const entry = await getWatchlistEntryForWallet(id, walletAddress);
 
-  if (!entry) return undefined;
+  if (!entry) return false;
 
-  Object.assign(entry, update, { updatedAt: new Date().toISOString() });
+  return deleteWatchlistEntry(id);
+}
 
-  return entry;
+export async function updateWatchlistEntry(
+  id: string,
+  update: Partial<
+    Pick<
+      WatchlistEntry,
+      | "latestScanId"
+      | "previousScanId"
+      | "latestScanAt"
+      | "latestScanStatus"
+      | "latestVerdict"
+      | "latestRiskScore"
+      | "previousVerdict"
+      | "previousRiskScore"
+      | "previousScanAvailable"
+    >
+  >,
+): Promise<WatchlistEntry | undefined> {
+  let nextEntry: WatchlistEntry | undefined;
+
+  await mutateWatchlistSnapshot((current) => {
+    const idx = current.entries.findIndex((entry) => entry.id === id);
+
+    if (idx === -1) {
+      nextEntry = undefined;
+      return current;
+    }
+
+    const merged: WatchlistEntry = {
+      ...current.entries[idx],
+      ...update,
+      updatedAt: new Date().toISOString(),
+      previousScanAvailable:
+        update.previousScanAvailable ?? current.entries[idx].previousScanAvailable,
+    };
+    const entries = current.entries.slice();
+    entries[idx] = merged;
+    nextEntry = merged;
+
+    return { ...current, entries };
+  });
+
+  return nextEntry;
+}
+
+/* ─────────────────────────────  Scan records  ───────────────────────────── */
+
+export type CreateWatchlistScanRecordInput = Omit<
+  WatchlistScanRecord,
+  "id" | "createdAt"
+> & { createdAt?: string };
+
+export async function createWatchlistScanRecord(input: CreateWatchlistScanRecordInput): Promise<WatchlistScanRecord> {
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  const record: WatchlistScanRecord = {
+    ...input,
+    id: createRecordId("wscan"),
+    createdAt,
+  };
+
+  await mutateWatchlistSnapshot((current) => ({
+    ...current,
+    scans: [record, ...current.scans],
+  }));
+
+  return record;
+}
+
+export async function getWatchlistScanRecord(id: string): Promise<WatchlistScanRecord | undefined> {
+  const shape = await loadWatchlistFromDisk();
+
+  return shape.scans.find((scan) => scan.id === id);
+}
+
+export async function listWatchlistScanRecordsForEntry(
+  watchlistEntryId: string,
+): Promise<WatchlistScanRecord[]> {
+  const shape = await loadWatchlistFromDisk();
+
+  return shape.scans
+    .filter((scan) => scan.watchlistEntryId === watchlistEntryId)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+}
+
+export async function getLatestScanForEntry(watchlistEntryId: string): Promise<WatchlistScanRecord | undefined> {
+  const records = await listWatchlistScanRecordsForEntry(watchlistEntryId);
+
+  return records[0];
+}
+
+export async function getPreviousScanForEntry(
+  watchlistEntryId: string,
+  currentScanId?: string,
+): Promise<WatchlistScanRecord | undefined> {
+  const records = await listWatchlistScanRecordsForEntry(watchlistEntryId);
+
+  if (currentScanId) {
+    return records.find((scan) => scan.id !== currentScanId);
+  }
+
+  return records[1];
 }
 
 export function getStorageCounts(): StorageCounts {
+  // Counts are synchronous to preserve the existing API; read directly from
+  // the cached shape. The watchlist snapshot is loaded on first access and
+  // cached for the lifetime of the process, so this stays cheap.
+  const cachedShape = readWatchlistSnapshotSync();
+
   return {
     agentRuns: getAgentRuns().length,
     recommendations: getRecommendations().length,
     transactions: getTransactions().length,
     approvals: getApprovals().length,
     userRules: getUserRules().length,
-    watchlistEntries: getWatchlistEntries().length,
+    watchlistEntries: cachedShape.entries.length,
+    watchlistScanRecords: cachedShape.scans.length,
     x402PaymentReceipts: getX402PaymentReceipts().length,
   };
 }

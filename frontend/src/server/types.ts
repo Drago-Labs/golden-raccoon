@@ -514,12 +514,19 @@ export type WatchlistEntry = {
   assetType: "evm_contract" | "stellar_native" | "stellar_classic" | "stellar_contract";
   symbol: string;
   name: string;
-  /** Reference to the latest TokenScanResult.scannedAt timestamp */
+  /** Reference id to the latest immutable WatchlistScanRecord (set on a successful or attempted rescan). */
+  latestScanId?: string;
+  /** Reference id to the prior immutable WatchlistScanRecord preserved across the latest rescan. */
+  previousScanId?: string;
+  /** Cached mirrors of the latest scan for fast listing without joining the scan table. */
   latestScanAt?: string;
-  latestScanStatus?: "complete" | "partial" | "unavailable" | "stale";
+  latestScanStatus?: WatchlistScanStatus;
   latestVerdict?: string;
   latestRiskScore?: number;
-  /** True when a previous scan result exists and can be shown if rescan fails */
+  /** Cached mirrors of the previous scan for fast listing without joining scan records. */
+  previousVerdict?: string;
+  previousRiskScore?: number;
+  /** True when a previous scan record exists and can be shown if the latest rescan fails. */
   previousScanAvailable: boolean;
   createdAt: string;
   updatedAt: string;
@@ -533,6 +540,41 @@ export type WatchlistEntryInput = {
   assetType: WatchlistEntry["assetType"];
   symbol: string;
   name?: string;
+};
+
+export type WatchlistScanStatus = "complete" | "partial" | "unavailable" | "stale" | "failed";
+
+/**
+ * Immutable record written every time a rescan is triggered, regardless of outcome.
+ * The watchlist entry references the latest and (if applicable) the previous record
+ * so evidence is preserved across successive rescans.
+ */
+export type WatchlistScanRecord = {
+  id: string;
+  watchlistEntryId: string;
+  walletAddress: string;
+  chainFamily: "evm" | "stellar";
+  network: string;
+  /** Canonical asset identifier at the time of scan. */
+  assetIdentifier: string;
+  assetType: WatchlistEntry["assetType"];
+  /** Resolved query passed to the scan pipeline (e.g. `0x...`, `CODE:ISSUER`, `C...`, `XLM`). */
+  query: string;
+  symbol: string;
+  status: WatchlistScanStatus;
+  verdict?: string;
+  riskScore?: number;
+  confidence?: number;
+  summary?: string;
+  /** Optional RiskReport id produced by the token scan pipeline for cross-referencing. */
+  riskReportId?: string;
+  /** Provider / data-quality mode coming back from the scan pipeline, if anything ran. */
+  dataQualityMode?: "live" | "partial" | "unavailable" | "stale" | "conflicting";
+  /** Failure reason when the scan could not complete (errored before producing a result). */
+  failureReason?: string;
+  /** True when the scan pipeline produced a TokenScanResult without throwing. */
+  scanCompleted: boolean;
+  createdAt: string;
 };
 
 export type StorageProvider = "memory" | "supabase_postgres";
@@ -600,5 +642,6 @@ export type StorageCounts = {
   approvals: number;
   userRules: number;
   watchlistEntries: number;
+  watchlistScanRecords: number;
   x402PaymentReceipts: number;
 };

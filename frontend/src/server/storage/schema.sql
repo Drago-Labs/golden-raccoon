@@ -161,6 +161,49 @@ create table if not exists user_rules (
   created_at timestamptz not null default now()
 );
 
+create table if not exists watchlist_entries (
+  id text primary key,
+  wallet_address text not null,
+  chain_family text not null check (chain_family in ('evm', 'stellar')),
+  network text not null,
+  asset_identifier text not null,
+  asset_type text not null check (asset_type in ('evm_contract', 'stellar_native', 'stellar_classic', 'stellar_contract')),
+  symbol text not null,
+  name text not null,
+  latest_scan_id text,
+  previous_scan_id text,
+  latest_scan_at timestamptz,
+  latest_scan_status text check (latest_scan_status in ('complete', 'partial', 'unavailable', 'stale', 'failed')),
+  latest_verdict text,
+  latest_risk_score integer,
+  previous_scan_available boolean not null default false,
+  sep41_contract boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists watchlist_scan_records (
+  id text primary key,
+  watchlist_entry_id text not null references watchlist_entries(id) on delete cascade,
+  wallet_address text not null,
+  chain_family text not null,
+  network text not null,
+  asset_identifier text not null,
+  asset_type text not null,
+  query text not null,
+  symbol text not null,
+  status text not null check (status in ('complete', 'partial', 'unavailable', 'stale', 'failed')),
+  verdict text,
+  risk_score integer,
+  confidence numeric,
+  summary text,
+  risk_report_id text,
+  data_quality_mode text check (data_quality_mode in ('live', 'partial', 'unavailable', 'stale', 'conflicting')),
+  failure_reason text,
+  scan_completed boolean not null,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists agent_runs_wallet_created_idx on agent_runs(wallet_address, created_at desc);
 create index if not exists agent_results_run_agent_idx on agent_results(run_id, agent);
 create index if not exists source_snapshots_run_agent_idx on source_snapshots(run_id, agent);
@@ -168,3 +211,9 @@ create index if not exists recommendations_wallet_created_idx on recommendations
 create index if not exists transactions_wallet_created_idx on transactions(wallet_address, created_at desc);
 create index if not exists approvals_wallet_created_idx on approvals(wallet_address, created_at desc);
 create index if not exists x402_payment_receipts_resource_created_idx on x402_payment_receipts(protected_resource, created_at desc);
+create unique index if not exists watchlist_entries_identity_uidx
+  on watchlist_entries(wallet_address, chain_family, network, asset_identifier);
+create index if not exists watchlist_entries_wallet_updated_idx
+  on watchlist_entries(wallet_address, updated_at desc);
+create index if not exists watchlist_scan_records_entry_created_idx
+  on watchlist_scan_records(watchlist_entry_id, created_at desc);

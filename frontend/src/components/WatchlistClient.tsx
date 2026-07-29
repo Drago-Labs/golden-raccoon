@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useWalletSession } from "@/hooks/useWalletSession";
 import type { WatchlistEntry, TokenScanResult } from "@/server/types";
-import { Plus, Trash2, RefreshCw, Orbit, Wallet, AlertTriangle, Loader2 } from "lucide-react";
+import { Plus, Trash2, RefreshCw, Orbit, Wallet, AlertTriangle, Loader2, History } from "lucide-react";
 import { scanNetworks } from "@/lib/scanNetworks";
 
 type AddFormState = {
@@ -30,6 +30,14 @@ const defaultForm: AddFormState = {
   name: "",
 };
 
+function verdictStyles(verdict: string | undefined) {
+  if (!verdict) return "bg-white/10 text-white/50";
+  if (verdict === "safe" || verdict === "watch") return "bg-emerald-400/15 text-emerald-200";
+  if (verdict === "high_risk" || verdict === "critical") return "bg-red-400/15 text-red-200";
+
+  return "bg-white/10 text-white/50";
+}
+
 export function WatchlistClient() {
   const { address, family, isConnected } = useWalletSession();
   const [entries, setEntries] = useState<WatchlistEntry[]>([]);
@@ -47,6 +55,13 @@ export function WatchlistClient() {
     setStatus({ type: "loading" });
 
     const response = await fetch(`/api/watchlist?walletAddress=${encodeURIComponent(address)}`);
+
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({ detail: "Failed to load." }));
+      setStatus({ type: "error", detail: detail.detail ?? detail.error ?? "Failed to load." });
+      return;
+    }
+
     const data = (await response.json()) as WatchlistEntry[];
 
     setEntries(data);
@@ -67,8 +82,14 @@ export function WatchlistClient() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         walletAddress: address,
-        ...form,
-        name: form.name || form.symbol,
+        chainFamily: form.chainFamily,
+        network: form.network,
+        assetType: form.assetType,
+        // Asset identifier is intentionally optional; the server canonicalizes
+        // (e.g. forces "native" for native XLM and validates the format).
+        ...(form.assetType === "stellar_native" ? {} : { assetIdentifier: form.assetIdentifier.trim() }),
+        symbol: form.symbol.trim(),
+        name: form.name.trim() || form.symbol.trim(),
       }),
     });
 
@@ -83,37 +104,45 @@ export function WatchlistClient() {
   }
 
   async function removeEntry(id: string) {
-    const response = await fetch(`/api/watchlist/${id}`, { method: "DELETE" });
+    if (!address) return;
+
+    const response = await fetch(
+      `/api/watchlist/${encodeURIComponent(id)}?walletAddress=${encodeURIComponent(address)}`,
+      { method: "DELETE" },
+    );
 
     if (response.ok) {
       setEntries((prev) => prev.filter((entry) => entry.id !== id));
+    } else {
+      const detail = await response.json().catch(() => ({ detail: "Could not remove." }));
+      setStatus({ type: "error", detail: detail.detail ?? detail.error ?? "Could not remove entry." });
     }
   }
 
   async function rescanEntry(entry: WatchlistEntry) {
+    if (!address) return;
+
     setStatus({ type: "scanning", entryId: entry.id });
 
-    const response = await fetch(`/api/watchlist/${entry.id}`, {
+    const response = await fetch(`/api/watchlist/${encodeURIComponent(entry.id)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "rescan", walletAddress: address }),
     });
 
-    const data = await response.json() as { entry?: WatchlistEntry; scan?: TokenScanResult; error?: string; detail?: string };
+    const data = (await response.json()) as { entry?: WatchlistEntry; scan?: TokenScanResult; scanRecordId?: string; error?: string; detail?: string };
 
     if (response.ok && data.entry) {
       setEntries((prev) => prev.map((e) => (e.id === entry.id ? data.entry! : e)));
       setStatus({ type: "idle" });
     } else {
-      // Preserve prior scan data — update with stale status
+      // Even on failure, the server returns the updated entry with prior evidence preserved.
       if (data.entry) {
         setEntries((prev) => prev.map((e) => (e.id === entry.id ? data.entry! : e)));
       }
       setStatus({ type: "error", detail: data.detail ?? data.error ?? "Rescan failed." });
     }
   }
-
-  const activeNetwork = scanNetworks.find((n) => n.id === form.network);
 
   return (
     <div className="space-y-8">
@@ -148,12 +177,12 @@ export function WatchlistClient() {
               <select
                 value={form.chainFamily}
                 onChange={(e) => {
-                  const family = e.target.value as "evm" | "stellar";
+                  const nextFamily = e.target.value as "evm" | "stellar";
                   setForm({
                     ...form,
-                    chainFamily: family,
-                    network: family === "stellar" ? "stellar-pubnet" : "base",
-                    assetType: family === "stellar" ? "stellar_classic" : "evm_contract",
+                    chainFamily: nextFamily,
+                    network: nextFamily === "stellar" ? "stellar-pubnet" : "base",
+                    assetType: nextFamily === "stellar" ? "stellar_classic" : "evm_contract",
                   });
                 }}
                 className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none focus:border-[#d9a441]/50"
@@ -199,7 +228,7 @@ export function WatchlistClient() {
             <div>
               <label className="block text-xs text-white/45">
                 Asset identifier
-                {form.assetType === "stellar_native" ? " (ignored)" : ""}
+                {form.assetType === "stellar_native" ? " (auto: native)" : ""}
               </label>
               <input
                 type="text"
@@ -208,10 +237,10 @@ export function WatchlistClient() {
                 disabled={form.assetType === "stellar_native"}
                 placeholder={
                   form.assetType === "evm_contract"
-                    ? "0x..."
+                    ? "0x…"
                     : form.assetType === "stellar_classic"
                       ? "CODE:ISSUER"
-                      : "C..."
+                      : "C…"
                 }
                 className="mt-1 w-full rounded-xl border border-white/10 bg-white/6 px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-[#d9a441]/50 disabled:opacity-40"
               />
@@ -241,7 +270,7 @@ export function WatchlistClient() {
             <button
               type="button"
               onClick={() => void addEntry()}
-              disabled={!form.symbol || (!form.assetIdentifier && form.assetType !== "stellar_native")}
+              disabled={!form.symbol.trim() || (!form.assetIdentifier.trim() && form.assetType !== "stellar_native") || !family}
               className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[#d9a441] px-5 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Plus className="h-4 w-4" />
@@ -277,7 +306,7 @@ export function WatchlistClient() {
           {entries.map((entry) => {
             const networkConfig = scanNetworks.find((n) => n.id === entry.network);
             const isScanning = status.type === "scanning" && status.entryId === entry.id;
-            const isStale = entry.latestScanStatus === "stale" || entry.latestScanStatus === "unavailable";
+            const isStale = entry.latestScanStatus === "stale" || entry.latestScanStatus === "unavailable" || entry.latestScanStatus === "failed";
 
             return (
               <div
@@ -293,17 +322,20 @@ export function WatchlistClient() {
                         {networkConfig?.mark ?? "?"}
                       </span>
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="text-base font-semibold">{entry.symbol}</span>
                           {entry.latestVerdict ? (
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${
-                              entry.latestVerdict === "safe" || entry.latestVerdict === "watch"
-                                ? "bg-emerald-400/15 text-emerald-200"
-                                : entry.latestVerdict === "high_risk" || entry.latestVerdict === "critical"
-                                  ? "bg-red-400/15 text-red-200"
-                                  : "bg-white/10 text-white/50"
-                            }`}>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${verdictStyles(entry.latestVerdict)}`}>
                               {entry.latestVerdict}
+                            </span>
+                          ) : null}
+                          {entry.previousScanAvailable && entry.previousVerdict ? (
+                            <span
+                              className={`flex items-center gap-1 rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-white/70 ${verdictStyles(entry.previousVerdict)}`}
+                              title="Last verified scan before the most recent attempt"
+                            >
+                              <History className="h-3 w-3" />
+                              Last verified · {entry.previousVerdict}
                             </span>
                           ) : null}
                         </div>
@@ -317,6 +349,9 @@ export function WatchlistClient() {
                       <span className="font-mono">{entry.assetIdentifier.slice(0, 24)}…</span>
                       {entry.latestRiskScore !== undefined ? (
                         <span>Risk: {entry.latestRiskScore}/100</span>
+                      ) : null}
+                      {entry.previousRiskScore !== undefined ? (
+                        <span className="text-white/25">Prior: {entry.previousRiskScore}/100</span>
                       ) : null}
                       {entry.latestScanAt ? (
                         <span>Scanned {new Date(entry.latestScanAt).toLocaleDateString()}</span>
@@ -369,7 +404,7 @@ export function WatchlistClient() {
             <div className="mt-0.5 text-xs text-red-200/70">{status.detail}</div>
           </div>
           <button type="button" onClick={() => setStatus({ type: "idle" })} className="text-white/30 hover:text-white/60">
-            <span className="text-sm">&times;</span>
+            <span className="text-sm">×</span>
           </button>
         </div>
       ) : null}

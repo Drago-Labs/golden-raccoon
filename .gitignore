@@ -29,6 +29,7 @@ soroban/target/
 .env.*
 frontend/.env
 frontend/.env.*
+frontend/.data/
 backend/.env
 backend/.env.*
 backend/contracts/.env

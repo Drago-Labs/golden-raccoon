@@ -66,3 +66,11 @@ export function checkRateLimit(request: Request | NextRequest, options: RateLimi
 export function checkRateLimitProfile(request: Request | NextRequest, profile: keyof typeof rateLimitProfiles) {
   return checkRateLimit(request, rateLimitProfiles[profile]);
 }
+
+/**
+ * Test-only helper: clear all rate-limit buckets. The watcher tests reset this
+ * between cases to keep the 429 boundary deterministic.
+ */
+export function __resetRateLimitBucketsForTests() {
+  buckets.__goldenRaccoonRateLimit = new Map();
+}
