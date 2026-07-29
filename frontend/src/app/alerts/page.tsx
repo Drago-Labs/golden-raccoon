@@ -1,21 +1,28 @@
 import { Bell } from "lucide-react";
+import { cookies } from "next/headers";
 import { AppShell } from "@/components/AppShell";
 import { AlertRuleForm } from "@/components/AlertRuleForm";
 import { AlertHistoryList } from "@/components/AlertHistoryList";
 import { ensureDefaultRulesForWallet } from "@/server/observability/alertIngestion";
-import { listAlertRules } from "@/server/storage";
+import { ensureStorageReady, listAlertRules } from "@/server/storage";
+import { decodeWalletCookie } from "@/server/security/walletSession";
 
-type SearchParams = { walletAddress?: string | string[] };
+// The page renders per-wallet alert rules + history. Reads MUST come
+// from the server-controlled HttpOnly session cookie (audit #38:
+// reliance on `searchParams.walletAddress` allowed any caller to pick
+// an arbitrary wallet). The route is dynamic so `cookies()` returns
+// the request-scoped store.
+export const dynamic = "force-dynamic";
 
-function normalizeWallet(input: string | string[] | undefined): string | undefined {
-  const value = Array.isArray(input) ? input[0] : input;
+export default async function AlertsPage() {
+  const cookieJar = await cookies();
+  const session = cookieJar.get("gr_wallet_session");
+  const wallet = session ? decodeWalletCookie(session.value)?.toLowerCase() : undefined;
 
-  return value?.trim().toLowerCase() || undefined;
-}
-
-export default async function AlertsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  const params = await searchParams;
-  const wallet = normalizeWallet(params.walletAddress);
+  // Hydrate alerts/alerts_rules/observations/deliveries from Postgres
+  // before serving the page so a restart surface that has rows on disk
+  // does not serve an empty list.
+  await ensureStorageReady();
 
   if (wallet) ensureDefaultRulesForWallet(wallet);
   const rules = wallet ? listAlertRules(wallet) : [];

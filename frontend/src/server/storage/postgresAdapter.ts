@@ -473,7 +473,261 @@ class PostgresStorageAdapter {
 
     return result.ok;
   }
+
+  /**
+   * Hydrate the in-memory alert stores from Postgres on process start.
+   *
+   * The original mirror pipeline was write-only: every write landed in
+   * memory and a best-effort mirror flushed it to SQL. After a server
+   * restart the in-memory arrays were empty and the SQL tables still
+   * held the rows on disk, but reads from the in-memory lists returned
+   * nothing. This method reads alert_rules → alert_observations → alerts
+   * → alert_deliveries in FK-safe order and merges rows back into the
+   * supplied in-memory stores by id (skipping rows that already exist,
+   * to avoid overwriting writes that landed during hydration).
+   *
+   * On degraded paths (no DATABASE_URL, pg not installed, query fails)
+   * this method swallows the error so callers can still rely on the
+   * in-memory store as the source of truth; `getStorageHealth()` will
+   * expose the hydration failure honestly.
+   */
+  async hydrateAlertTables(target: {
+    rules: AlertRule[];
+    observations: AlertObservation[];
+    alerts: Alert[];
+    deliveries: AlertDelivery[];
+  }): Promise<{ hydrated: number; skipped: number }> {
+    if (!this.connectionString || !(await this.ensurePool())) {
+      return { hydrated: 0, skipped: 0 };
+    }
+
+    return (await this.enqueueMirror(() => this.doHydrateAlertTables(target))) ?? { hydrated: 0, skipped: 0 };
+  }
+
+  private async doHydrateAlertTables(target: {
+    rules: AlertRule[];
+    observations: AlertObservation[];
+    alerts: Alert[];
+    deliveries: AlertDelivery[];
+  }): Promise<{ hydrated: number; skipped: number }> {
+    if (!this.pool) return { hydrated: 0, skipped: 0 };
+
+    let hydrated = 0;
+    let skipped = 0;
+
+    hydrated += await this.mergeRulesFromPostgres(target.rules, () => skipped++);
+    skipped += 0;
+    hydrated += await this.mergeObservationsFromPostgres(target.observations, () => skipped++);
+    skipped += 0;
+    hydrated += await this.mergeAlertsFromPostgres(target.alerts, () => skipped++);
+    skipped += 0;
+    hydrated += await this.mergeDeliveriesFromPostgres(target.deliveries, () => skipped++);
+
+    return { hydrated, skipped };
+  }
+
+  private async mergeRulesFromPostgres(
+    store: AlertRule[],
+    onSkip: () => void,
+  ): Promise<number> {
+    if (!this.pool) return 0;
+    const result = await this.pool.query("SELECT * FROM alert_rules ORDER BY created_at ASC");
+    let hydrationCount = 0;
+
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      const mapped = mapAlertRuleRow(row);
+      const existing = store.find((entry) => entry.id === mapped.id);
+
+      if (existing) {
+        onSkip();
+        continue;
+      }
+      store.push(mapped);
+      hydrationCount += 1;
+    }
+
+    return hydrationCount;
+  }
+
+  private async mergeObservationsFromPostgres(
+    store: AlertObservation[],
+    onSkip: () => void,
+  ): Promise<number> {
+    if (!this.pool) return 0;
+    const result = await this.pool.query("SELECT * FROM alert_observations ORDER BY created_at ASC");
+    let hydrationCount = 0;
+
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      const mapped = mapAlertObservationRow(row);
+      const existing = store.find((entry) => entry.id === mapped.id);
+
+      if (existing) {
+        onSkip();
+        continue;
+      }
+      store.push(mapped);
+      hydrationCount += 1;
+    }
+
+    return hydrationCount;
+  }
+
+  private async mergeAlertsFromPostgres(
+    store: Alert[],
+    onSkip: () => void,
+  ): Promise<number> {
+    if (!this.pool) return 0;
+    const result = await this.pool.query("SELECT * FROM alerts ORDER BY triggered_at ASC");
+    let hydrationCount = 0;
+
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      const mapped = mapAlertRow(row);
+      const existing = store.find((entry) => entry.id === mapped.id);
+
+      if (existing) {
+        onSkip();
+        continue;
+      }
+      store.push(mapped);
+      hydrationCount += 1;
+    }
+
+    return hydrationCount;
+  }
+
+  private async mergeDeliveriesFromPostgres(
+    store: AlertDelivery[],
+    onSkip: () => void,
+  ): Promise<number> {
+    if (!this.pool) return 0;
+    const result = await this.pool.query("SELECT * FROM alert_deliveries ORDER BY created_at ASC");
+    let hydrationCount = 0;
+
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      const mapped = mapAlertDeliveryRow(row);
+      const existing = store.find((entry) => entry.id === mapped.id);
+
+      if (existing) {
+        onSkip();
+        continue;
+      }
+      store.push(mapped);
+      hydrationCount += 1;
+    }
+
+    return hydrationCount;
+  }
 }
+
+function toIso(value: unknown): string {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string") return value;
+
+  return new Date().toISOString();
+}
+
+function toNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.length > 0) {
+    const parsed = Number(value);
+
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return 0;
+}
+
+function toJson(value: unknown): unknown {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+
+  return value;
+}
+
+function mapAlertRuleRow(row: Record<string, unknown>): AlertRule {
+  return {
+    id: typeof row.id === "string" ? row.id : "",
+    walletAddress: typeof row.wallet_address === "string" ? row.wallet_address.toLowerCase() : "",
+    triggerType: typeof row.trigger_type === "string" ? (row.trigger_type as AlertRule["triggerType"]) : "critical_risk",
+    observationKey: typeof row.observation_key === "string" ? row.observation_key : undefined,
+    threshold: toNumber(row.threshold),
+    hysteresis: toNumber(row.hysteresis),
+    cooldownMinutes: Math.round(toNumber(row.cooldown_minutes)) || 60,
+    direction: row.direction === "low_is_bad" ? "low_is_bad" : "high_is_bad",
+    severity: (row.severity as AlertRule["severity"]) ?? "medium",
+    enabled: Boolean(row.enabled),
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+  };
+}
+
+function mapAlertObservationRow(row: Record<string, unknown>): AlertObservation {
+  return {
+    id: typeof row.id === "string" ? row.id : "",
+    walletAddress: typeof row.wallet_address === "string" ? row.wallet_address.toLowerCase() : "",
+    triggerType: typeof row.trigger_type === "string" ? (row.trigger_type as AlertObservation["triggerType"]) : "critical_risk",
+    observationKey: typeof row.observation_key === "string" ? row.observation_key : "",
+    value: toNumber(row.value),
+    direction: row.direction === "low_is_bad" ? "low_is_bad" : "high_is_bad",
+    evidence: (toJson(row.evidence) ?? {}) as AlertObservation["evidence"],
+    incompleteData: Boolean(row.incomplete_data),
+    createdAt: toIso(row.created_at),
+  };
+}
+
+function mapAlertRow(row: Record<string, unknown>): Alert {
+  return {
+    id: typeof row.id === "string" ? row.id : "",
+    walletAddress: typeof row.wallet_address === "string" ? row.wallet_address.toLowerCase() : "",
+    ruleId: typeof row.rule_id === "string" ? row.rule_id : "",
+    triggerType: typeof row.trigger_type === "string" ? (row.trigger_type as Alert["triggerType"]) : "critical_risk",
+    observationKey: typeof row.observation_key === "string" ? row.observation_key : "",
+    status: (row.status as Alert["status"]) ?? "triggered",
+    severity: (row.severity as Alert["severity"]) ?? "medium",
+    message: typeof row.message === "string" ? row.message : "",
+    beforeValue: toNumber(row.before_value),
+    afterValue: toNumber(row.after_value),
+    evidenceBefore: (toJson(row.evidence_before) ?? {}) as Alert["evidenceBefore"],
+    evidenceAfter: (toJson(row.evidence_after) ?? {}) as Alert["evidenceAfter"],
+    evidenceData: (toJson(row.evidence_data) ?? {}) as Alert["evidenceData"],
+    triggeredAt: toIso(row.triggered_at),
+    recoveredAt: row.recovered_at ? toIso(row.recovered_at) : undefined,
+    acknowledgedAt: row.acknowledged_at ? toIso(row.acknowledged_at) : undefined,
+  };
+}
+
+function mapAlertDeliveryRow(row: Record<string, unknown>): AlertDelivery {
+  return {
+    id: typeof row.id === "string" ? row.id : "",
+    alertId: typeof row.alert_id === "string" ? row.alert_id : "",
+    walletAddress: typeof row.wallet_address === "string" ? row.wallet_address.toLowerCase() : "",
+    channel: (row.channel as AlertDelivery["channel"]) ?? "in_app",
+    status: (row.status as AlertDelivery["status"]) ?? "pending",
+    errorDetail: typeof row.error_detail === "string" ? row.error_detail : undefined,
+    sanitizedPayload: (toJson(row.sanitized_payload) ?? {}) as AlertDelivery["sanitizedPayload"],
+    attemptCount: Math.round(toNumber(row.attempt_count)) || 0,
+    createdAt: toIso(row.created_at),
+    sentAt: row.sent_at ? toIso(row.sent_at) : undefined,
+  };
+}
+
+/**
+ * Public exposure of the row-mapping helpers so fixtures and dry-run
+ * tooling can verify the SQL ↔ TypeScript parity without needing a live
+ * Postgres connection. The adapters' `hydrateAlertTables` consumes these
+ * directly.
+ */
+export const __rowMappers = {
+  rule: mapAlertRuleRow,
+  observation: mapAlertObservationRow,
+  alert: mapAlertRow,
+  delivery: mapAlertDeliveryRow,
+};
 
 let adapterSingleton: PostgresStorageAdapter | null = null;
 

@@ -458,27 +458,58 @@ function extractStellarObservation(run: AgentRunRecord, result: AgentResult, key
   const trustline = raw.trustline as { requireAuth?: boolean; revocable?: boolean } | undefined;
   const contractTTL = raw.contractTTL as { liveUntilLedgerSeq?: number; latestLedger?: number } | undefined;
 
-  if (issuerControls && (issuerControls.authClawback || issuerControls.authRevocable || issuerControls.authRequired)) {
+  // Emit stellar_issuer_auth and stellar_clawback as independent
+  // observations so both the authorisation/revocation signals and the
+  // clawback risk get their own observable lifecycle in the alert
+  // engine (separate thresholds, separate cooldowns, separate
+  // deduplication). Audit finding #38: the previous ternary combined
+  // them into a single trigger, skipping stellar_issuer_auth when
+  // authClawback was also present.
+  if (issuerControls && (issuerControls.authRequired || issuerControls.authRevocable)) {
     observations.push(
       buildObservation({
         walletAddress: run.walletAddress,
-        triggerType: issuerControls.authClawback ? "stellar_clawback" : "stellar_issuer_auth",
+        triggerType: "stellar_issuer_auth",
         observationKey: key,
-        value: [
-          issuerControls.authClawback ? "clawback" : null,
-          issuerControls.authRevocable ? "revocable" : null,
-          issuerControls.authRequired ? "auth_required" : null,
-        ].filter(Boolean).length,
+        value: (issuerControls.authRequired ? 1 : 0) + (issuerControls.authRevocable ? 1 : 0),
         evidence: {
           runId: run.id,
           agent: result.agent,
-          label: "Stellar issuer controls",
+          label: "Stellar issuer authorization controls",
           detail: `Issuer flags: ${Object.entries(issuerControls)
             .filter(([, value]) => Boolean(value))
             .map(([flag]) => flag)
             .join(", ")}.`,
           sourceLabels: getSourceLabels(result),
-          meta: { ...issuerControls },
+          meta: {
+            authRequired: !!issuerControls.authRequired,
+            authRevocable: !!issuerControls.authRevocable,
+            active: true,
+          },
+        },
+      }),
+    );
+  }
+
+  if (issuerControls && issuerControls.authClawback) {
+    observations.push(
+      buildObservation({
+        walletAddress: run.walletAddress,
+        triggerType: "stellar_clawback",
+        observationKey: key,
+        value: 1,
+        evidence: {
+          runId: run.id,
+          agent: result.agent,
+          label: "Stellar issuer clawback enabled",
+          detail: `Issuer flag: authClawback=true (authRequired=${!!issuerControls.authRequired}, authRevocable=${!!issuerControls.authRevocable}).`,
+          sourceLabels: getSourceLabels(result),
+          meta: {
+            authClawback: true,
+            authRequired: !!issuerControls.authRequired,
+            authRevocable: !!issuerControls.authRevocable,
+            active: true,
+          },
         },
       }),
     );
