@@ -253,7 +253,7 @@
           "assetKey": { "type": "string" }
         }
       },
-      "SimulationStatus": { "type": "string", "enum": ["not_required", "pending", "passed", "failed", "unavailable"] },
+      "SimulationStatus": { "type": "string", "enum": ["not_required", "pending", "passed", "failed", "unavailable", "unsupported"] },
       "ChainFamily": { "type": "string", "enum": ["evm", "stellar"] },
       "TransactionLifecycleStatus": {
         "type": "string",

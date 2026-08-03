@@ -4,6 +4,7 @@ import { buildExecutionPolicy, evaluateExecutionPolicy } from "@/server/agents/e
 import { getChainFamily } from "@/lib/chainIdentity";
 import { buildTrustlinePreview, type TrustlineCheckInput } from "@/server/stellar/trustline";
 import { getStellarSwapQuote } from "@/server/stellar/swap";
+import { applyRecoveryToExecutionPreview } from "@/server/recovery";
 
 type ExecutionAgentInput = {
   action?: AgentRecommendedAction | string;
@@ -96,15 +97,17 @@ isStellar?: boolean;
       status: "not_required",
       checks: ["No blockchain transaction required for this action."],
       detail: "Simulation is not required.",
+      simulatedTxHash: "",
     };
   }
 
   if (input.isStellar) {
     return {
-      provider: "stellar_soroban",
+      provider: "soroban_rpc",
       status: input.simulationStatus ?? "pending",
       checks: ["Soroban swap simulation", "Classic path payment simulation", "Footprint verification", "Fee estimation"],
       revertReason: input.revertReason,
+      simulatedTxHash: input.simulation?.simulatedTxHash ?? "",
       detail:
         input.simulationStatus === "failed"
           ? input.revertReason ?? "Stellar swap simulation failed."
@@ -113,7 +116,7 @@ isStellar?: boolean;
   }
 
   return {
-    provider: input.simulation?.provider ?? "planned_tenderly",
+    provider: input.simulation?.provider ?? "not_required",
     status: input.simulation?.status ?? input.simulationStatus ?? "pending",
     checks: input.simulation?.checks ?? ["Approval simulation", "Sell/swap simulation", "Revert reason capture", "Slippage and tax sanity check"],
     revertReason: input.simulation?.revertReason ?? input.revertReason,
@@ -158,15 +161,23 @@ function getQuotePlan(input: {
   }
 
   return {
-    provider: input.isStellar ? "stellar_aggregator" : "planned_dex_aggregator",
+    provider: input.isStellar ? "stellar_aggregator" : "none",
     route: [input.fromToken, input.toToken],
+    exactInput: { token: input.fromToken, amount: 0 },
+    exactOutput: { token: input.toToken, amount: input.expectedOutputAmount ?? 0 },
     expectedOutputToken: input.toToken,
     expectedOutputAmount: input.expectedOutputAmount,
+    minReceiveAmount: 0,
     estimatedValueUsd: input.estimatedValueUsd,
     priceImpactBps: input.priceImpactBps,
     slippageBps: input.slippageBps,
+    feesUsd: input.gasEstimateUsd,
     gasEstimateUsd: input.gasEstimateUsd,
-    status: input.quoteAvailable ? (input.isStellar ? "fresh" : "planned") : "unavailable",
+    network: "",
+    expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    fetchedAt: new Date().toISOString(),
+    quoteMismatch: false,
+    status: input.quoteAvailable ? (input.isStellar ? "fresh" : "simulated") : "unavailable",
     detail: input.quoteAvailable
       ? input.isStellar
         ? "Stellar DEX aggregator quote is fresh for user review."
@@ -266,7 +277,7 @@ export async function buildExecutionPreview(input: ExecutionAgentInput): Promise
     }
   }
 
-  const quoteMissing = !trustlineAction && plan.requiresTrade && quote?.status !== "planned" && quote?.status !== "fresh";
+  const quoteMissing = !trustlineAction && plan.requiresTrade && quote?.status !== "simulated" && quote?.status !== "fresh";
   const blockedReason = policyStatus.violationMessages[0] ?? (
     (input.stellarQuoteStatus === "unavailable" && !stellarSwapQuote && !trustlineAction)
       ? "Live Stellar swap quote is required before preparing an executable transaction."
@@ -317,7 +328,6 @@ export async function buildExecutionPreview(input: ExecutionAgentInput): Promise
       ruleWalletAddress: policyStatus.ruleWalletAddress,
     },
     quote,
-    realQuote,
     simulation,
     stellarTrustline: stellarTrustlinePreview,
     stellarQuote: stellarSwapQuote,

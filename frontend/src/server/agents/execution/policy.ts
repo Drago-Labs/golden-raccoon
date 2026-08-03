@@ -38,7 +38,7 @@ export type ExecutionPolicyInput = {
   toToken?: string;
   estimatedValueUsd?: number;
   slippageBps?: number;
-  simulationStatus?: "not_required" | "pending" | "passed" | "failed" | "unavailable";
+  simulationStatus?: "not_required" | "pending" | "passed" | "failed" | "unavailable" | "unsupported";
   autoModeBuy?: boolean;
   autoModeBuySafetySignals?: ImmutableBuySafetySignals;
   // Stellar-specific trustline fields

@@ -66,7 +66,7 @@ function simulateConfirmRoute(body: {
     }
 
     const simulationDetail: SimulationResultDetail = {
-      provider: "planned_tenderly",
+      provider: "eth_call",
       status: simStatus as SimulationResultDetail["status"],
       checks: sim.checks ?? [],
       detail: sim.detail ?? "",
@@ -150,7 +150,7 @@ function simulateConfirmRoute(body: {
 
 function buildSim(overrides: Partial<SimulationResultDetail> = {}): SimulationResultDetail {
   return {
-    provider: "planned_tenderly",
+    provider: "eth_call",
     status: "passed",
     checks: ["Approval simulation", "Sell/swap simulation"],
     detail: "Simulation passed.",

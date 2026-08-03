@@ -1031,7 +1031,7 @@ export type SimulationFreshnessResult = {
 };
 
 export type SimulationResultDetail = {
-  provider: "planned_tenderly" | "not_required";
+  provider: "not_required" | "soroban_rpc" | "eth_call" | "tenderly" | "alchemy" | "unsupported";
   status: "not_required" | "pending" | "passed" | "failed" | "unavailable" | "unsupported";
   checks: string[];
   revertReason?: string;
@@ -1049,6 +1049,14 @@ export type SimulationResultDetail = {
   sequenceNumber?: number | string;
   fee?: string;
   simulatedXdrHash?: string;
+  transactionHashHex?: string;
+  quoteHashHex?: string;
+  binding?: {
+    transactionHash: string;
+    quoteHash: string;
+  };
+  restoreRequired?: boolean;
+  diagnostics?: string[];
   resourceUsage?: {
     gasUnits?: string;
     gasPrice?: string;
@@ -1056,9 +1064,23 @@ export type SimulationResultDetail = {
     operationsCount?: number;
     ledgerFee?: string;
   };
+  footprint?: {
+    readOnly: string[];
+    readWrite: string[];
+  };
+  authorizationRisk?: {
+    entries: number;
+    detected: boolean;
+  };
   balanceChanges?: BalanceChange[];
   allowanceRisk?: AllowanceRiskDetail[];
   trustlineRisk?: StellarTrustlineRisk[];
+  providerMeta?: {
+    provider: string;
+    network: string;
+    checkedAt: string;
+    latencyMs?: number;
+  };
   chainFamily?: "evm" | "stellar";
 };
 

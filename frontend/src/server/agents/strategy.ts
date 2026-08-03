@@ -43,7 +43,7 @@ export type StrategyEnforcerContext = {
   /** Cumulative USD value already transacted today (for daily limit enforcement) */
   dailyValueUsed?: number;
   /** Simulation status */
-  simulationStatus?: "not_required" | "pending" | "passed" | "failed" | "unavailable";
+  simulationStatus?: "not_required" | "pending" | "passed" | "failed" | "unavailable" | "unsupported";
   // Stellar-specific fields
   stellarIssuer?: string;
   stellarIssuerClawback?: boolean;

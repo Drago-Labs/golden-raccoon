@@ -14,7 +14,7 @@ function assert(condition: unknown, message: string): asserts condition {
 
 function passedSimulation(overrides: Partial<SimulationResultDetail> = {}): SimulationResultDetail {
   return {
-    provider: "planned_tenderly",
+    provider: "eth_call",
     status: "passed",
     checks: ["Approval simulation", "Sell/swap simulation"],
     detail: "Simulation passed.",

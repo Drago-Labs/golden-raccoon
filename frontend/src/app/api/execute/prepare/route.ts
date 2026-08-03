@@ -9,6 +9,7 @@ import { getPortfolioSnapshot } from "@/server/portfolio/getPortfolio";
 import { assertApprovalOnly } from "@/server/security/policy";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { getUserRuleRecord } from "@/server/storage";
+import { assertPrepareAllowedByRecovery, getIncidentMode } from "@/server/recovery";
 import { prepareTransaction } from "@/server/transactions/lifecycleManager";
 import { getStellarNetwork } from "@/lib/stellar/config";
 import type { TransactionRecord, TransactionExpectedEffect, TransactionPreview } from "@/server/types";
