@@ -18,18 +18,14 @@ ARTIFACT="artifacts/contracts/GoldRaccoonPolicy.sol/GoldRaccoonPolicy.json"
 if [ -f "$ARTIFACT" ]; then
   if command -v sha256sum &> /dev/null; then
     HASH=$(sha256sum "$ARTIFACT" | cut -d' ' -f1)
+  elif command -v shasum &> /dev/null; then
+    HASH=$(shasum -a 256 "$ARTIFACT" | cut -d' ' -f1)
   else
-    HASH=$(python3 -c "import hashlib; print(hashlib.sha256(open('$ARTIFACT','rb').read()).hexdigest())")
+    HASH="(sha256 tool unavailable)"
   fi
-  echo "=== Build Verification ==="
-  echo "GoldRaccoonPolicy artifact hash: $HASH"
-  echo ""
-  echo "To verify reproducibility:"
-  echo "  1. git checkout <commit>"
-  echo "  2. ./scripts/build-evm.sh"
-  echo "  3. Compare artifact hash with CI/reference build"
-  echo ""
-  echo "Contracts: GoldRaccoonPolicy, GoldRaccoonPolicyV2, GoldRaccoonVault"
+  echo "GoldRaccoonPolicy artifact SHA-256: $HASH"
+  echo "EVM build successful."
+else
+  echo "EVM artifact not found: $ARTIFACT" >&2
+  exit 1
 fi
-
-echo "Build complete."

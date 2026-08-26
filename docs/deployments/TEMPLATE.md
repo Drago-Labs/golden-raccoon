@@ -83,3 +83,18 @@ history is not lost.
 
 ## Notes and known limitations
 
+
+## Build Provenance
+- [ ] Artifact provenance manifest generated via `npm run provenance:freeze`
+- [ ] Offline provenance verification passed via `npm run provenance:verify`
+- [ ] No secrets or credential-bearing URLs in manifest
+
+## Build Provenance
+- [ ] Artifact provenance manifest generated via `npm run provenance:freeze`
+- [ ] Offline provenance verification passed via `npm run provenance:verify`
+- [ ] No secrets or credential-bearing URLs in manifest
+
+## Build Provenance
+- [ ] Artifact provenance manifest generated via `npm run provenance:freeze`
+- [ ] Offline provenance verification passed via `npm run provenance:verify`
+- [ ] No secrets or credential-bearing URLs in manifest

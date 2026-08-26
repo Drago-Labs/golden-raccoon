@@ -1,14 +1,14 @@
-# Golden Raccoon Risk Registry
+# Soroban Smart Contracts
 
-Soroban contract for publishing tamper-evident Golden Raccoon risk records. Reports remain off-chain; the contract stores their SHA-256 digest, score, verdict, publisher, network and update time.
+## Contracts
+- `contracts/policy`: Golden Raccoon policy and risk parameter enforcement contract.
 
-## Local verification
+## Reproducible Builds & Artifact Provenance
+Soroban contracts target pinned Soroban SDK `=26.0.1` and release profile with `opt-level = "z"`, `lto = true`, `strip = "symbols"`.
 
-```sh
-cargo fmt --manifest-path soroban/Cargo.toml --all -- --check
-cargo clippy --manifest-path soroban/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path soroban/Cargo.toml
-stellar contract build --manifest-path soroban/Cargo.toml
+To build WASM artifacts and verify provenance:
+```bash
+npm run build:soroban
+npm run provenance:freeze
+npm run provenance:verify
 ```
-
-Deployment and initialization are handled by `scripts/stellar-deploy.sh`. Never commit a Stellar secret key. Generated WASM under `soroban/target/` must stay untracked.

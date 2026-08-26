@@ -9,6 +9,12 @@ NETWORK="${1:-hardhat}"
 
 echo "Deploying GoldRaccoonPolicy to ${NETWORK}..."
 
+# Check provenance manifest if present
+if [ -f "release-manifests/latest.json" ]; then
+  echo "Verifying artifact provenance manifest..."
+  node scripts/verify-artifact-provenance.mjs release-manifests/latest.json
+fi
+
 cd "$(dirname "$0")/../backend/contracts"
 
 npx hardhat run scripts/deploy-policy.ts --network "${NETWORK}"

@@ -10,6 +10,7 @@ import { alertThresholds, evaluateAlertThresholds } from "@/server/observability
 import { getAuditEventSummary } from "@/server/observability/executionAudit";
 import { getExecutionDisableFlags } from "@/server/observability/providerHealth";
 import { runbookToReadinessCheck, listRunbooks } from "@/server/observability/runbooks";
+import { getArtifactProvenanceHealth } from "@/server/operations/releaseReadiness";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,7 @@ export function GET() {
       performance: getPerformanceHealth(),
       metrics,
       executionAudit: auditSummary,
+      artifactProvenance: getArtifactProvenanceHealth(),
       runbooks,
       disableFlags,
       alerts: {

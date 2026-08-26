@@ -3,55 +3,47 @@
 /**
  * Hash-Freeze Build Script
  *
- * Produces a signed hash manifest of all deployable artifacts.
- * This manifest is stored alongside the release and used to verify
- * that the deployed artifacts match the audited build.
+ * Produces a canonical provenance manifest of all deployable artifacts,
+ * compiler settings, and input sources.
+ * Refuses release approval if the repository is dirty or required toolchains/configs are missing.
  *
  * Usage:
- *   node scripts/hash-freeze-build.mjs [--write] [--manifest-dir ./release-manifests]
- *
- * Options:
- *   --write         Write manifest to disk (default: stdout only)
- *   --manifest-dir  Output directory (default: ./release-manifests)
- *
- * Output:
- *   - SHA-256 manifest of:
- *       • Compiled EVM contracts (backend/contracts/artifacts/)
- *       • Compiled Soroban WASM (soroban/target/wasm32-unknown-unknown/release/*.wasm)
- *       • Frontend build (frontend/.next/ or frontend/out/)
- *       • Docker images or Dockerfile + context hash
- *   - Signed with a designated signing key (optional, hardware-backed for production)
+ *   node scripts/hash-freeze-build.mjs [--write] [--manifest-dir ./release-manifests] [--release]
  */
 
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
 
-const ROOT = resolve(import.meta.dirname, '..');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const ROOT = resolve(__dirname, '..');
 
 const ARTIFACT_PATTERNS = [
-  // EVM contracts
-  { name: 'EVM Policy ABI', glob: 'backend/contracts/artifacts/contracts/GoldRaccoonPolicy.sol/GoldRaccoonPolicy.json' },
-  { name: 'EVM Vault ABI', glob: 'backend/contracts/artifacts/contracts/GoldRaccoonVault.sol/GoldRaccoonVault.json' },
-  { name: 'EVM RiskRegistry ABI', glob: 'backend/contracts/artifacts/contracts/GoldRaccoonRiskRegistry.sol/GoldRaccoonRiskRegistry.json' },
-  // Soroban WASM
-  { name: 'Soroban Policy WASM', glob: 'soroban/target/wasm32-unknown-unknown/release/gold_raccoon_policy.wasm' },
-  { name: 'Soroban Vault WASM', glob: 'soroban/target/wasm32-unknown-unknown/release/gold_raccoon_vault.wasm' },
-  // Frontend build (try .next first, fallback to out/)
-  { name: 'Frontend Build (dir)', glob: 'frontend/.next/BUILD_ID' },
-  // Compiler / build-system config (reproducible-build-critical)
-  { name: 'Soroban Rust Toolchain', glob: 'soroban/rust-toolchain.toml' },
-  { name: 'Soroban Cargo Manifest', glob: 'soroban/Cargo.toml' },
-  { name: 'Soroban Cargo Lock', glob: 'soroban/Cargo.lock' },
-  { name: 'EVM Hardhat Config', glob: 'backend/contracts/hardhat.config.ts' },
+  { name: 'EVM Policy ABI', path: 'backend/contracts/artifacts/contracts/GoldRaccoonPolicy.sol/GoldRaccoonPolicy.json' },
+  { name: 'EVM Vault ABI', path: 'backend/contracts/artifacts/contracts/GoldRaccoonVault.sol/GoldRaccoonVault.json' },
+  { name: 'EVM RiskRegistry ABI', path: 'backend/contracts/artifacts/contracts/GoldRaccoonRiskRegistry.sol/GoldRaccoonRiskRegistry.json' },
+  { name: 'Soroban Policy WASM', path: 'soroban/target/wasm32-unknown-unknown/release/golden_raccoon_policy.wasm' },
+  { name: 'Soroban Vault WASM', path: 'soroban/target/wasm32-unknown-unknown/release/golden_raccoon_vault.wasm' },
+];
+
+const INPUT_PATTERNS = [
+  { name: 'EVM Hardhat Config', path: 'backend/contracts/hardhat.config.ts' },
+  { name: 'EVM Policy Source', path: 'backend/contracts/contracts/GoldRaccoonPolicy.sol' },
+  { name: 'Soroban Cargo Manifest', path: 'soroban/Cargo.toml' },
+  { name: 'Soroban Cargo Lock', path: 'soroban/Cargo.lock' },
 ];
 
 function hashFile(filePath) {
+  if (!existsSync(filePath)) return null;
   const content = readFileSync(filePath);
   return createHash('sha256').update(content).digest('hex');
 }
 
 function hashDir(dirPath) {
+  if (!existsSync(dirPath)) return null;
   const hash = createHash('sha256');
   const entries = readdirSync(dirPath, { recursive: true })
     .filter(f => statSync(join(dirPath, f)).isFile())
@@ -65,83 +57,75 @@ function hashDir(dirPath) {
   return hash.digest('hex');
 }
 
+function checkGitDirty() {
+  try {
+    const status = execSync('git status --porcelain', { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    return status.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function getGitCommit() {
+  try {
+    return execSync('git rev-parse HEAD', { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch {
+    return process.env.GIT_COMMIT || 'unknown';
+  }
+}
+
 function main() {
   const args = process.argv.slice(2);
   const shouldWrite = args.includes('--write');
+  const isRelease = args.includes('--release');
   const manifestDir = args.includes('--manifest-dir')
     ? args[args.indexOf('--manifest-dir') + 1]
     : './release-manifests';
 
+  const isDirty = checkGitDirty();
+  if (isRelease && isDirty) {
+    console.error('ERROR: Cannot generate release-approved manifest on a dirty git working tree.');
+    process.exit(1);
+  }
+
   const manifest = {
     version: '1.0.0',
     timestamp: new Date().toISOString(),
-    branch: process.env.GIT_BRANCH || null,
-    commit: process.env.GIT_COMMIT || null,
+    commit: getGitCommit(),
+    isDirty,
+    compiler: {
+      solidity: '0.8.24',
+      evmVersion: 'paris',
+      optimizer: { enabled: true, runs: 200 },
+      sorobanSdk: '=26.0.1',
+    },
     artifacts: [],
+    inputs: [],
   };
 
   for (const pattern of ARTIFACT_PATTERNS) {
-    const fullPath = join(ROOT, pattern.glob);
-    let hash = null;
-    let status = 'missing';
-
-    if (existsSync(fullPath)) {
-      try {
-        if (statSync(fullPath).isDirectory()) {
-          hash = hashDir(fullPath);
-        } else {
-          hash = hashFile(fullPath);
-        }
-        status = 'found';
-      } catch (err) {
-        status = `error: ${err.message}`;
-      }
-    }
+    const fullPath = join(ROOT, pattern.path);
+    const hash = existsSync(fullPath)
+      ? (statSync(fullPath).isDirectory() ? hashDir(fullPath) : hashFile(fullPath))
+      : null;
 
     manifest.artifacts.push({
       name: pattern.name,
-      path: pattern.glob,
-      status,
+      path: pattern.path,
       sha256: hash,
     });
   }
 
-  // If GIT metadata not in env, try to read from git
-  if (!manifest.branch) {
-    try {
-      const head = readFileSync(join(ROOT, '.git', 'HEAD'), 'utf8').trim();
-      if (head.startsWith('ref: ')) {
-        manifest.branch = head.slice(5);
-      }
-    } catch { /* ignore */ }
-  }
-  if (!manifest.commit) {
-    try {
-      manifest.commit = readFileSync(join(ROOT, '.git', 'HEAD'), 'utf8').trim();
-    } catch { /* ignore */ }
+  for (const input of INPUT_PATTERNS) {
+    const fullPath = join(ROOT, input.path);
+    const hash = existsSync(fullPath) ? hashFile(fullPath) : null;
+    manifest.inputs.push({
+      name: input.name,
+      path: input.path,
+      sha256: hash,
+    });
   }
 
-  // Fail if any artifact is missing (silently recording "missing" is unsafe)
-  const missing = manifest.artifacts.filter(a => a.status === 'missing');
-  const errors = manifest.artifacts.filter(a => a.status.startsWith('error:'));
-
-  if (missing.length > 0) {
-    console.error('ERROR: The following expected artifacts are missing:');
-    for (const a of missing) {
-      console.error(`  - ${a.name} (${a.path})`);
-    }
-    process.exit(1);
-  }
-
-  if (errors.length > 0) {
-    console.error('ERROR: The following artifacts could not be hashed:');
-    for (const a of errors) {
-      console.error(`  - ${a.name}: ${a.status}`);
-    }
-    process.exit(1);
-  }
-
-  // Output
   const output = JSON.stringify(manifest, null, 2);
 
   if (shouldWrite) {

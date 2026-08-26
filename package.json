@@ -17,7 +17,11 @@
     "quality:gate": "npm run deploy:check && npm run test:stellar-config && npm run test:auto-mode && npm run test:agents && npm run test:a11y && npm run lint && npm run build",
     "quality:gate:full": "npm run quality:gate && npm run smoke",
     "verify": "npm run quality:gate",
-    "acceptance": "node scripts/acceptance-matrix.mjs"
+    "acceptance": "node scripts/acceptance-matrix.mjs",
+    "provenance:freeze": "node scripts/hash-freeze-build.mjs --write",
+    "provenance:verify": "node scripts/verify-artifact-provenance.mjs",
+    "build:evm": "bash scripts/build-evm.sh",
+    "build:soroban": "bash scripts/build-soroban.sh"
   },
   "dependencies": {
     "next": "16.2.9",

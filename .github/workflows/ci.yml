@@ -164,3 +164,20 @@ jobs:
 
           echo "Server did not become healthy in time" >&2
           exit 1
+
+  reproducible-build-check:
+    name: Contract Artifact Reproducibility & Provenance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build EVM artifacts
+        run: bash scripts/build-evm.sh
+      - name: Generate provenance manifest
+        run: node scripts/hash-freeze-build.mjs --write
+      - name: Verify artifact provenance
+        run: node scripts/verify-artifact-provenance.mjs

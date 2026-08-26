@@ -7,6 +7,11 @@ const config: HardhatUserConfig = {
     settings: {
       viaIR: true,
       optimizer: { enabled: true, runs: 200 },
+      evmVersion: "paris",
+      metadata: {
+        bytecodeHash: "ipfs",
+        useLiteralContent: true,
+      },
     },
   },
   networks: {

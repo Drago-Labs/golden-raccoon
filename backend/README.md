@@ -1,5 +1,16 @@
-# Backend scope
+# Backend Contracts
 
-The active application server is the Next.js server under `frontend/src/server` and `frontend/src/app/api`. The former duplicated TypeScript backend and SQLite Prisma schema were removed after verifying that no runtime, build, deployment, or test imports referenced them.
+## Contracts
+- `GoldRaccoonPolicy.sol`: Policy enforcement contract on EVM.
+- `GoldRaccoonVault.sol`: Execution vault contract.
+- `GoldRaccoonRiskRegistry.sol`: Onchain risk registry.
 
-`backend/contracts` remains intentionally separate because it contains the legacy EVM smart-contract workspace. Stellar contracts live under `soroban/`.
+## Reproducible Builds & Artifact Provenance
+Contracts are compiled with deterministic Solidity compiler settings (`Solidity 0.8.24`, `viaIR: true`, `optimizer: 200 runs`, `evmVersion: paris`).
+
+To build contracts and generate a provenance manifest:
+```bash
+npm run build:evm
+npm run provenance:freeze
+npm run provenance:verify
+```
