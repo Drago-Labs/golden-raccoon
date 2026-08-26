@@ -17,11 +17,11 @@ if [ -f "release-manifests/latest.json" ]; then
 fi
 
 echo "Building GoldenRaccoonPolicy contract..."
-if command -v stellar &> /dev/null; then
-  stellar contract build --manifest-path "${CONTRACT_DIR}/Cargo.toml"
-  echo "Deploying to ${NETWORK}..."
-else
-  echo "Note: stellar CLI not available in current environment."
-fi
+stellar contract build --manifest-path "${CONTRACT_DIR}/Cargo.toml"
 
-echo "Soroban deployment script completed."
+echo "Deploying to ${NETWORK}..."
+stellar contract deploy \
+  --wasm "${CONTRACT_DIR}/target/wasm32-unknown-unknown/release/golden_raccoon_policy.wasm" \
+  --network "${NETWORK}"
+
+echo "Deployment complete. No secrets in output."

@@ -134,7 +134,9 @@ function main() {
     const filename = `build-manifest-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
     const outPath = join(outDir, filename);
     writeFileSync(outPath, output, 'utf8');
-    console.log(`Manifest written to ${outPath}`);
+    const latestPath = join(outDir, 'latest.json');
+    writeFileSync(latestPath, output, 'utf8');
+    console.log(`Manifest written to ${outPath} and ${latestPath}`);
   } else {
     console.log(output);
   }
