@@ -524,7 +524,8 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .select();
     
     if (error) {
-      console.error("Supabase addWatchlistEntriesBulk error", error);
+      const logger = (await import("@/server/observability/logger/logger")).default;
+      logger.error("storage.supabase", "Supabase addWatchlistEntriesBulk error", { error: error instanceof Error ? error.message : String(error) });
       return { added: [] }; // Could throw, but fallback handles it
     }
     

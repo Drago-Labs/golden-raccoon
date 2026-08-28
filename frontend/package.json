@@ -27,6 +27,8 @@
     "test": "vitest run src/server/observability/__tests__/slo.test.ts",
     "test:reconciliation": "node --conditions=react-server --import tsx scripts/transaction-reconciliation-check.ts",
     "test:alert-delivery": "NODE_OPTIONS='--require ./scripts/stub-server-only.cjs' tsx --tsconfig tsconfig.json scripts/alert-delivery-check.ts"
+    ,
+    "logging-check": "tsx --tsconfig tsconfig.json scripts/logging-check.ts"
   },
   "dependencies": {
     "@coinbase/x402": "^2.1.0",
