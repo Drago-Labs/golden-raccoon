@@ -142,3 +142,58 @@ to `npm run test:a11y`:
 - Consider adding a `prefers-contrast: more` treatment if user feedback
   indicates the glassmorphism panels are too low-contrast for some users
   even after the AA-level fixes above.
+
+
+## Responsive layout and touch targets (issue #148)
+
+Wallet users typically operate from a phone, so the data-dense read path — the
+one that degraded worst — is the one these rules protect.
+
+### Supported widths
+
+| Width | Represents | Expectation |
+| --- | --- | --- |
+| 320px | Smallest supported viewport | No page-level horizontal scroll anywhere |
+| 768px | Tablet / large phone landscape | Grids widen; nav switches to the full bar |
+| 1280px+ | Desktop | Full multi-column layout |
+
+### Rules
+
+- **The page body never scrolls sideways.** `html, body` clip horizontal
+  overflow, and `Page` clips it again per route. Wide content scrolls **inside
+  its own container**, never by moving the page.
+- **Data tables scroll internally.** `components/layout/DataTable` is the one
+  way to present a wide table. Its scroll region is focusable and labelled,
+  because a region a mouse can drag but a keyboard cannot reach is not usable
+  (WCAG 2.1.1) — the part hand-rolled `overflow-x-auto` wrappers keep missing.
+- **Interactive controls are at least 44px.** Enforced globally by element in
+  `globals.css`, so a control added later is covered by default rather than by
+  remembering. Icon-only controls use `.touch-target`.
+- **Grids start at one column.** `Stack`, `Row` and `Columns` replace
+  per-component `grid-cols-N` templates, which hold N columns at every width.
+- **Charts and media reflow** rather than overflow (`max-width: 100%`).
+- **Background scroll is locked** behind an open drawer or modal
+  (`body[data-scroll-locked="true"]`).
+
+### Automated check
+
+```bash
+cd frontend && npm run test:responsive
+```
+
+`scripts/responsive-check.ts` is static and dependency-free, in the same spirit
+as `a11y-check.ts`. It catches two regressions:
+
+1. a fixed width wider than 320px, or a wide table outside a scroll region;
+2. an interactive control pinned below 44px.
+
+**It is proven against a deliberately broken fixture**
+(`src/components/layout/__fixtures__/overflowing.tsx`). A check that only ever
+passes tells you nothing, so the script asserts that the fixture *is* rejected
+before it asserts the application is clean. If the fixture ever stops being
+detected, the check fails.
+
+It does not replace the manual pass: walk the scan-to-history journey at 320px,
+confirm no page-level horizontal scroll, and check that modals trap focus and
+lock background scroll.
+
