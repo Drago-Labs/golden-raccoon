@@ -1,11 +1,13 @@
 import { AlertTriangle, CheckCircle2, ClipboardCheck } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { knownLimitations, releaseReadinessChecks } from "@/server/operations/releaseReadiness";
+import { evaluatePubnetReadiness, summarizeReadiness } from "@/server/stellar/pubnetGate";
 import { getFeatureFlagHealth } from "@/server/env/validation";
 import { OperationsSloPanel } from "@/components/OperationsSloPanel";
 import { getConfiguredProviderHealth } from "@/server/observability/providerHealth";
 
-export default function OperationsPage() {
+export default async function OperationsPage() {
+  const pubnetGate = summarizeReadiness(await evaluatePubnetReadiness());
   const featureFlags = getFeatureFlagHealth();
   const providerHealth = getConfiguredProviderHealth();
   return (
@@ -55,6 +57,44 @@ export default function OperationsPage() {
             </article>
           ))}
         </div>
+      </section>
+
+      <section className="mt-10 rounded-lg border border-white/10 bg-white/6 p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-sm font-semibold text-white">Stellar pubnet readiness gate</h2>
+          <span className="text-xs text-white/60">
+            {pubnetGate.requested
+              ? pubnetGate.ready
+                ? "Pubnet is advertised"
+                : `Pubnet is gated${pubnetGate.blockedBy ? ` — ${pubnetGate.blockedBy}` : ""}`
+              : "Pubnet is not requested; testnet is unaffected"}
+          </span>
+        </div>
+        {pubnetGate.checks.length === 0 ? (
+          <p className="mt-3 text-xs text-white/70">
+            No pubnet checks run while the deployment targets testnet.
+          </p>
+        ) : (
+          <ul className="mt-4 space-y-3">
+            {pubnetGate.checks.map((check) => (
+              <li key={check.id} className="rounded-md border border-white/10 bg-black/20 p-3">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-white">{check.title}</h3>
+                  <span
+                    className={
+                      check.status === "pass"
+                        ? "text-xs font-semibold text-emerald-300"
+                        : "text-xs font-semibold text-amber-300"
+                    }
+                  >
+                    {check.status === "pass" ? "pass" : (check.reason ?? check.status)}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-white/70">{check.detail}</p>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="mt-10 rounded-lg border border-white/10 bg-white/6 p-5">

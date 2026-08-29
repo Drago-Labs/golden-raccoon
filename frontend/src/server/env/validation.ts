@@ -1,4 +1,5 @@
 import { stellarNetworks, validateStellarNetworkConfig } from "@/lib/stellar/config";
+import { getApprovedPubnetConfig, isPubnetRequested, missingApprovedValues } from "@/server/stellar/config";
 import { featureFlagRegistry } from "@/server/features/registry";
 import { evaluateFeature, getFeatureConfigIssues, getFeatureEnvironment } from "@/server/features/evaluator";
 import type { FeatureFlagKey } from "@/server/features/types";
@@ -103,12 +104,35 @@ export function getProviderResilienceConfig() {
   };
 }
 
+/**
+ * The approved pubnet values a reviewed deployment must declare.
+ *
+ * Reported as an env condition so a misconfigured pubnet deployment is visible
+ * before the runtime gate refuses an action, not only afterwards.
+ */
+export function getPubnetApprovalHealth() {
+  const requested = isPubnetRequested();
+  const missing = requested ? missingApprovedValues(getApprovedPubnetConfig()) : [];
+
+  return {
+    requested,
+    ready: requested ? missing.length === 0 : true,
+    missing,
+    detail: !requested
+      ? "Pubnet is not requested; testnet behaviour is unaffected."
+      : missing.length === 0
+        ? "Every governance-approved pubnet value is configured."
+        : `Pubnet is requested but ${missing.length} approved value(s) are missing, so the gate stays closed.`,
+  };
+}
+
 export function getEnvHealth() {
   const goPlusReady = Boolean(process.env.GOPLUS_API_KEY || (process.env.GOPLUS_APP_KEY && process.env.GOPLUS_APP_SECRET));
   const portfolioReady = Boolean(process.env.GOAT_RPC_URL || process.env.GOLDRUSH_API_KEY || process.env.COVALENT_API_KEY || process.env.ALCHEMY_API_KEY);
   const x402Ready = isX402Ready();
   const stellarConfig = Object.values(stellarNetworks).map((network) => ({ network: network.id, ...validateStellarNetworkConfig(network) }));
   const stellarReady = stellarConfig.every((network) => network.ok);
+  const pubnetApproval = getPubnetApprovalHealth();
   const checks: EnvCheck[] = [
     ...serverEnvKeys.map((key) => ({
       key,
@@ -145,8 +169,10 @@ export function getEnvHealth() {
       execution: true,
       x402: x402Ready,
       stellar: stellarReady,
+      stellarPubnetApproval: pubnetApproval.ready,
     },
     stellarConfig,
+    pubnetApproval,
     providerResilience: getProviderResilienceConfig(),
     detail:
       configuredLiveSources.length > 0
