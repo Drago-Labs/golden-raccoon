@@ -1,0 +1,56 @@
+name: Backup Drill
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGHOST: localhost
+      PGPORT: 5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Create databases
+        run: |
+          psql -c "CREATE DATABASE source;"
+          psql -c "CREATE DATABASE target;"
+      - name: Seed source database
+        run: |
+          psql -d source -f frontend/src/server/storage/schema.sql
+          # Seed data - adjust to actual schema
+          psql -d source -c "INSERT INTO wallets (id) VALUES (1) ON CONFLICT DO NOTHING;"
+          psql -d source -c "INSERT INTO agent_runs (id) VALUES (1) ON CONFLICT DO NOTHING;"
+          psql -d source -c "INSERT INTO agent_results (id) VALUES (1) ON CONFLICT DO NOTHING;"
+          psql -d source -c "INSERT INTO recommendations (id) VALUES (1) ON CONFLICT DO NOTHING;"
+          psql -d source -c "INSERT INTO user_rules (id) VALUES (1) ON CONFLICT DO NOTHING;"
+          psql -d source -c "INSERT INTO approvals (id) VALUES (1) ON CONFLICT DO NOTHING;"
+          psql -d source -c "INSERT INTO transactions (id) VALUES (1) ON CONFLICT DO NOTHING;"
+          psql -d source -c "INSERT INTO x402_payment_receipts (id) VALUES (1) ON CONFLICT DO NOTHING;"
+          psql -d source -c "INSERT INTO token_identities (id) VALUES (1) ON CONFLICT DO NOTHING;"
+          psql -d source -c "INSERT INTO source_snapshots (id) VALUES (1) ON CONFLICT DO NOTHING;"
+      - name: Run backup drill
+        env:
+          SOURCE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/source
+          TARGET_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/target
+        run: node scripts/backup/drill.mjs --source-url "$SOURCE_DATABASE_URL" --target-url "$TARGET_DATABASE_URL"
