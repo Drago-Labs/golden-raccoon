@@ -328,6 +328,19 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     return rowToX402Receipt(data);
   }
 
+  async getStorageCounts(): Promise<StorageCounts> {
+    const tableNames = Object.keys(storageSchemaContract.tables ?? {});
+    const counts: Record<string, number> = {};
+    for (const table of tableNames) {
+      const { count, error } = await this.client
+        .from(table)
+        .select("*", { count: "exact", head: true });
+      if (error) throw new StorageError("getStorageCounts", error);
+      counts[table] = count ?? 0;
+    }
+    return counts as StorageCounts;
+  }
+
   // ─── Public risk snapshots ──────────────────────────────────────
 
   async getRiskSnapshot(id: string): Promise<RiskSnapshotRecord | null> {
