@@ -85,6 +85,11 @@ export function useWalletSession() {
     chainId: family === "evm" ? evm.chainId : undefined,
     isConnected: family !== null,
     isConnecting: stellar.isConnecting || evm.status === "connecting" || evm.status === "reconnecting",
+    // Stellar wallets differ in what they support, so consumers can disable an
+    // action with a stated reason instead of letting a signature fail.
+    walletCapabilities: family === "stellar" ? stellar.capabilities : null,
+    networkStatus: family === "stellar" ? stellar.networkStatus : null,
+    sessionNotice: family === "stellar" ? stellar.sessionNotice : null,
     status: family ? "connected" : stellar.isConnecting || evm.status === "connecting" || evm.status === "reconnecting" ? "connecting" : "disconnected",
     stellar,
     evm,
