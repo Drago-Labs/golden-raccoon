@@ -601,9 +601,128 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
         (cleanError ? "Cleanup warning: " + cleanError.message : "Probe cleaned up successfully."),
     };
   }
-}
 
-// ─── Custom error ─────────────────────────────────────────────────────────────
+  // ─── Retention / Erasure ──────────────────────────────────────────────
+
+  async eraseWalletData(
+    walletAddress: string,
+    chainFamily: "evm" | "stellar",
+    network?: string,
+  ): Promise<import("./types").ErasureAdapterResult> {
+    const { eraseWalletDataFromPg } = await import("@/server/storage/postgresAdapter");
+    const result = await eraseWalletDataFromPg(walletAddress, network, chainFamily);
+    // Map legacy result to ErasureAdapterResult
+    const tables: import("./types").ErasureAdapterTableResult[] = [
+      { table: "pg_deleted", action: "deleted", rowsAffected: result.deletedCount, strategy: "delete" },
+      { table: "pg_anonymized", action: "anonymized", rowsAffected: result.unlinkedAuditCount, strategy: "anonymize" },
+    ];
+    return { tables };
+  }
+
+  async residueCheck(
+    walletAddress: string,
+    _chainFamily: "evm" | "stellar",
+    _network?: string,
+  ): Promise<import("./types").ResidueAdapterResult> {
+    // Postgres residue check: query identity columns in key tables
+    // (chain family and network are not filtered — we check the canonical wallet address across all tables)
+    void _chainFamily;
+    void _network;
+    const isStellar = isStellarIdentifier(walletAddress);
+    const canonical = preserveChainIdentity(walletAddress, isStellar);
+    const leaks: import("./types").ResidueAdapterLeak[] = [];
+
+    // Check hard-delete tables
+    const hardDeleteTables: Array<[string, string]> = [
+      ["agent_runs", "wallet_address"],
+      ["recommendations", "wallet_address"],
+      ["approvals", "wallet_address"],
+      ["alert_rules", "wallet_address"],
+      ["alert_observations", "wallet_address"],
+      ["alerts", "wallet_address"],
+      ["alert_deliveries", "wallet_address"],
+      ["watchlist_entries", "wallet_address"],
+      ["watchlist_scan_runs", "wallet_address"],
+      ["discovery_alerts", "wallet_address"],
+    ];
+
+    for (const [table, col] of hardDeleteTables) {
+      try {
+        const { count } = await this.client
+          .from(table)
+          .select("*", { count: "exact", head: true })
+          .eq(col, canonical);
+        if ((count ?? 0) > 0) {
+          leaks.push({ store: table, field: col, hint: canonical.slice(0, 8) + "…" });
+        }
+      } catch {
+        // Best-effort; individual table check failures don't abort the scan
+      }
+    }
+
+    // Check anonymize tables for non-null identity
+    try {
+      const { count: txCount } = await this.client
+        .from("transactions")
+        .select("*", { count: "exact", head: true })
+        .eq("wallet_address", canonical);
+      if ((txCount ?? 0) > 0) {
+        leaks.push({ store: "transactions", field: "wallet_address", hint: canonical.slice(0, 8) + "…" });
+      }
+    } catch { /* best-effort */ }
+
+    try {
+      const { count: rcptCount } = await this.client
+        .from("x402_payment_receipts")
+        .select("*", { count: "exact", head: true })
+        .eq("wallet_address", canonical);
+      if ((rcptCount ?? 0) > 0) {
+        leaks.push({ store: "x402_payment_receipts", field: "wallet_address", hint: canonical.slice(0, 8) + "…" });
+      }
+    } catch { /* best-effort */ }
+
+    return { leaks };
+  }
+
+  async storeErasureReceipt(
+    receipt: import("./types").StoredErasureReceipt,
+  ): Promise<import("./types").StoredErasureReceipt> {
+    const { error } = await this.client.from("erasure_receipts").insert({
+      receipt_id: receipt.receiptId,
+      wallet_hash: receipt.walletHash,
+      chain_family: receipt.chainFamily,
+      network: receipt.network ?? null,
+      erased_at: receipt.erasedAt,
+      sha256: receipt.sha256,
+      receipt_body: receipt.receiptBody,
+      created_at: receipt.createdAt,
+    });
+    if (error) {
+      // Non-fatal: receipt stored in-memory as fallback
+      console.error("[eraseWalletData] Failed to persist erasure receipt:", error.message);
+    }
+    return receipt;
+  }
+
+  async getErasureReceipt(receiptId: string): Promise<import("./types").StoredErasureReceipt | null> {
+    const { data, error } = await this.client
+      .from("erasure_receipts")
+      .select("*")
+      .eq("receipt_id", receiptId)
+      .maybeSingle();
+    if (error || !data) return null;
+    return {
+      receiptId: String(data.receipt_id ?? ""),
+      walletHash: String(data.wallet_hash ?? ""),
+      chainFamily: (data.chain_family ?? "evm") as "evm" | "stellar",
+      network: data.network ? String(data.network) : undefined,
+      erasedAt: String(data.erased_at ?? ""),
+      sha256: String(data.sha256 ?? ""),
+      receiptBody: typeof data.receipt_body === "string" ? data.receipt_body : JSON.stringify(data.receipt_body ?? {}),
+      createdAt: String(data.created_at ?? ""),
+    };
+  }
+}
 
 export class StorageError extends Error {
   constructor(

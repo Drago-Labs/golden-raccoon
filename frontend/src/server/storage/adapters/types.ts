@@ -17,6 +17,45 @@ import type { RiskSnapshotRecord } from "@/server/snapshots/schema";
 
 export type { StorageHealth, StorageCounts, StorageProvider };
 
+// ---------------------------------------------------------------------------
+// Retention / Erasure types (used by IStorageAdapter optional methods)
+// ---------------------------------------------------------------------------
+
+export interface ErasureAdapterTableResult {
+  table: string;
+  action: "deleted" | "anonymized" | "skipped";
+  rowsAffected: number;
+  strategy: "delete" | "anonymize";
+}
+
+export interface ErasureAdapterResult {
+  tables: ErasureAdapterTableResult[];
+}
+
+export interface ResidueAdapterLeak {
+  store: string;
+  recordId?: string;
+  field: string;
+  hint: string;
+}
+
+export interface ResidueAdapterResult {
+  leaks: ResidueAdapterLeak[];
+}
+
+/** Erasure receipt as persisted in the erasure_receipts table / in-memory store. */
+export interface StoredErasureReceipt {
+  receiptId: string;
+  walletHash: string;
+  chainFamily: "evm" | "stellar";
+  network?: string;
+  erasedAt: string;
+  sha256: string;
+  /** Full JSON-serialized receipt body for verification. */
+  receiptBody: string;
+  createdAt: string;
+}
+
 /** Arguments passed to createAgentRunRecord after business logic is applied. */
 export interface CreateAgentRunInput {
   walletAddress: string;
@@ -214,4 +253,34 @@ export interface IStorageAdapter {
   // ─── Watchlist ───────────────────────────────────────────────────
   addWatchlistEntriesBulk?(entries: WatchlistEntry[]): Promise<{ added: WatchlistEntry[] }>;
 
+  // ─── Retention / Erasure ─────────────────────────────────────────
+  /**
+   * Perform a full, structured wallet erasure for this adapter.
+   * Returns a per-table report of rows deleted or anonymized.
+   * The caller (eraseWalletData orchestrator) assembles the receipt.
+   */
+  eraseWalletData?(
+    walletAddress: string,
+    chainFamily: "evm" | "stellar",
+    network?: string,
+  ): Promise<ErasureAdapterResult>;
+
+  /**
+   * Scan this adapter's stores for residual wallet identity after erasure.
+   * Returns any leaks found (empty array = clean).
+   */
+  residueCheck?(
+    walletAddress: string,
+    chainFamily: "evm" | "stellar",
+    network?: string,
+  ): Promise<ResidueAdapterResult>;
+
+  /**
+   * Store an erasure receipt for compliance audit purposes.
+   * The receipt contains only a one-way wallet hash — never the raw address.
+   */
+  storeErasureReceipt?(receipt: StoredErasureReceipt): Promise<StoredErasureReceipt>;
+
+  /** Retrieve an erasure receipt by its receiptId. */
+  getErasureReceipt?(receiptId: string): Promise<StoredErasureReceipt | null>;
 }
