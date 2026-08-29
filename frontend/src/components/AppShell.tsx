@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { WalletConnectButton } from "@/components/WalletConnectButton";
+import { OfflineBanner } from "@/components/OfflineBanner";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
@@ -56,6 +57,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           ))}
         </nav>
       </header>
+      <OfflineBanner />
       <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-7xl px-5 py-6 outline-none sm:px-8 sm:py-8">
         {children}
       </main>

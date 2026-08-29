@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { useAccount, useWalletClient, useSwitchChain, useChainId } from "wagmi";
 import { useStellarWallet } from "@/providers/StellarWalletProvider";
 import { useWalletSession } from "@/hooks/useWalletSession";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import type {
   ApprovalValidationResult,
   PreparedTransactionPayload,
@@ -50,6 +51,7 @@ export function ApprovalFlowClient({
   const { data: walletClient } = useWalletClient();
   const { switchChainAsync } = useSwitchChain();
   const stellar = useStellarWallet();
+  const { actionsDisabled } = useOnlineStatus();
 
   const [state, setState] = useState<ApprovalState>({ phase: "idle" });
   const [payload, setPayload] = useState<PreparedTransactionPayload | null>(null);
@@ -118,7 +120,7 @@ export function ApprovalFlowClient({
   }, [state.phase, validateApproval]);
 
   const handleSignAndSubmit = useCallback(async () => {
-    if (state.phase !== "ready_for_signing" || !payload) return;
+    if (actionsDisabled || state.phase !== "ready_for_signing" || !payload) return;
 
     setState({ phase: "signing" });
 
@@ -249,9 +251,10 @@ export function ApprovalFlowClient({
         setState({ phase: "wallet_error", error: message });
       }
     }
-  }, [state, payload, chainFamily, network, walletAddress, sourceAccount, idempotencyKey, walletClient, evmChainId, switchChainAsync, stellar, onComplete]);
+  }, [actionsDisabled, state, payload, chainFamily, network, walletAddress, sourceAccount, idempotencyKey, walletClient, evmChainId, switchChainAsync, stellar, onComplete]);
 
   const handleReject = useCallback(async () => {
+    if (actionsDisabled) return;
     try {
       await fetch("/api/execute/approve", {
         method: "POST",
@@ -270,7 +273,7 @@ export function ApprovalFlowClient({
     // Keep the rejection panel visible so the user sees the terminal state.
     // The user must click Close in the StatusPanel to dismiss.
     setState({ phase: "rejected", reason: "User rejected in the frontend UI." });
-  }, [idempotencyKey, walletAddress, onDismiss]);
+  }, [actionsDisabled, idempotencyKey, walletAddress, onDismiss]);
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
@@ -336,6 +339,7 @@ export function ApprovalFlowClient({
       <div className="mt-4">
         <StatusPanel
           state={state}
+          actionsDisabled={actionsDisabled}
           onRetry={validateApproval}
           onSign={handleSignAndSubmit}
           onReject={handleReject}
@@ -576,8 +580,10 @@ function StatusPanel({
   onSign,
   onReject,
   onClose,
+  actionsDisabled,
 }: {
   state: ApprovalState;
+  actionsDisabled: boolean;
   onRetry: () => void;
   onSign: () => void;
   onReject: () => void;
@@ -605,12 +611,14 @@ function StatusPanel({
         <div className="flex flex-col gap-3">
           <button
             onClick={onSign}
+            disabled={actionsDisabled}
             className="w-full rounded-xl bg-emerald-500/20 px-4 py-3 text-sm font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/30"
           >
             Sign &amp; submit in wallet
           </button>
           <button
             onClick={onReject}
+            disabled={actionsDisabled}
             className="w-full rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-2 text-sm font-medium text-rose-300 transition-colors hover:bg-rose-500/15"
           >
             Reject
@@ -697,6 +705,7 @@ function StatusPanel({
           </div>
           <button
             onClick={onRetry}
+            disabled={actionsDisabled}
             className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-300 hover:bg-emerald-500/20"
           >
             Retry validation
@@ -712,12 +721,14 @@ function StatusPanel({
           <div className="mt-3 flex gap-2">
             <button
               onClick={onRetry}
+              disabled={actionsDisabled}
               className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
             >
               Try again
             </button>
             <button
               onClick={onReject}
+              disabled={actionsDisabled}
               className="rounded-lg border border-rose-500/20 px-3 py-1.5 text-xs text-rose-300 hover:bg-rose-500/10"
             >
               Cancel
@@ -736,6 +747,7 @@ function StatusPanel({
           </div>
           <button
             onClick={onRetry}
+            disabled={actionsDisabled}
             className="mt-3 rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
           >
             Try again
@@ -750,6 +762,7 @@ function StatusPanel({
           <div className="mt-1 text-xs text-rose-300/70">{state.error}</div>
           <button
             onClick={onRetry}
+            disabled={actionsDisabled}
             className="mt-3 rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
           >
             Try again

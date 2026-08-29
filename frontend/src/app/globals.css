@@ -34,6 +34,18 @@ body {
   background: linear-gradient(90deg, transparent, rgba(217, 164, 65, 0.85), transparent);
 }
 
+html[data-offline-locked="true"] button:not([data-offline-allow]),
+html[data-offline-locked="true"] input,
+html[data-offline-locked="true"] select,
+html[data-offline-locked="true"] textarea,
+html[data-offline-locked="true"] summary,
+html[data-offline-locked="true"] a[href^="/api"],
+html[data-offline-locked="true"] [data-state-changing] {
+  cursor: not-allowed !important;
+  opacity: 0.48 !important;
+  pointer-events: none !important;
+}
+
 /* Accessibility: visible keyboard focus indicator using the brand gold. */
 select:focus, :focus-visible {
   outline: 3px solid #d9a441;

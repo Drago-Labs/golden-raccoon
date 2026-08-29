@@ -3,6 +3,7 @@
 import { useCallback, useId, useMemo, useRef, useState } from "react";
 import type { UserRule } from "@/server/types";
 import type { StrategyPreset } from "@/server/rules/presets";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 type SaveState =
   | { status: "idle" }
@@ -145,8 +146,9 @@ export function RuleForm({
   const [assetError, setAssetError] = useState<string | null>(null);
   const assetInputRef = useRef<HTMLInputElement>(null);
   const formId = useId();
+  const { actionsDisabled } = useOnlineStatus();
 
-  const isReadOnly = !walletAddress;
+  const isReadOnly = !walletAddress || actionsDisabled;
   const fieldIssues = useMemo(() => {
     if (saveState.status !== "error" || !saveState.issues) {
       return new Map<string, string>();
@@ -170,6 +172,7 @@ export function RuleForm({
    * picking a different preset never discards them.
    */
   function applyPreset(preset: StrategyPreset) {
+    if (isReadOnly) return;
     setSaveState({ status: "idle" });
     setRules((current) => ({
       ...current,
@@ -180,6 +183,7 @@ export function RuleForm({
   }
 
   function addBlockedAsset() {
+    if (isReadOnly) return;
     const value = assetDraft.trim();
 
     if (!value) {
@@ -200,6 +204,7 @@ export function RuleForm({
   }
 
   function removeBlockedAsset(key: string) {
+    if (isReadOnly) return;
     update(
       "blockedAssets",
       rules.blockedAssets.filter((entry) => entry !== key),
@@ -207,6 +212,7 @@ export function RuleForm({
   }
 
   function toggleChain(id: string) {
+    if (isReadOnly) return;
     update(
       "allowedChains",
       rules.allowedChains.includes(id)
@@ -216,6 +222,7 @@ export function RuleForm({
   }
 
   function toggleCategory(id: string) {
+    if (isReadOnly) return;
     update(
       "blockedCategories",
       rules.blockedCategories.includes(id)
@@ -532,7 +539,9 @@ export function RuleForm({
         </div>
 
         {isReadOnly ? (
-          <p className="text-sm text-white/56">Connect a wallet to load and save a strategy profile.</p>
+          <p className="text-sm text-white/56">
+            {actionsDisabled ? "Strategy changes are disabled until connectivity returns and the page is refreshed." : "Connect a wallet to load and save a strategy profile."}
+          </p>
         ) : null}
       </fieldset>
     </form>

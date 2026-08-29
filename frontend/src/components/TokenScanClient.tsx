@@ -14,6 +14,8 @@ import { WalletConnectButton } from "@/components/WalletConnectButton";
 import { StellarRiskPublishButton } from "@/components/StellarRiskPublishButton";
 import { LiveRegion } from "@/components/a11y/LiveRegion";
 import { RiskSnapshotActions } from "@/components/RiskSnapshotActions";
+import { captureOfflineScan } from "@/lib/offlineStore";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 const paymentStatusLabels: Record<PaymentStage, { title: string; detail: string }> = {
   idle: {
@@ -191,6 +193,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
   const [paymentRequirement, setPaymentRequirement] = useState<PaymentRequired | null>(null);
   const [paymentTerms, setPaymentTerms] = useState<PaymentTerms | null>(null);
   const [isPreparingPremium, setIsPreparingPremium] = useState(false);
+  const { actionsDisabled } = useOnlineStatus();
   const report = scan?.riskReport;
   const normalizedInput = report?.input ?? scan?.normalizedInput;
   const executionPreview = report?.executionPreview as TransactionPreview | undefined;
@@ -226,6 +229,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
   }, []);
 
   async function runScan() {
+    if (actionsDisabled) return;
     setIsScanning(true);
     setScanError(null);
     setPremiumStatus("idle");
@@ -245,6 +249,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
 
       const data = (await response.json()) as TokenScanResult;
       setScan(data);
+      captureOfflineScan(data, "free token scan");
     } catch (error) {
       setScan(null);
       setScanError(error instanceof Error ? error.message : "Free trial scan failed.");
@@ -254,6 +259,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
   }
 
   async function runDetailedScan() {
+    if (actionsDisabled) return;
     setScanError(null);
     setPremiumDetail(null);
 
@@ -343,6 +349,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
         }
 
         setScan(data.scan);
+        captureOfflineScan(data.scan, "paid detailed scan");
         setPremiumStatus("verified");
         setPremiumDetail(`Payment verified. Receipt: ${data.premium?.receiptId ?? "recorded"}.`);
         return;
@@ -360,6 +367,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
       }
 
       setScan(data.scan);
+      captureOfflineScan(data.scan, "paid detailed scan");
       setPremiumStatus("verified");
       setPremiumDetail(`Payment verified. Receipt: ${data.premium?.receiptId ?? "recorded"}.`);
     } catch (error) {
@@ -406,7 +414,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
             <button
               type="button"
               onClick={runScan}
-              disabled={isBusy}
+              disabled={isBusy || actionsDisabled}
               className="h-12 rounded-full bg-[#d9a441] px-6 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isScanning && !isPaymentWorking ? "Running token agents..." : "Run token agents"}
@@ -414,7 +422,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
             <button
               type="button"
               onClick={runDetailedScan}
-              disabled={isBusy}
+              disabled={isBusy || actionsDisabled}
               className="h-12 rounded-full border border-[#d9a441]/45 px-6 text-sm font-semibold text-[#f2c86d] transition hover:border-[#d9a441] hover:bg-[#d9a441]/10 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isPaymentWorking ? "Processing..." : "Run deep scan agents"}
@@ -450,7 +458,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
                     <button
                       type="button"
                       onClick={preparePremiumScan}
-                      disabled={isPaymentWorking}
+                      disabled={isPaymentWorking || actionsDisabled}
                       className="inline-flex h-11 items-center justify-center rounded-full bg-[#d9a441] px-5 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       Continue detailed scan
@@ -478,7 +486,7 @@ export function TokenScanClient({ initialQuery = "MEME" }: { initialQuery?: stri
               <button
                 type="button"
                 onClick={preparePremiumScan}
-                disabled={isPaymentWorking || premiumStatus === "verified"}
+                disabled={isPaymentWorking || premiumStatus === "verified" || actionsDisabled}
                 className="mt-4 h-12 w-full rounded-full bg-[#d9a441] px-5 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {premiumStatus === "verified" ? "Payment verified" : isPaymentWorking ? "Processing..." : "Pay and Run Detailed Scan"}
