@@ -23,7 +23,9 @@
 //! Until the issue #16 specification is formally approved this surface should
 //! be treated as proposed. `VERSION` must be bumped on any change to it.
 
-use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env};
+use soroban_sdk::{
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
+};
 
 /// Interface version. Bump on any externally visible change.
 const VERSION: u32 = 1;
@@ -504,14 +506,18 @@ impl AuditRegistry {
             .persistent()
             .get::<DataKey, Authorization>(&DataKey::Authorization(user, agent))
         {
-            Some(authorization) => authorization.active && authorization.expires_at > env.ledger().timestamp(),
+            Some(authorization) => {
+                authorization.active && authorization.expires_at > env.ledger().timestamp()
+            }
             None => false,
         }
     }
 
     /// Whether an intent id has already been consumed for `user`.
     pub fn is_intent_used(env: Env, user: Address, intent_id: BytesN<32>) -> bool {
-        env.storage().temporary().has(&DataKey::Intent(user, intent_id))
+        env.storage()
+            .temporary()
+            .has(&DataKey::Intent(user, intent_id))
     }
 }
 

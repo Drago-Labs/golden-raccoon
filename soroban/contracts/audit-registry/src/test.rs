@@ -18,7 +18,13 @@ fn zero_hash(env: &Env) -> BytesN<32> {
 
 /// Deploy the contract with a user who has committed to a policy and authorized
 /// one agent for an hour.
-fn setup() -> (Env, AuditRegistryClient<'static>, Address, Address, BytesN<32>) {
+fn setup() -> (
+    Env,
+    AuditRegistryClient<'static>,
+    Address,
+    Address,
+    BytesN<32>,
+) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(NOW);
@@ -125,7 +131,12 @@ fn rejects_bad_authorization_windows() {
         Err(Ok(AuditError::ExpiryInPast))
     );
     assert_eq!(
-        client.try_authorize_agent(&user, &agent, &policy, &(NOW + MAX_AUTHORIZATION_WINDOW + 1)),
+        client.try_authorize_agent(
+            &user,
+            &agent,
+            &policy,
+            &(NOW + MAX_AUTHORIZATION_WINDOW + 1)
+        ),
         Err(Ok(AuditError::WindowTooLong))
     );
 
@@ -142,7 +153,14 @@ fn rejects_bad_authorization_windows() {
 fn authorized_agent_can_log_a_decision() {
     let (env, client, user, agent, policy) = setup();
 
-    client.log_decision(&user, &agent, &policy, &hash(&env, 10), &hash(&env, 11), &74);
+    client.log_decision(
+        &user,
+        &agent,
+        &policy,
+        &hash(&env, 10),
+        &hash(&env, 11),
+        &74,
+    );
 }
 
 #[test]
@@ -152,7 +170,14 @@ fn unauthorized_actions_fail() {
 
     // Never authorized.
     assert_eq!(
-        client.try_log_decision(&user, &stranger, &policy, &hash(&env, 10), &hash(&env, 11), &50),
+        client.try_log_decision(
+            &user,
+            &stranger,
+            &policy,
+            &hash(&env, 10),
+            &hash(&env, 11),
+            &50
+        ),
         Err(Ok(AuditError::NotAuthorized))
     );
 
@@ -160,7 +185,14 @@ fn unauthorized_actions_fail() {
     client.revoke_agent(&user, &agent);
     assert!(!client.is_agent_live(&user, &agent));
     assert_eq!(
-        client.try_log_decision(&user, &agent, &policy, &hash(&env, 10), &hash(&env, 11), &50),
+        client.try_log_decision(
+            &user,
+            &agent,
+            &policy,
+            &hash(&env, 10),
+            &hash(&env, 11),
+            &50
+        ),
         Err(Ok(AuditError::NotAuthorized))
     );
 
@@ -177,7 +209,14 @@ fn expired_authorization_fails_without_revocation() {
 
     assert!(!client.is_agent_live(&user, &agent));
     assert_eq!(
-        client.try_log_decision(&user, &agent, &policy, &hash(&env, 10), &hash(&env, 11), &50),
+        client.try_log_decision(
+            &user,
+            &agent,
+            &policy,
+            &hash(&env, 10),
+            &hash(&env, 11),
+            &50
+        ),
         Err(Ok(AuditError::AuthorizationExpired))
     );
 }
@@ -191,19 +230,40 @@ fn rotating_the_policy_invalidates_work_computed_against_the_old_one() {
 
     // The agent's old policy no longer matches the authorization it holds.
     assert_eq!(
-        client.try_log_decision(&user, &agent, &policy, &hash(&env, 10), &hash(&env, 11), &50),
+        client.try_log_decision(
+            &user,
+            &agent,
+            &policy,
+            &hash(&env, 10),
+            &hash(&env, 11),
+            &50
+        ),
         Err(Ok(AuditError::PolicyMismatch))
     );
 
     // Presenting the new policy also fails, because the grant was issued under
     // the old one — the user must re-authorize deliberately.
     assert_eq!(
-        client.try_log_decision(&user, &agent, &hash(&env, 2), &hash(&env, 10), &hash(&env, 11), &50),
+        client.try_log_decision(
+            &user,
+            &agent,
+            &hash(&env, 2),
+            &hash(&env, 10),
+            &hash(&env, 11),
+            &50
+        ),
         Err(Ok(AuditError::PolicyMismatch))
     );
 
     client.authorize_agent(&user, &agent, &hash(&env, 2), &(NOW + 3_600));
-    client.log_decision(&user, &agent, &hash(&env, 2), &hash(&env, 10), &hash(&env, 11), &50);
+    client.log_decision(
+        &user,
+        &agent,
+        &hash(&env, 2),
+        &hash(&env, 10),
+        &hash(&env, 11),
+        &50,
+    );
 }
 
 #[test]
@@ -211,20 +271,48 @@ fn rejects_invalid_decision_bounds_and_hashes() {
     let (env, client, user, agent, policy) = setup();
 
     assert_eq!(
-        client.try_log_decision(&user, &agent, &policy, &hash(&env, 10), &hash(&env, 11), &101),
+        client.try_log_decision(
+            &user,
+            &agent,
+            &policy,
+            &hash(&env, 10),
+            &hash(&env, 11),
+            &101
+        ),
         Err(Ok(AuditError::InvalidBuyRisk))
     );
     assert_eq!(
-        client.try_log_decision(&user, &agent, &policy, &zero_hash(&env), &hash(&env, 11), &50),
+        client.try_log_decision(
+            &user,
+            &agent,
+            &policy,
+            &zero_hash(&env),
+            &hash(&env, 11),
+            &50
+        ),
         Err(Ok(AuditError::ZeroHash))
     );
     assert_eq!(
-        client.try_log_decision(&user, &agent, &policy, &hash(&env, 10), &zero_hash(&env), &50),
+        client.try_log_decision(
+            &user,
+            &agent,
+            &policy,
+            &hash(&env, 10),
+            &zero_hash(&env),
+            &50
+        ),
         Err(Ok(AuditError::ZeroHash))
     );
 
     // The bound itself is valid.
-    client.log_decision(&user, &agent, &policy, &hash(&env, 10), &hash(&env, 11), &100);
+    client.log_decision(
+        &user,
+        &agent,
+        &policy,
+        &hash(&env, 10),
+        &hash(&env, 11),
+        &100,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +499,14 @@ fn pause_blocks_logging_and_unpause_restores_it() {
     assert!(!client.is_agent_live(&user, &agent));
 
     assert_eq!(
-        client.try_log_decision(&user, &agent, &policy, &hash(&env, 10), &hash(&env, 11), &50),
+        client.try_log_decision(
+            &user,
+            &agent,
+            &policy,
+            &hash(&env, 10),
+            &hash(&env, 11),
+            &50
+        ),
         Err(Ok(AuditError::ContractPaused))
     );
     assert_eq!(
@@ -434,7 +529,14 @@ fn pause_blocks_logging_and_unpause_restores_it() {
 
     client.set_paused(&user, &false);
     assert!(!client.is_paused(&user));
-    client.log_decision(&user, &agent, &policy, &hash(&env, 10), &hash(&env, 11), &50);
+    client.log_decision(
+        &user,
+        &agent,
+        &policy,
+        &hash(&env, 10),
+        &hash(&env, 11),
+        &50,
+    );
 }
 
 #[test]
@@ -487,7 +589,14 @@ fn re_authorizing_after_revocation_works() {
     client.authorize_agent(&user, &agent, &policy, &(NOW + 600));
 
     assert!(client.is_agent_live(&user, &agent));
-    client.log_decision(&user, &agent, &policy, &hash(&env, 10), &hash(&env, 11), &50);
+    client.log_decision(
+        &user,
+        &agent,
+        &policy,
+        &hash(&env, 10),
+        &hash(&env, 11),
+        &50,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -514,7 +623,14 @@ fn users_are_isolated_from_each_other() {
     // An agent authorized by one user has no standing with another.
     assert!(!client.is_agent_live(&other_user, &agent));
     assert_eq!(
-        client.try_log_decision(&other_user, &agent, &policy, &hash(&env, 10), &hash(&env, 11), &50),
+        client.try_log_decision(
+            &other_user,
+            &agent,
+            &policy,
+            &hash(&env, 10),
+            &hash(&env, 11),
+            &50
+        ),
         Err(Ok(AuditError::NotAuthorized))
     );
 
