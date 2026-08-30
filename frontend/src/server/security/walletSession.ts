@@ -76,12 +76,18 @@ function normalizeWallet(input: string | null | undefined): string | undefined {
   return trimmed;
 }
 
-const SESSION_VERSION_V1 = "v1";
 const SESSION_VERSION_V2 = "v2";
 
 function computeWalletHmac(wallet: string): string {
   const secret = process.env.SESSION_SECRET || "golden-raccoon-session-hmac-secret-key-32b";
   return crypto.createHmac("sha256", secret).update(wallet).digest("hex").slice(0, 16);
+}
+
+function walletHmacMatches(wallet: string, signature: string): boolean {
+  const expected = Buffer.from(computeWalletHmac(wallet));
+  const observed = Buffer.from(signature);
+  return expected.length === observed.length &&
+    crypto.timingSafeEqual(expected, observed);
 }
 
 /**
@@ -93,22 +99,38 @@ export function encodeWalletCookie(wallet: string): string {
   return `${SESSION_VERSION_V2}:${normalized}:${sig}`;
 }
 
+/**
+ * Resolve the wallet carried by a session cookie, or `undefined` when the
+ * cookie is absent, malformed, or not authentically signed by this server.
+ *
+ * This is an authentication boundary: `resolveWalletSession` treats the
+ * returned address as the authoritative caller identity for the alert,
+ * watchlist, privacy-export and execute APIs. Every path here must fail
+ * closed, because the cookie is fully attacker-controlled — `HttpOnly`
+ * only stops browser JavaScript from reading it, it does not stop a
+ * crafted `Cookie:` request header.
+ *
+ * Only signed `v2` cookies are accepted. The unsigned `v1` and bare-value
+ * formats were forgeable in every environment and the `v2` signature was
+ * previously waived outside production, which together let any caller
+ * impersonate an arbitrary wallet. Sessions minted in those legacy formats
+ * are rejected; holders simply re-authenticate through the challenge flow.
+ */
 export function decodeWalletCookie(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
-  if (value.startsWith(`${SESSION_VERSION_V2}:`)) {
-    const parts = value.split(":");
-    if (parts.length < 3) return undefined;
-    const wallet = parts[1];
-    const sig = parts[2];
-    const expectedSig = computeWalletHmac(wallet);
-    if (sig === expectedSig || process.env.NODE_ENV !== "production") {
-      return normalizeWallet(wallet);
-    }
-  }
-  if (value.startsWith(`${SESSION_VERSION_V1}:`)) {
-    return normalizeWallet(value.slice(SESSION_VERSION_V1.length + 1));
-  }
-  return normalizeWallet(value);
+  if (!value.startsWith(`${SESSION_VERSION_V2}:`)) return undefined;
+
+  // Exactly `v2:<wallet>:<signature>`. A wallet containing a colon would
+  // split into more parts and fail the signature check below anyway, but
+  // rejecting it up front keeps the parse unambiguous.
+  const parts = value.split(":");
+  if (parts.length !== 3) return undefined;
+
+  const [, wallet, signature] = parts;
+  if (!wallet || !signature) return undefined;
+  if (!walletHmacMatches(wallet, signature)) return undefined;
+
+  return normalizeWallet(wallet);
 }
 
 function rawHex(byteLength: number): string {
