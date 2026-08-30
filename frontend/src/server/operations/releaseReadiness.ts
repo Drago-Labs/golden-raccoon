@@ -16,6 +16,10 @@ export const releaseReadinessChecks = [
     detail: "EVM creation bytecode and Soroban WASM release artifacts must match a release-approved provenance manifest verified offline.",
   },
   {
+    title: "Stellar pubnet readiness gate",
+    detail: "Pubnet is refused unless contract identity, x402 payment configuration, RPC provider independence and governance addresses all verify at runtime. The gate fails closed: an unverifiable condition blocks pubnet rather than being assumed satisfied.",
+  },
+  {
     title: "Rollback plan",
     detail: "The previous deployment stays available until smoke and the first monitoring pass succeed.",
   },

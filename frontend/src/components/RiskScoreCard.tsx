@@ -98,7 +98,7 @@ export function RiskScoreCard({ score, holdings = [] }: { score: number; holding
         >
           <div className="flex items-center justify-between gap-3">
             <div id={headingId} className="text-sm font-semibold">Why {boundedScore}/100?</div>
-            <button ref={closeButtonRef} type="button" onClick={closeBreakdown} className="inline-flex h-8 w-8 items-center justify-center rounded-full text-white/46 hover:bg-white/8 hover:text-white" aria-label="Close risk breakdown">
+            <button ref={closeButtonRef} type="button" onClick={closeBreakdown} className="touch-target rounded-full text-white/46 hover:bg-white/8 hover:text-white" aria-label="Close risk breakdown">
               <X className="h-4 w-4" />
             </button>
           </div>

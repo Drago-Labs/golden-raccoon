@@ -87,3 +87,75 @@ select:focus, :focus-visible {
     scroll-behavior: auto !important;
   }
 }
+
+/*
+ * Responsive and touch-target guardrails (issue #148).
+ *
+ * A wallet user typically operates from a phone, so the primary read path is
+ * the one that degraded worst. These rules are deliberately global: relying on
+ * every component to remember them is what produced the inconsistency.
+ */
+
+:root {
+  /* WCAG 2.2 AA target size (minimum) is 24px; 44px is the comfortable
+     pointer target Apple and Google both recommend, and is what this app
+     enforces for its own controls. */
+  --touch-target-min: 44px;
+}
+
+/* The page body must never scroll sideways. Wide content scrolls inside its
+   own container — see components/layout/DataTable.tsx. */
+html,
+body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+/*
+ * Every interactive control meets the minimum target.
+ *
+ * Applied by element rather than by utility class so a control added later is
+ * covered by default. `min-height` and `min-width` do not stretch a control
+ * that is already large enough, and inline-level controls inside prose are
+ * exempt so a link in a sentence does not disturb the line box.
+ */
+button,
+[role="button"],
+select,
+summary,
+input[type="checkbox"],
+input[type="radio"] {
+  min-height: var(--touch-target-min);
+  min-width: var(--touch-target-min);
+}
+
+/* Text inputs need the height, not the width. */
+input:not([type="checkbox"]):not([type="radio"]),
+textarea {
+  min-height: var(--touch-target-min);
+}
+
+/* An icon-only control has no text to give it size. */
+.touch-target {
+  min-height: var(--touch-target-min);
+  min-width: var(--touch-target-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Charts and media reflow within their container instead of overflowing. */
+svg,
+canvas,
+img,
+video {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Scroll is locked behind an open drawer or modal on small viewports, so the
+   background does not move under the overlay. */
+body[data-scroll-locked="true"] {
+  overflow: hidden;
+  touch-action: none;
+}

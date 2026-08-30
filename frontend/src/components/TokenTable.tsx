@@ -1,5 +1,6 @@
 import type { TokenHolding } from "@/server/types";
 import { formatPercent, formatUsd } from "@/lib/format";
+import { DataTable } from "@/components/layout/DataTable";
 
 export function TokenTable({ holdings }: { holdings: TokenHolding[] }) {
   return (
@@ -9,8 +10,7 @@ export function TokenTable({ holdings }: { holdings: TokenHolding[] }) {
           <h2 className="text-xl font-semibold">Token exposure</h2>
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[680px] text-left text-sm">
+      <DataTable caption="Token exposure by holding" minWidth={680}>
           <thead className="text-xs uppercase tracking-[0.16em] text-white/36">
             <tr>
               <th className="pb-3 font-medium">Token</th>
@@ -38,8 +38,7 @@ export function TokenTable({ holdings }: { holdings: TokenHolding[] }) {
               </tr>
             ))}
           </tbody>
-        </table>
-      </div>
+      </DataTable>
     </section>
   );
 }

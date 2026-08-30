@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { ExternalLink, Laptop, Orbit, RefreshCw, Smartphone, Wallet, X } from "lucide-react";
 import { useWalletSession } from "@/hooks/useWalletSession";
 import { shortenWalletAddress } from "@/lib/wallet/session";
+import { NetworkMismatchNotice } from "@/components/NetworkMismatchNotice";
+import { WalletBadge } from "@/components/WalletBadge";
 
 export function WalletConnectButton() {
   const session = useWalletSession();
@@ -106,9 +108,10 @@ export function WalletConnectButton() {
                       </div>
                     </dl>
 
-                    {stellar.mismatchMessage && session.family === "stellar" ? (
-                      <div role="alert" className="rounded-xl border border-red-300/20 bg-red-500/10 p-3 text-xs text-red-100">
-                        {stellar.mismatchMessage}
+                    {session.family === "stellar" ? (
+                      <div className="grid gap-2">
+                        <WalletBadge />
+                        <NetworkMismatchNotice />
                       </div>
                     ) : null}
                     {stellar.error && session.family === "stellar" ? (
@@ -173,6 +176,7 @@ export function WalletConnectButton() {
                     <button
                       type="button"
                       disabled={stellar.isConnecting || !stellar.mobileAvailable}
+                      title={stellar.mobileAvailable ? undefined : "Mobile wallet connection is not configured for this deployment."}
                       onClick={() => void connectStellar("wallet_connect")}
                       className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm text-white hover:bg-white/8 disabled:opacity-45"
                     >

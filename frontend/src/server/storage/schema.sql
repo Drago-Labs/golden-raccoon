@@ -746,3 +746,64 @@ create index if not exists discovery_alerts_wallet_created_idx on discovery_aler
 create index if not exists discovery_alerts_entry_created_idx on discovery_alerts(entry_id, created_at desc);
 -- Watchlist portability (Issue #106)
 -- Bulk imports utilize the existing watchlist_entries schema.
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Retention & Erasure — V4 Privacy Enforcement Schema
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- erasure_receipts: tamper-evident proof of wallet data erasure.
+-- Contains only a one-way wallet hash (SHA-256) — never the raw address.
+-- Append-only: rows are never updated after insertion.
+create table if not exists erasure_receipts (
+  receipt_id text primary key,
+  wallet_hash text not null,           -- SHA-256(walletAddress) — not the raw address
+  chain_family text not null check (chain_family in ('evm', 'stellar')),
+  network text,                        -- optional network qualifier
+  erased_at timestamptz not null,      -- when the erasure completed
+  sha256 text not null,                -- SHA-256 of the canonical receipt body
+  receipt_body jsonb not null,         -- full receipt for independent verification
+  created_at timestamptz not null default now()
+);
+
+create index if not exists erasure_receipts_wallet_hash_idx on erasure_receipts(wallet_hash, created_at desc);
+create index if not exists erasure_receipts_erased_at_idx on erasure_receipts(erased_at desc);
+
+-- Immutability: only insertion is permitted after creation.
+create or replace function enforce_erasure_receipt_immutability()
+returns trigger language plpgsql as $$
+begin
+  raise exception 'erasure_receipts rows are immutable';
+end;
+$$;
+
+drop trigger if exists erasure_receipts_immutable on erasure_receipts;
+create trigger erasure_receipts_immutable before update on erasure_receipts
+for each row execute function enforce_erasure_receipt_immutability();
+
+-- Retention policy summary view (informational — operators may query this).
+create or replace view retention_policy_summary as
+select
+  unnest(array[
+    'wallets','agent_runs','agent_results','source_snapshots',
+    'recommendations','approvals','transactions','x402_payment_receipts',
+    'user_rules','alert_rules','alert_observations','alerts',
+    'alert_deliveries','watchlist_entries','watchlist_scan_runs',
+    'discovery_alerts','recovery_requests','risk_snapshots',
+    'token_identities','erasure_receipts'
+  ]) as table_name,
+  unnest(array[
+    0,90,90,90,
+    90,180,365,1095,
+    0,0,30,90,
+    90,0,90,
+    90,365,0,
+    0,0
+  ]::int[]) as retention_days,
+  unnest(array[
+    'delete','delete','delete','delete',
+    'delete','delete','anonymize','anonymize',
+    'delete','delete','delete','delete',
+    'delete','delete','delete',
+    'delete','delete','delete',
+    'anonymize','delete'
+  ]) as strategy;

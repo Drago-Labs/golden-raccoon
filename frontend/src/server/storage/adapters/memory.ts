@@ -12,7 +12,7 @@ import type {
   StorageCounts,
 } from "@/server/types";
 import { storageSchemaContract } from "@/server/storage/contract";
-import type { IStorageAdapter, AgentRunInsert, HealthProbeResult } from "./types";
+import type { IStorageAdapter, AgentRunInsert, HealthProbeResult, StoredErasureReceipt, ErasureAdapterResult, ResidueAdapterResult } from "./types";
 import type { RiskSnapshotRecord } from "@/server/snapshots/schema";
 import { alertDeliveryToRow, rowToAlertDelivery } from "./types";
 
@@ -27,6 +27,7 @@ const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonWatchlistEntries?: WatchlistEntry[];
   __goldenRaccoonRiskSnapshots?: RiskSnapshotRecord[];
   __goldenRaccoonAdapterAlertDeliveries?: AlertDelivery[];
+  __goldenRaccoonErasureReceipts?: StoredErasureReceipt[];
 };
 
 function getAgentRuns(): AgentRunRecord[] {
@@ -66,7 +67,6 @@ function getAlertDeliveries(): AlertDelivery[] {
   memoryStore.__goldenRaccoonAdapterAlertDeliveries ??= [];
   return memoryStore.__goldenRaccoonAdapterAlertDeliveries;
 }
-
 function normalizedWallet(walletAddress?: string): string | undefined {
   return walletAddress?.toLowerCase();
 }
@@ -371,5 +371,42 @@ export class MemoryStorageAdapter implements IStorageAdapter {
       ok: false,
       detail: "Memory probe failed: probe record was not readable after write.",
     };
+  }
+
+  // ─── Retention / Erasure ──────────────────────────────────────────────
+
+  async eraseWalletData(
+    walletAddress: string,
+    chainFamily: "evm" | "stellar",
+    network?: string,
+  ): Promise<ErasureAdapterResult> {
+    const { eraseWalletDataFromMemory } = await import("@/server/privacy/retention/erase");
+    const result = eraseWalletDataFromMemory({ walletAddress, chainFamily, network });
+    return { tables: result.tables };
+  }
+
+  async residueCheck(
+    walletAddress: string,
+    chainFamily: "evm" | "stellar",
+    network?: string,
+  ): Promise<ResidueAdapterResult> {
+    const { checkErasureResidue } = await import("@/server/privacy/retention/residue");
+    const result = checkErasureResidue(walletAddress, chainFamily, network);
+    return { leaks: result.leaks };
+  }
+
+  async storeErasureReceipt(receipt: StoredErasureReceipt): Promise<StoredErasureReceipt> {
+    memoryStore.__goldenRaccoonErasureReceipts ??= [];
+    const existing = memoryStore.__goldenRaccoonErasureReceipts.find(
+      (r) => r.receiptId === receipt.receiptId,
+    );
+    if (existing) return existing;
+    memoryStore.__goldenRaccoonErasureReceipts.unshift(receipt);
+    return receipt;
+  }
+
+  async getErasureReceipt(receiptId: string): Promise<StoredErasureReceipt | null> {
+    memoryStore.__goldenRaccoonErasureReceipts ??= [];
+    return memoryStore.__goldenRaccoonErasureReceipts.find((r) => r.receiptId === receiptId) ?? null;
   }
 }
