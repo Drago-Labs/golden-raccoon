@@ -23,3 +23,51 @@ This document records the runtime boundary used during the Stellar integration. 
 3. Stellar assets are identified by native identity, code plus issuer, or contract ID, never by symbol alone.
 4. Every state-changing operation is prepared and simulated by the server but signed only by the connected user wallet.
 5. Existing EVM quality gates must pass after each integration section.
+
+
+## Stellar wallet capabilities
+
+Wallets exposed through Stellar Wallets Kit differ in what they can do, and code
+that assumes one wallet's behaviour breaks on the others. The matrix is declared
+in `frontend/src/server/stellar/wallets/capabilities.ts` and enforced by
+`npm run test:wallet-capabilities`.
+
+| Wallet | Signs | Reports network | Announces account switch | Hardware |
+| --- | --- | --- | --- | --- |
+| Freighter | yes | yes | yes | no |
+| xBull | yes | yes | yes | no |
+| Albedo | yes | **no** | no | no |
+| Rabet | yes | yes | no | no |
+| LOBSTR | yes | yes | no | no |
+| Hana | yes | yes | yes | no |
+| HOT | yes | **no** | no | no |
+| WalletConnect | yes | yes | no | no |
+
+A wallet this table does not list is still usable. It gets the conservative
+profile — it may sign, and nothing else is assumed — because assuming a
+capability a wallet lacks ends in a failed signature, while assuming it lacks one
+it has only costs a disabled control with an explanation next to it.
+
+### Network mismatch has three outcomes
+
+`match`, `mismatch`, and `unreported`. The third is not a form of the first: a
+wallet that cannot report its network is shown as unverified with an instruction
+to confirm it. Treating that as a match is how a user signs a pubnet transaction
+believing they are on testnet.
+
+A real mismatch blocks signing. An unreported network does not — several wallets
+simply cannot answer, and refusing them outright would be worse than asking the
+user to check — but it is surfaced every time.
+
+### Sessions are invalidated, not repointed
+
+A session is the claim "this address, on this network, through this wallet".
+When the user switches account or disconnects inside the wallet, the session no
+longer describes the connected signer, so it is discarded and the reason is
+shown. It is never silently repointed at the new address.
+
+Restoring a session is display-only. It repopulates what the user was looking at
+and asks the wallet for nothing, so returning to the page can never trigger a
+signature prompt on its own; the badge labels such a session
+`restored, not verified` until the wallet confirms it.
+
