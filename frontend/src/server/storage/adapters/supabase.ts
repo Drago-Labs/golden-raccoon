@@ -15,9 +15,11 @@ import type {
   StorageCounts,
 } from "@/server/types";
 import { storageSchemaContract } from "@/server/storage/contract";
-import type { IStorageAdapter, AgentRunInsert, HealthProbeResult } from "./types";
+import type { IStorageAdapter, AgentRunInsert, HealthProbeResult, PaginationOpts, PaginatedResult } from "./types";
 import type { RiskSnapshotRecord } from "@/server/snapshots/schema";
 import { alertDeliveryToRow, rowToAlertDelivery } from "./types";
+import { paginateArray } from "@/server/api/query/envelope";
+import { MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE } from "@/server/api/query/contract";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -449,7 +451,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     return data ? rowToAlertDelivery(data as Record<string, unknown>) : null;
   }
 
-  // ─── Notification preferences ──────────────────────────────────
+// ─── Notification preferences ──────────────────────────────────
 
   async getNotificationPreferences(scope: {
     walletAddress: string;
@@ -528,6 +530,85 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       network,
       updatedAt: record.updated_at,
     };
+  }
+
+  // ─── Paginated (Issue #143) — identical via paginateArray ───────
+
+  private paginate<T extends Record<string, any>>(items: T[], opts: PaginationOpts, idKey = "id"): PaginatedResult<T> {
+    const sortBy = opts.sortBy ?? "createdAt";
+    const sortDirection = opts.sortDirection ?? "desc";
+    const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, opts.limit ?? DEFAULT_PAGE_SIZE));
+    const sorted = [...items].sort((a: any, b: any) => {
+      const av = a[sortBy];
+      const bv = b[sortBy];
+      if (av === bv) return String(a[idKey]).localeCompare(String(b[idKey]));
+      if (sortDirection === "asc") return av > bv ? 1 : -1;
+      return av < bv ? 1 : -1;
+    });
+    const { items: page, nextCursor, hasMore } = paginateArray(sorted as any, {
+      cursor: opts.cursor,
+      limit,
+      walletAddress: opts.walletAddress,
+      network: opts.network,
+      chainFamily: opts.chainFamily,
+      sortBy,
+      sortDirection,
+      idKey,
+    });
+    return { items: page as T[], nextCursor, hasMore, total: items.length };
+  }
+
+  async listAgentRunRecordsPaginated(opts: PaginationOpts & { walletAddress?: string }): Promise<PaginatedResult<AgentRunRecord>> {
+    const all = await this.listAgentRunRecords(opts.walletAddress);
+    return this.paginate(all as any, opts);
+  }
+
+  async listRecommendationRecordsPaginated(opts: PaginationOpts & { walletAddress?: string }): Promise<PaginatedResult<RecommendationRecord>> {
+    const all = await this.listRecommendationRecords(opts.walletAddress);
+    return this.paginate(all as any, opts);
+  }
+
+  async listTransactionRecordsPaginated(opts: PaginationOpts & { walletAddress?: string }): Promise<PaginatedResult<TransactionRecord>> {
+    const all = await this.listTransactionRecords(opts.walletAddress);
+    let filtered: any = all;
+    if (opts.network) filtered = filtered.filter((r: any) => (r.network ?? "").toLowerCase() === opts.network!.toLowerCase());
+    if (opts.chainFamily) filtered = filtered.filter((r: any) => (r.chainFamily ?? "evm") === opts.chainFamily);
+    return this.paginate(filtered, { ...opts, sortBy: opts.sortBy ?? "createdAt" }, "hash");
+  }
+
+  async listApprovalRecordsPaginated(opts: PaginationOpts & { walletAddress?: string }): Promise<PaginatedResult<UserApprovalRecord>> {
+    const all = await this.listApprovalRecords(opts.walletAddress);
+    return this.paginate(all as any, opts);
+  }
+
+  async listAlertDeliveriesPaginated(opts: PaginationOpts & { alertId?: string; walletAddress?: string }): Promise<PaginatedResult<AlertDelivery>> {
+    const all = await this.listAlertDeliveries((opts as any).alertId, opts.walletAddress);
+    return this.paginate(all as any, opts);
+  }
+
+  async listWatchlistEntriesPaginated(opts: PaginationOpts & { walletAddress?: string; chain?: string; network?: string }): Promise<PaginatedResult<any>> {
+    // Supabase watchlist not yet table-backed; delegate to bulk fetch then paginate identically to memory
+    const { data } = await this.client.from("watchlist_entries").select("*").then((r) => ({ data: r.data ?? [], error: r.error }));
+    // Fallback to empty if table missing — ensure identical shape to memory (which uses global store)
+    let items: any[] = [];
+    try {
+      const all = (data ?? []).map((row: any) => ({
+        id: row.id,
+        walletAddress: row.wallet_address,
+        identityKey: row.identity_key,
+        chain: row.chain,
+        network: row.network,
+        symbol: row.symbol,
+        createdAt: row.created_at,
+      }));
+      let filtered = items.length ? items : all;
+      if (opts.walletAddress) filtered = filtered.filter((e: any) => e.walletAddress?.toLowerCase() === opts.walletAddress!.toLowerCase());
+      if ((opts as any).chain) filtered = filtered.filter((e: any) => (e.chain ?? "").toLowerCase() === (opts as any).chain.toLowerCase());
+      if (opts.network) filtered = filtered.filter((e: any) => (e.network ?? "").toLowerCase() === opts.network.toLowerCase());
+      return this.paginate(filtered, opts);
+    } catch {
+      return this.paginate([], opts);
+    }
   }
 
   // ─── Health & counts ─────────────────────────────────────────────

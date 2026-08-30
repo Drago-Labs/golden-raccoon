@@ -57,6 +57,23 @@ export interface StoredErasureReceipt {
   createdAt: string;
 }
 
+export interface PaginationOpts {
+  cursor?: string;
+  limit?: number;
+  sortBy?: string;
+  sortDirection?: "asc" | "desc";
+  walletAddress?: string;
+  network?: string;
+  chainFamily?: string;
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  total?: number;
+}
+
 /** Arguments passed to createAgentRunRecord after business logic is applied. */
 export interface CreateAgentRunInput {
   walletAddress: string;
@@ -292,4 +309,12 @@ export interface IStorageAdapter {
 
   /** Retrieve an erasure receipt by its receiptId. */
   getErasureReceipt?(receiptId: string): Promise<StoredErasureReceipt | null>;
+
+  // ─── Paginated list (Issue #143) — identical pagination via shared envelope ─
+  listAgentRunRecordsPaginated?(opts: PaginationOpts & { walletAddress?: string }): Promise<PaginatedResult<AgentRunRecord>>;
+  listRecommendationRecordsPaginated?(opts: PaginationOpts & { walletAddress?: string }): Promise<PaginatedResult<RecommendationRecord>>;
+  listTransactionRecordsPaginated?(opts: PaginationOpts & { walletAddress?: string }): Promise<PaginatedResult<TransactionRecord>>;
+  listApprovalRecordsPaginated?(opts: PaginationOpts & { walletAddress?: string }): Promise<PaginatedResult<UserApprovalRecord>>;
+  listAlertDeliveriesPaginated?(opts: PaginationOpts & { alertId?: string; walletAddress?: string }): Promise<PaginatedResult<AlertDelivery>>;
+  listWatchlistEntriesPaginated?(opts: PaginationOpts & { walletAddress?: string; chain?: string; network?: string }): Promise<PaginatedResult<WatchlistEntry>>;
 }

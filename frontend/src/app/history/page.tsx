@@ -1,17 +1,21 @@
 import { AppShell } from "@/components/AppShell";
 import { AuditExportButton } from "@/components/AuditExportButton";
-import { listAgentRunRecords, listApprovalRecords, listRecommendationRecords, listTransactionRecords } from "@/server/storage";
+import { listAgentRunRecordsPaginated, listApprovalRecordsPaginated, listRecommendationRecordsPaginated, listTransactionRecordsPaginated } from "@/server/storage";
 import { DataTable } from "@/components/layout/DataTable";
 
 export const dynamic = "force-dynamic";
 
 export default async function HistoryPage() {
-  const [agentRuns, recommendations, approvals, transactions] = await Promise.all([
-    listAgentRunRecords(),
-    listRecommendationRecords(),
-    listApprovalRecords(),
-    listTransactionRecords(),
+  const [agentRunsPage, recommendationsPage, approvalsPage, transactionsPage] = await Promise.all([
+    listAgentRunRecordsPaginated(undefined, { limit: 20 }),
+    listRecommendationRecordsPaginated(undefined, { limit: 20 }),
+    listApprovalRecordsPaginated(undefined, { limit: 20 }),
+    listTransactionRecordsPaginated(undefined, { limit: 20 }),
   ]);
+  const agentRuns = agentRunsPage.items;
+  const recommendations = recommendationsPage.items;
+  const approvals = approvalsPage.items;
+  const transactions = transactionsPage.items;
 
   return (
     <AppShell>
