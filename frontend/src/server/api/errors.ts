@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCorrelationId } from "@/server/observability/logger/context";
 
 export type ApiErrorCode =
   | "validation_error"
@@ -130,7 +131,7 @@ export function jsonError(input: ApiError | JsonErrorInput, options?: JsonErrorO
     input instanceof ApiError
       ? input
       : new ApiError(input.code, input.message, input.status, { retryable: input.retryable, recoveryAction: input.recoveryAction, details: input.details });
-  const requestId = options?.requestId ?? createRequestId();
+  const requestId = options?.requestId ?? getCorrelationId() ?? createRequestId();
   const body = { ...toErrorShape(apiError, requestId), ...(options?.legacy ?? {}) };
 
   return NextResponse.json(body, {

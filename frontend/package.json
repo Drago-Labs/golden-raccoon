@@ -8,8 +8,8 @@
     "start": "next start",
     "deploy:check": "node ../scripts/check-deploy-readiness.mjs",
     "lint": "eslint",
-    "test:agents": "tsx --tsconfig tsconfig.json scripts/agent-fixture-check.ts",
-    "test:auto-mode": "node --import tsx scripts/auto-mode-fixture-check.ts",
+    "test:agents": "NODE_OPTIONS='--require ./scripts/stub-server-only.cjs' tsx --tsconfig tsconfig.json scripts/agent-fixture-check.ts",
+    "test:auto-mode": "FEATURE_EXECUTE_PREPARE=on FEATURE_AUTO_MODE_AUTHORIZATION=on node --import tsx scripts/auto-mode-fixture-check.ts",
     "test:alerts": "NODE_OPTIONS='--require ./scripts/stub-server-only.cjs' tsx --tsconfig tsconfig.json scripts/alert-fixture-check.ts",
     "test:simulation": "tsx --tsconfig tsconfig.json scripts/simulation-check.ts",
     "test:stellar-config": "tsx --tsconfig tsconfig.json scripts/stellar-config-check.ts",
@@ -27,6 +27,7 @@
     "test": "vitest run src/server/observability/__tests__/slo.test.ts",
     "test:reconciliation": "node --conditions=react-server --import tsx scripts/transaction-reconciliation-check.ts",
     "test:alert-delivery": "NODE_OPTIONS='--require ./scripts/stub-server-only.cjs' tsx --tsconfig tsconfig.json scripts/alert-delivery-check.ts",
+    "logging-check": "tsx --tsconfig tsconfig.json scripts/logging-check.ts",
     "test:responsive": "tsx --tsconfig tsconfig.json scripts/responsive-check.ts"
   },
   "dependencies": {
