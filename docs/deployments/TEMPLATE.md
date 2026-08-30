@@ -94,3 +94,42 @@ history is not lost.
 
 ## Notes and known limitations
 
+
+## Stellar pubnet readiness gate
+
+Pubnet is not reachable through configuration alone. Before a pubnet-enabled
+build ships, four conditions are verified at runtime, and the gate fails
+closed — an unverifiable condition blocks pubnet rather than being assumed
+satisfied.
+
+| Check | What it proves |
+| --- | --- |
+| Contract identity | The registry contract on pubnet is the reviewed WASM build, on the public network passphrase |
+| x402 payment configuration | Payments settle to the approved account, in the approved USDC contract, through the approved facilitator |
+| RPC provider independence | Primary and fallback are different operators, both reachable, agreeing on ledger height |
+| Governance addresses | The registry and policy contracts in use are the governance-approved ones |
+
+Record the approved values for this deployment:
+
+| Value | Environment variable | Recorded |
+| --- | --- | --- |
+| Registry WASM hash | `STELLAR_PUBNET_APPROVED_REGISTRY_WASM_HASH` | |
+| Registry contract | `STELLAR_PUBNET_APPROVED_REGISTRY_ID` | |
+| Policy contract | `STELLAR_PUBNET_APPROVED_POLICY_ID` | |
+| x402 destination | `STELLAR_PUBNET_APPROVED_X402_PAY_TO` | |
+| USDC contract | `STELLAR_PUBNET_APPROVED_USDC_CONTRACT` | |
+| Facilitator origin | `STELLAR_PUBNET_APPROVED_FACILITATOR_ORIGIN` | |
+
+Verify before release:
+
+```bash
+cd frontend && npm run test:pubnet-gate     # drives each condition through a failure
+node scripts/check-deploy-readiness.mjs     # blocks a pubnet build missing approved values
+```
+
+Live status is on `/operations` and in `GET /api/health` under
+`stellarPubnetGate`, per check, with the blocking reason named.
+
+A gated deployment refuses pubnet actions with a typed reason
+(`PubnetGatedError`). Testnet behaviour is unchanged throughout.
+

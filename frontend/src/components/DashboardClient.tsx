@@ -760,7 +760,7 @@ export function DashboardClient() {
                       <div className="text-xs text-white/40">Why this score?</div>
                       <div className="mt-1 text-2xl font-semibold">{scanResult.overallRiskScore}/100</div>
                     </div>
-                    <button type="button" onClick={() => setIsScoreReasonOpen(false)} className="inline-flex h-8 w-8 items-center justify-center rounded-full text-white/42 transition hover:bg-white/8 hover:text-white" aria-label="Close score details">
+                    <button type="button" onClick={() => setIsScoreReasonOpen(false)} className="touch-target rounded-full text-white/42 transition hover:bg-white/8 hover:text-white" aria-label="Close score details">
                       <X className="h-4 w-4" />
                     </button>
                   </div>

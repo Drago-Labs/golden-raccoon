@@ -57,6 +57,12 @@ export function shortenWalletAddress(address?: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+/**
+ * @deprecated Superseded by `resolveNetworkMismatch` in
+ * `@/server/stellar/wallets/mismatch`, which distinguishes a wallet that
+ * reports a different network from one that reports none at all. This wrapper
+ * remains for callers that only need the two-state answer.
+ */
 export function getStellarMismatchMessage(walletNetwork: StellarNetworkId | undefined, expectedNetwork: StellarNetworkId) {
   if (!walletNetwork || walletNetwork === expectedNetwork) return null;
 

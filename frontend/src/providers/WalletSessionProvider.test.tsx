@@ -18,6 +18,14 @@ const mocks = vi.hoisted(() => ({
     isRestored: false,
     canSign: true,
     mismatchMessage: null,
+    capabilities: { sign: true, reportsNetwork: true, accountSwitching: true, hardwareBacked: false },
+    networkStatus: {
+      kind: "match",
+      expected: "stellar-testnet",
+      walletNetwork: "stellar-testnet",
+      message: null,
+    },
+    sessionNotice: null,
   },
   evm: {
     address: "0x1111111111111111111111111111111111111111",
