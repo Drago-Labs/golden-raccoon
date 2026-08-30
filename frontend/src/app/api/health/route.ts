@@ -14,10 +14,14 @@ import { slos, calculateSlo } from "@/server/observability/slo";
 import { getRecentApiLatency, getApiTimingSampleCount } from "@/server/observability/timing";
 import { generateIncidentTimeline } from "@/server/observability/incidentTimeline";
 import { getArtifactProvenanceHealth } from "@/server/operations/releaseReadiness";
+import { evaluatePubnetReadiness, summarizeReadiness } from "@/server/stellar/pubnetGate";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // Evaluated on every health call so an operator sees the live gate state, not
+  // a value cached from before the misconfiguration was introduced.
+  const pubnetReadiness = summarizeReadiness(await evaluatePubnetReadiness());
   const records = listAgentRunRecords();
   const metrics = getAgentRunMetrics(records);
   const executionMetrics = metrics.execution;
@@ -119,6 +123,7 @@ export async function GET() {
         },
       },
       runtimeMode: getRuntimeModeHealth(),
+      stellarPubnetGate: pubnetReadiness,
       cache: apiCacheStrategy,
       mockFallbacksEnabled: false,
       liveModeUsesMockData: false,

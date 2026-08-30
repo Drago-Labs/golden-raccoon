@@ -281,6 +281,61 @@ function checkProductionEnvironment() {
   }
 }
 
+/**
+ * Blocks a pubnet-enabled build whose governance-approved values are absent.
+ *
+ * The runtime gate already refuses pubnet actions, but a build that ships
+ * advertising pubnet and then refuses every action is a broken release, not a
+ * safe one. This fails the build instead.
+ */
+function checkPubnetReadinessGate() {
+  const configured = (process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "").trim().toLowerCase();
+  const pubnetRequested = ["stellar-pubnet", "stellar:pubnet", "pubnet"].includes(configured);
+
+  if (!pubnetRequested) {
+    return;
+  }
+
+  const approvedEnv = [
+    "STELLAR_PUBNET_APPROVED_REGISTRY_WASM_HASH",
+    "STELLAR_PUBNET_APPROVED_REGISTRY_ID",
+    "STELLAR_PUBNET_APPROVED_POLICY_ID",
+    "STELLAR_PUBNET_APPROVED_X402_PAY_TO",
+    "STELLAR_PUBNET_APPROVED_USDC_CONTRACT",
+    "STELLAR_PUBNET_APPROVED_FACILITATOR_ORIGIN",
+  ];
+  const missing = approvedEnv.filter((key) => !process.env[key]?.trim());
+
+  if (missing.length > 0) {
+    fail(
+      `pubnet is enabled but the governance-approved values are missing: ${missing.join(", ")}. ` +
+        "Pubnet moves real user funds and cannot be advertised unverified.",
+    );
+  }
+
+  const wasmHash = process.env.STELLAR_PUBNET_APPROVED_REGISTRY_WASM_HASH?.trim() ?? "";
+  if (wasmHash && !/^[0-9a-f]{64}$/i.test(wasmHash)) {
+    fail("STELLAR_PUBNET_APPROVED_REGISTRY_WASM_HASH must be a 64-character SHA-256 hex digest");
+  }
+
+  const payTo = process.env.STELLAR_PUBNET_APPROVED_X402_PAY_TO?.trim() ?? "";
+  if (payTo && !/^G[A-Z2-7]{55}$/.test(payTo)) {
+    fail("STELLAR_PUBNET_APPROVED_X402_PAY_TO must be a valid Stellar account address");
+  }
+
+  for (const key of ["STELLAR_PUBNET_APPROVED_REGISTRY_ID", "STELLAR_PUBNET_APPROVED_POLICY_ID", "STELLAR_PUBNET_APPROVED_USDC_CONTRACT"]) {
+    const value = process.env[key]?.trim() ?? "";
+    if (value && !/^C[A-Z2-7]{55}$/.test(value)) {
+      fail(`${key} must be a valid Stellar contract address`);
+    }
+  }
+
+  const facilitator = process.env.STELLAR_PUBNET_APPROVED_FACILITATOR_ORIGIN?.trim() ?? "";
+  if (facilitator && !facilitator.startsWith("https://")) {
+    fail("STELLAR_PUBNET_APPROVED_FACILITATOR_ORIGIN must be an HTTPS origin");
+  }
+}
+
 checkRequiredFiles();
 checkIgnoredSourceFiles();
 checkPathAliases();
@@ -288,6 +343,7 @@ checkSecrets();
 checkReleaseDocs();
 checkVercelBuildGate();
 checkProductionEnvironment();
+checkPubnetReadinessGate();
 
 const schema = readFileSync(join(root, "frontend/src/server/storage/schema.sql"), "utf8");
 for (const table of ["wallets", "agent_runs", "agent_results", "recommendations", "user_rules", "approvals", "transactions", "x402_payment_receipts", "token_identities", "source_snapshots"]) {
