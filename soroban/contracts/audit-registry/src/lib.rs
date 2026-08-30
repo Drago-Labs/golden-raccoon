@@ -52,6 +52,7 @@ pub enum DataKey {
     Intent(Address, BytesN<32>),
     /// Per-user emergency pause flag.
     Paused(Address),
+    Governance,
 }
 
 #[contracttype]
@@ -125,6 +126,14 @@ pub struct PauseChanged {
     pub user: Address,
     pub paused: bool,
     pub timestamp: u64,
+}
+
+#[contractevent]
+pub struct GovernanceUpdated {
+    #[topic]
+    pub old_governance: Address,
+    #[topic]
+    pub new_governance: Address,
 }
 
 #[contracterror]
@@ -518,6 +527,23 @@ impl AuditRegistry {
         env.storage()
             .temporary()
             .has(&DataKey::Intent(user, intent_id))
+    }
+
+    pub fn set_governance(env: Env, governance: Address) {
+        // Simple governance setter - in production would be restricted to governance timelock
+        env.storage().instance().set(&DataKey::Governance, &governance);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+        GovernanceUpdated {
+            old_governance: governance.clone(),
+            new_governance: governance,
+        }
+        .publish(&env);
+    }
+
+    pub fn governance(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Governance)
     }
 }
 

@@ -20,6 +20,7 @@ pub enum DataKey {
     EmergencyAdmin,
     Agent,
     Paused,
+    Governance,
     Nonce(Address),
     DailySpend(Address),
     LastDailyReset,
@@ -78,6 +79,7 @@ pub struct PolicyApplied {
 pub struct IntentCreated {
     #[topic]
     pub intent_hash: BytesN<32>,
+    #[topic]
     pub policy_commitment: BytesN<32>,
 }
 
@@ -125,6 +127,14 @@ pub struct LimitsUpdated {
     pub max_daily_spend: i128,
 }
 
+#[contractevent]
+pub struct GovernanceUpdated {
+    #[topic]
+    pub old_governance: Address,
+    #[topic]
+    pub new_governance: Address,
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -151,10 +161,9 @@ pub enum PolicyError {
     AlreadyAllowed = 20,
     IntentAlreadyExists = 21,
     DecisionLimitExceeded = 22,
+    GovernanceNotSet = 23,
+    NotGoverned = 24,
 }
-
-#[contract]
-pub struct PolicyContract;
 
 fn bump_instance(env: &Env) {
     env.storage()
@@ -253,6 +262,9 @@ fn hash_intent(
     env.crypto().keccak256(&buf).into()
 }
 
+#[contract]
+pub struct PolicyContract;
+
 #[contractimpl]
 impl PolicyContract {
     pub fn initialize(env: Env, owner: Address, emergency_admin: Address, agent: Address) {
@@ -276,6 +288,26 @@ impl PolicyContract {
             .instance()
             .set(&DataKey::MaxDailySpend, &0i128);
         bump_instance(&env);
+    }
+
+    pub fn set_governance(env: Env, governance: Address) {
+        require_owner(&env);
+        let old_governance: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Governance)
+            .unwrap_or(governance.clone());
+        env.storage().instance().set(&DataKey::Governance, &governance);
+        GovernanceUpdated {
+            old_governance,
+            new_governance: governance,
+        }
+        .publish(&env);
+        bump_instance(&env);
+    }
+
+    pub fn governance(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Governance)
     }
 
     pub fn set_emergency_admin(env: Env, admin: Address) {

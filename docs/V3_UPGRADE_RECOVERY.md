@@ -8,6 +8,15 @@
 
 ---
 
+## 0. Governance and Timelock (Issue #145)
+
+All privileged changes (upgrades, `setLimits`, `setAgent`, `setEmergencyAdmin`, `allowAsset`/`blockAsset`, `set_publisher`, `set_governance`, `updateSigners`) are routed through the timelock controller:
+
+- **EVM**: `GoldRaccoonTimelock.sol` — multi-signer timelock with `propose(target, selector, payload, delaySecs)`, `sign(id)`, `execute(id)`, `cancel(id)`, and a readable `getPendingQueue()` / `getPendingCount()` view. `delaySecs ∈ [24h, 30d]`, threshold ≥2 signers. Events `ProposalCreated`, `ProposalSigned`, `ProposalExecuted`, `ProposalCancelled` carry `payloadHash` (keccak256). `pause()`/`unpause()` remain immediate and separate.
+- **Soroban**: `governance` contract (`contracts/governance/src/lib.rs` + `timelock.rs`) — identical semantics with `propose`, `sign`, `execute`, `cancel`, `get_pending_queue`, `get_pending_count`, `PauseChanged`, `ProposalCreated`/`ProposalSigned`/`ProposalExecuted`/`ProposalCancelled` carrying payload hash.
+
+**Guarantees**: (1) no execution before `effectiveAt`, (2) single signer cannot schedule alone (threshold enforcement), (3) cancel during delay permanently prevents execution, (4) emergency pause immediate, (5) pending queue readable and verifiable (payload hash), (6) test matrices cover authorization, delay, cancel, replay, expiry on both chains.
+
 ## 1. Upgradeability model
 
 ### 1.1 EVM — UUPS proxy

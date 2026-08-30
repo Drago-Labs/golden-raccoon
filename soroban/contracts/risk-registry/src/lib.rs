@@ -29,6 +29,7 @@ pub enum DataKey {
     Admin,
     Initialized,
     Version,
+    Governance,
     Publisher(Address),
     Record(BytesN<32>, Symbol),
 }
@@ -72,6 +73,14 @@ pub struct ContractVersionChanged {
     pub old_version: u32,
     #[topic]
     pub new_version: u32,
+}
+
+#[contractevent]
+pub struct GovernanceUpdated {
+    #[topic]
+    pub old_governance: Address,
+    #[topic]
+    pub new_governance: Address,
 }
 
 #[contractevent]
@@ -385,6 +394,27 @@ impl RiskRegistry {
         } else {
             Err(RegistryError::NotInitialized)
         }
+    }
+
+    /// Set governance contract for timelocked privileged changes.
+    pub fn set_governance(env: Env, governance: Address) -> Result<(), RegistryError> {
+        require_initialized(&env)?;
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        let old: Option<Address> = env.storage().instance().get(&DataKey::Governance);
+        env.storage().instance().set(&DataKey::Governance, &governance);
+        let old_governance = old.unwrap_or(governance.clone());
+        GovernanceUpdated {
+            old_governance,
+            new_governance: governance,
+        }
+        .publish(&env);
+        bump_instance_ttl(&env);
+        Ok(())
+    }
+
+    pub fn governance(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Governance)
     }
 }
 

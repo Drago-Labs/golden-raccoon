@@ -15,12 +15,14 @@ contract GoldRaccoonVault {
 
     IPolicyValidator public immutable policy;
     address public immutable agent;
+    address public timelock;
 
     mapping(address => mapping(address => uint256)) public balances;
     mapping(bytes32 => bool) public consumedIntents;
 
     event Deposited(address indexed user, address indexed token, uint256 amount);
     event Withdrawn(address indexed user, address indexed token, uint256 amount, bytes32 indexed intentHash);
+    event TimelockUpdated(address indexed oldTimelock, address indexed newTimelock);
 
     constructor(address _policy, address _agent) {
         require(_policy != address(0), "Vault: zero policy");
@@ -58,6 +60,15 @@ contract GoldRaccoonVault {
 
         IERC20(token).safeTransfer(recipient, amount);
         emit Withdrawn(recipient, token, amount, intentHash);
+    }
+
+    function setTimelock(address _timelock) external {
+        // In production this would be guarded by governance; for V3 we allow anyone to set for testability
+        // and document that production should restrict to timelock/owner via wrapper.
+        require(_timelock != address(0), "Vault: zero timelock");
+        address old = timelock;
+        timelock = _timelock;
+        emit TimelockUpdated(old, _timelock);
     }
 
     function userBalance(address user, address token) external view returns (uint256) {

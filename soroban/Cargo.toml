@@ -5,6 +5,7 @@ members = [
   "contracts/policy",
   "contracts/vault",
   "contracts/audit-registry",
+  "contracts/governance",
 ]
 
 [workspace.package]

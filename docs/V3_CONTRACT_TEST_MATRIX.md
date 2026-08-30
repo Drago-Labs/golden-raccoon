@@ -53,6 +53,31 @@ This table maps each threat in `docs/V3_CONTRACT_SPEC.md` §8 to its control and
 
 ---
 
+## Governance Timelock (Issue #145)
+
+| ID | Test case | Precondition | Action | Expected |
+|---|---|---|---|---|
+| T-GOV-001 | Propose happy path (EVM) | 2+ signers, delay ∈ [24h,30d] | `propose(target, selector, payload, 24h)` | `ProposalCreated` with `payloadHash=keccak256(payload)` |
+| T-GOV-002 | Propose happy path (Soroban) | 2+ signers | `propose(proposer, target, selector, payload, 24h)` | `ProposalCreated` with `payloadHash` |
+| T-GOV-003 | Single signer cannot execute alone (EVM) | 1 signature, threshold=2 | `sign` once then `execute` after delay | revert `InsufficientSignatures` |
+| T-GOV-004 | Single signer cannot execute alone (Soroban) | 1 signature | `sign` once then `execute` | revert `InsufficientSignatures` |
+| T-GOV-005 | Execute early fails (EVM) | before `effectiveAt` | `execute` | revert `ProposalNotReady` |
+| T-GOV-006 | Execute early fails (Soroban) | before `effectiveAt` | `execute` | revert `ProposalNotReady` |
+| T-GOV-007 | Cancel during delay prevents execution (EVM) | pending | `cancel` then `execute` after delay | revert `ProposalAlreadyCancelled`, replay fails |
+| T-GOV-008 | Cancel during delay prevents execution (Soroban) | pending | `cancel` then `execute` | revert `ProposalAlreadyCancelled`, replay fails |
+| T-GOV-009 | Emergency pause immediate (EVM) | paused | `propose`/`execute` | revert `Paused`, pause event immediate |
+| T-GOV-010 | Emergency pause immediate (Soroban) | paused | `propose` | revert `Paused` |
+| T-GOV-011 | Pending queue readable (EVM) | 2 pending | `getPendingQueue`/`getPendingCount` | queue length matches count, `payloadHash` matches |
+| T-GOV-012 | Pending queue readable (Soroban) | 2 pending | `get_pending_queue`/`get_pending_count` | queue matches on-chain state |
+| T-GOV-013 | Replay after cancel fails (EVM) | cancelled | second `cancel`/`execute` | revert `ProposalAlreadyCancelled` |
+| T-GOV-014 | Replay after cancel fails (Soroban) | cancelled | second `cancel`/`execute` | revert `ProposalAlreadyCancelled` |
+| T-GOV-015 | Expiry/invalid signer (EVM) | unknown proposal / outsider sign | `sign`/`execute` | revert `ProposalNotFound`/`Unauthorized` |
+| T-GOV-016 | Expiry/invalid signer (Soroban) | unknown / outsider | `sign`/`execute` | revert `ProposalNotFound`/`InvalidSigner` |
+| T-GOV-017 | Delay bounds (EVM) | delay <24h or >30d | `propose` | revert `InvalidDelay` |
+| T-GOV-018 | Delay bounds (Soroban) | delay out of range | `propose` | revert `InvalidDelay` |
+
+Covered by `backend/contracts/test/timelock.test.ts`, `policy-governance.test.ts`, `soroban/contracts/governance/src/test.rs`.
+
 ## EVM — `GoldRaccoonVault`
 
 ### Authorization and lifecycle
