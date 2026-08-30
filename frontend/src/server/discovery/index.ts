@@ -5,6 +5,7 @@ import type {
 } from "@/server/discovery/types";
 import { listCandidates, listCandidatesByProvider, listCandidatesByChain, getObservationCount, getUniqueIdentityCount } from "@/server/discovery/store";
 import { registerProviders, startScheduler, stopScheduler, isSchedulerRunning, getSchedulerRegistrations } from "@/server/discovery/scheduler";
+import logger from "@/server/observability/logger/logger";
 import { listCursors } from "@/server/discovery/cursor";
 
 // ─── Documentation ───────────────────────────────────────────────────────────
@@ -57,9 +58,9 @@ export function initDiscoveryService(config: DiscoveryServiceConfig = {}): void 
 
   if (config.enableScheduler !== false) {
     startScheduler(config);
-    console.log("[Discovery] Service initialised with scheduler");
+    logger.info("discovery.index", "Service initialised with scheduler");
   } else {
-    console.log("[Discovery] Service initialised (scheduler disabled)");
+    logger.info("discovery.index", "Service initialised (scheduler disabled)");
   }
 }
 
@@ -69,7 +70,7 @@ export function initDiscoveryService(config: DiscoveryServiceConfig = {}): void 
 export function shutdownDiscoveryService(): void {
   stopScheduler();
   initialized = false;
-  console.log("[Discovery] Service shut down");
+  logger.info("discovery.index", "Service shut down");
 }
 
 /**

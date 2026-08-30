@@ -246,7 +246,9 @@ export async function fetchLiveDiscoveryCandidates(chain?: string): Promise<{ ca
     offlineSnapshotWarned = true;
 
     if (process.env.NODE_ENV !== "production") {
-      console.warn("[discovery] Live sources unavailable; serving offline candidate snapshot.");
+      // warn only for non-prod dev runs
+      const logger = (await import("@/server/observability/logger/logger")).default;
+      logger.warn("discovery.sources", "Live sources unavailable; serving offline candidate snapshot.");
     }
   }
 
