@@ -16,6 +16,7 @@ export const storageSchemaContract: {
     "approvals",
     "transactions",
     "x402_payment_receipts",
+    "x402_settlement_ledger",
     "token_identities",
     "source_snapshots",
   ],

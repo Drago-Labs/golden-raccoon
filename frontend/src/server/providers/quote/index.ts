@@ -26,6 +26,8 @@ import {
   type QuoteVerificationResult,
   defaultQuoteProviderConfig,
 } from "@/server/providers/quote/types";
+import { aggregateQuotes, type AggregateQuoteOptions } from "@/server/providers/quote/routing";
+import type { QuoteRouteResult, QuoteVenue } from "@/server/providers/quote/routing/types";
 
 // ─── Main factory ────────────────────────────────────────────────────
 
@@ -61,11 +63,27 @@ export async function getVerifiedQuote(
   return { quote, verification };
 }
 
+/**
+ * Quote + route selection entry point used by execution prepare flows. The
+ * caller supplies adapters so chain-specific providers can be queried in
+ * parallel while this layer owns expiry, network, impact, and tie-break
+ * policy.
+ */
+export function getBestQuote(
+  request: QuoteRequest,
+  venues: QuoteVenue[],
+  options?: AggregateQuoteOptions,
+): Promise<QuoteRouteResult> {
+  return aggregateQuotes(request, venues, options);
+}
+
 // ─── Re-exports for convenience ──────────────────────────────────────
 
 export { getStellarQuote } from "@/server/providers/quote/stellar";
 export { getEvmQuote } from "@/server/providers/quote/evm";
 export { verifyQuote } from "@/server/providers/quote/verify";
+export { aggregateQuotes, revalidateSelectedQuote } from "@/server/providers/quote/routing";
+export type { QuoteRouteResult, QuoteRouteSelection, QuoteRouteFailure, QuoteVenue, QuoteExecutionProof, QuoteExclusion } from "@/server/providers/quote/routing/types";
 
 export type {
   QuoteProvider,

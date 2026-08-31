@@ -241,6 +241,7 @@ export const storageSchemaContract = {
     "transaction_lifecycle_events",
     "transaction_observations",
     "x402_payment_receipts",
+    "x402_settlement_ledger",
     "token_identities",
     "source_snapshots",
     "alert_rules",

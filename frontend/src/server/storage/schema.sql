@@ -249,6 +249,35 @@ create table if not exists x402_payment_receipts (
   updated_at timestamptz not null default now()
 );
 
+-- Settlement state is kept separate from request receipts so a premium
+-- response can be retried without losing the facilitator reconciliation
+-- record. Raw payment payloads are never stored; payload_ref and
+-- request_body_hash are content references only.
+create table if not exists x402_settlement_ledger (
+  id uuid primary key default gen_random_uuid(),
+  idempotency_key text not null unique,
+  request_id text not null,
+  protected_resource text not null,
+  request_body_hash text not null,
+  payload_ref text,
+  chain_family text not null check (chain_family in ('evm', 'stellar')),
+  network text not null,
+  canonical_asset text not null,
+  amount text not null,
+  pay_to text not null,
+  payer_redacted text,
+  transaction_hash text,
+  status text not null check (status in ('required', 'submitted', 'verified', 'served', 'failed', 'expired', 'refunded')),
+  failure_reason text,
+  reconciliation jsonb,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists x402_settlement_ledger_status_expiry_idx
+  on x402_settlement_ledger(status, expires_at);
+
 -- Immutable, privacy-redacted public risk report snapshots. Only revoked_at
 -- may change after insertion; the canonical hash covers the public document.
 create table if not exists risk_snapshots (
@@ -785,7 +814,7 @@ create or replace view retention_policy_summary as
 select
   unnest(array[
     'wallets','agent_runs','agent_results','source_snapshots',
-    'recommendations','approvals','transactions','x402_payment_receipts',
+    'recommendations','approvals','transactions','x402_payment_receipts','x402_settlement_ledger',
     'user_rules','alert_rules','alert_observations','alerts',
     'alert_deliveries','watchlist_entries','watchlist_scan_runs',
     'discovery_alerts','recovery_requests','risk_snapshots',
@@ -793,7 +822,7 @@ select
   ]) as table_name,
   unnest(array[
     0,90,90,90,
-    90,180,365,1095,
+    90,180,365,1095,1095,
     0,0,30,90,
     90,0,90,
     90,365,0,
