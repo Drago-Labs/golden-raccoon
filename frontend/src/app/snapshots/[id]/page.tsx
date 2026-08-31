@@ -1,4 +1,5 @@
 import { AlertTriangle, CheckCircle2, Clock3, Database, FileWarning, ShieldCheck } from "lucide-react";
+import { notFound } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { RiskSnapshotActions } from "@/components/RiskSnapshotActions";
 import { readRiskSnapshot } from "@/server/snapshots/store";
@@ -25,6 +26,15 @@ function failureTitle(code: string) {
 export default async function RiskSnapshotPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const result = await readRiskSnapshot(id);
+
+  // An id that resolves to nothing is a missing resource, so the route answers
+  // 404 through `not-found.tsx` instead of rendering a 200 that says "not
+  // found". The remaining failures — expired, revoked, tampered — are
+  // validation refusals on a snapshot that does exist, and keep the fail-closed
+  // panel below rather than being flattened into "not found".
+  if (!result.ok && result.code === "not_found") {
+    notFound();
+  }
 
   if (!result.ok) {
     return (
