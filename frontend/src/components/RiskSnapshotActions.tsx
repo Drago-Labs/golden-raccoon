@@ -3,6 +3,7 @@
 import { Check, Copy, Download, FileLock2, Loader2, ShieldX } from "lucide-react";
 import { useState } from "react";
 import type { RiskSnapshotCreateResponse, TokenScanResult } from "@/server/types";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 type Props = {
   source?: TokenScanResult;
@@ -18,12 +19,13 @@ export function RiskSnapshotActions({ source, snapshotId, shareUrl, downloadUrl 
   const [tokenCopied, setTokenCopied] = useState(false);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
+  const { actionsDisabled } = useOnlineStatus();
   const activeId = created?.id ?? snapshotId;
   const activeShareUrl = created?.shareUrl ?? shareUrl ?? (activeId ? `/snapshots/${activeId}` : undefined);
   const activeDownloadUrl = created?.downloadUrl ?? downloadUrl ?? (activeId ? `/api/snapshots/${activeId}?download=1` : undefined);
 
   async function createSnapshot() {
-    if (!source) return;
+    if (actionsDisabled || !source) return;
     setBusy("create");
     setError(undefined);
     setMessage(undefined);
@@ -68,7 +70,7 @@ export function RiskSnapshotActions({ source, snapshotId, shareUrl, downloadUrl 
   }
 
   async function revokeSnapshot() {
-    if (!created?.revocationToken) return;
+    if (actionsDisabled || !created?.revocationToken) return;
     setBusy("revoke");
     setError(undefined);
     setMessage(undefined);
@@ -95,7 +97,7 @@ export function RiskSnapshotActions({ source, snapshotId, shareUrl, downloadUrl 
     <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
       <div className="flex flex-wrap items-center gap-3">
         {source && !created ? (
-          <button type="button" onClick={() => void createSnapshot()} disabled={Boolean(busy)} className="inline-flex h-11 items-center gap-2 rounded-full border border-[#d9a441]/40 px-5 text-sm font-semibold text-[#f2c86d] transition hover:bg-[#d9a441]/10 disabled:opacity-50">
+          <button type="button" onClick={() => void createSnapshot()} disabled={Boolean(busy) || actionsDisabled} className="inline-flex h-11 items-center gap-2 rounded-full border border-[#d9a441]/40 px-5 text-sm font-semibold text-[#f2c86d] transition hover:bg-[#d9a441]/10 disabled:opacity-50">
             {busy === "create" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileLock2 className="h-4 w-4" />}
             Create private-safe snapshot
           </button>
@@ -118,7 +120,7 @@ export function RiskSnapshotActions({ source, snapshotId, shareUrl, downloadUrl 
           </button>
         ) : null}
         {created?.revocationToken ? (
-          <button type="button" onClick={() => void revokeSnapshot()} disabled={Boolean(busy)} className="inline-flex h-11 items-center gap-2 rounded-full border border-red-300/25 px-5 text-sm font-semibold text-red-200 transition hover:bg-red-400/10 disabled:opacity-50">
+          <button type="button" onClick={() => void revokeSnapshot()} disabled={Boolean(busy) || actionsDisabled} className="inline-flex h-11 items-center gap-2 rounded-full border border-red-300/25 px-5 text-sm font-semibold text-red-200 transition hover:bg-red-400/10 disabled:opacity-50">
             {busy === "revoke" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldX className="h-4 w-4" />}
             Revoke
           </button>

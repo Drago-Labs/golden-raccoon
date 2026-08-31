@@ -14,6 +14,8 @@ import { useWalletSession } from "@/hooks/useWalletSession";
 import { ApprovalFlowClient } from "@/components/ApprovalFlowClient";
 import { StellarRiskPublishButton } from "@/components/StellarRiskPublishButton";
 import { LiveRegion } from "@/components/a11y/LiveRegion";
+import { captureOfflinePortfolio, captureOfflineScan } from "@/lib/offlineStore";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 const scanCheckLabels = ["Deployed", "Honeypot", "Sell tax", "Ownership", "Holders", "Liquidity", "LP lock", "Market"];
 
@@ -164,6 +166,7 @@ async function postAgentResult(endpoint: string, body: unknown): Promise<AgentRe
 
 export function DashboardClient() {
   const { address, isConnected, isConnecting, family, chain } = useWalletSession();
+  const { actionsDisabled } = useOnlineStatus();
   const [portfolioRequest, setPortfolioRequest] = useState<{
     address: string;
     status: "ready" | "error";
@@ -216,6 +219,7 @@ export function DashboardClient() {
       })
       .then((data) => {
         setPortfolioRequest({ address: requestAddress, status: "ready", data });
+        captureOfflinePortfolio(data);
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -296,7 +300,7 @@ export function DashboardClient() {
 
   async function runTokenScan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!scanQuery.trim() || scanInFlightRef.current) {
+    if (actionsDisabled || !scanQuery.trim() || scanInFlightRef.current) {
       return;
     }
 
@@ -322,6 +326,7 @@ export function DashboardClient() {
       const data = (await response.json()) as TokenScanResult;
       setVisibleScanChecks(scanStageIndexRef.current);
       setScanResult(data);
+      captureOfflineScan(data, "dashboard token scan");
     } catch (error) {
       setScanError(error instanceof Error ? error.message : "Token scan failed.");
     } finally {
@@ -331,7 +336,7 @@ export function DashboardClient() {
   }
 
   async function runDashboardAgents() {
-    if (!portfolio) {
+    if (actionsDisabled || !portfolio) {
       return;
     }
 
@@ -536,7 +541,7 @@ export function DashboardClient() {
             <button
               type="button"
               onClick={runDashboardAgents}
-              disabled={isRunningAgents}
+              disabled={isRunningAgents || actionsDisabled}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#d9a441] px-5 text-sm font-semibold text-black transition hover:bg-[#f2c86d] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isRunningAgents ? "Running portfolio agents" : "Run portfolio agents"}
@@ -556,6 +561,7 @@ export function DashboardClient() {
               <button
                 type="button"
                 onClick={() => setIsNetworkOpen((isOpen) => !isOpen)}
+                disabled={actionsDisabled}
                 className="flex h-12 w-full items-center justify-between gap-3 rounded-full border border-[#d9a441]/35 bg-black/20 px-4 text-sm text-white/76 outline-none transition hover:border-[#d9a441]/60"
               >
                 <span className="flex items-center gap-3">
@@ -616,7 +622,7 @@ export function DashboardClient() {
             />
             <button
               type="submit"
-              disabled={isScanning || !scanQuery.trim()}
+              disabled={isScanning || !scanQuery.trim() || actionsDisabled}
               className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#d9a441] px-5 text-sm font-semibold text-black transition hover:bg-[#f2c86d]"
             >
               {isScanning ? "Running token agents" : "Run token agents"}
@@ -760,7 +766,7 @@ export function DashboardClient() {
                       <div className="text-xs text-white/40">Why this score?</div>
                       <div className="mt-1 text-2xl font-semibold">{scanResult.overallRiskScore}/100</div>
                     </div>
-                    <button type="button" onClick={() => setIsScoreReasonOpen(false)} className="inline-flex h-8 w-8 items-center justify-center rounded-full text-white/42 transition hover:bg-white/8 hover:text-white" aria-label="Close score details">
+                    <button type="button" onClick={() => setIsScoreReasonOpen(false)} className="touch-target rounded-full text-white/42 transition hover:bg-white/8 hover:text-white" aria-label="Close score details">
                       <X className="h-4 w-4" />
                     </button>
                   </div>
@@ -869,6 +875,7 @@ export function DashboardClient() {
                 <button
                   type="button"
                   onClick={async () => {
+                    if (actionsDisabled) return;
                     const riskyToken = dashboardRunSummary?.riskyToken;
                     const holding = riskyToken
                       ? portfolio?.holdings.find((h) => h.tokenAddress === riskyToken.tokenAddress)
@@ -943,6 +950,7 @@ export function DashboardClient() {
                       );
                     }
                   }}
+                  disabled={actionsDisabled}
                   className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-emerald-500/20 px-5 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/30"
                 >
                   Prepare &amp; sign transaction

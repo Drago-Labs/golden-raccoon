@@ -34,11 +34,15 @@
     "build:evm": "bash scripts/build-evm.sh",
     "build:soroban": "bash scripts/build-soroban.sh",
     "provenance:freeze": "node scripts/hash-freeze-build.mjs",
-    "provenance:verify:artifacts": "node scripts/verify-artifact-provenance.mjs"
+    "provenance:verify:artifacts": "node scripts/verify-artifact-provenance.mjs",
+    "retention:purge": "node scripts/retention-purge.mjs",
+    "retention:purge:dry": "DRY_RUN=true node scripts/retention-purge.mjs",
+    "test:erasure-residue": "npm --prefix frontend run test:erasure-residue",
+    "test:privacy": "npm --prefix frontend run test:privacy"
   },
   "dependencies": {
-    "next": "16.2.9",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "next": "16.3.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   }
 }

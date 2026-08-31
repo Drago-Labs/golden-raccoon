@@ -6,7 +6,7 @@
 | Companion docs | `docs/V3_CONTRACT_TEST_MATRIX.md`, `docs/V3_AUDIT_CHECKLIST.md`, `docs/V3_UPGRADE_RECOVERY.md` |
 | Authors | Golden Raccoon contributors |
 | Status | Audit-ready specification. All defaults in §9 are binding unless a maintainer explicitly substitutes an item during PR review; absent substitutions, defaults merge at PR approval. **No implementation code is introduced.** |
-| Roadmap coverage | V3-101 (vault custody model), V3-102 (policy commitment), V3-103 (agent authorization + limits), V3-104 (execution intent + nonce + expiry), V3-105 (pause + revoke + recovery), V3-106 (cross-chain domain separation), V3-107 (upgrade + admin) |
+| Roadmap coverage | V3-101 (vault custody model), V3-102 (policy commitment), V3-103 (agent authorization + limits), V3-104 (execution intent + nonce + expiry), V3-105 (pause + revoke + recovery), V3-106 (cross-chain domain separation), V3-107 (upgrade + admin), V3-108 (governance timelock, issue #145) |
 | Target networks | **Primary (dev):** EVM — GOAT Network (id 48816); Soroban — Stellar Testnet. **Production:** deferred until third-party audit closes (see §9.3). |
 | Out of scope | Implementing or deploying the contracts; choosing a production admin key inside this PR; autonomous fund movement; token swaps executed by the contract. |
 
@@ -668,6 +668,15 @@ These approvals are captured as PR review comments on this spec. Absent a substi
 | Maintainers approve custody, upgrade, admin, and audit decisions before implementation | §9.6 (maintainer approval gate) |
 
 ---
+
+## 10.1 Governance timelock (Issue #145)
+
+Privileged changes (upgrades and parameter changes) are gated by the timelock controller:
+
+- **EVM**: `GoldRaccoonTimelock` (`backend/contracts/contracts/GoldRaccoonTimelock.sol`) with `propose`, `sign`, `execute`, `cancel`, `getPendingQueue`/`getPendingCount`, `pause` immediate. Delay ∈ [24h, 30d], threshold ≥2.
+- **Soroban**: `GovernanceContract` (`soroban/contracts/governance/src/lib.rs` + `timelock.rs`) with identical semantics and TTL extension.
+- Events `ProposalCreated`/`ProposalSigned`/`ProposalExecuted`/`ProposalCancelled` carry `payloadHash` (keccak256). Pending queue is readable and verifiable by the frontend (`frontend/src/server/stellar/governance.ts` + `frontend/src/app/api/stellar/governance/pending/route.ts`).
+- Policy/risk-registry/audit-registry expose `set_governance`/`governance` and emit `GovernanceUpdated`. Emergency pause remains immediate.
 
 ## 11. Canonical encoding reference
 

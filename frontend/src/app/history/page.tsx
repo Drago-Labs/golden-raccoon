@@ -1,6 +1,7 @@
 import { AppShell } from "@/components/AppShell";
 import { AuditExportButton } from "@/components/AuditExportButton";
 import { listAgentRunRecords, listApprovalRecords, listRecommendationRecords, listTransactionRecords } from "@/server/storage";
+import { DataTable } from "@/components/layout/DataTable";
 
 export const dynamic = "force-dynamic";
 
@@ -33,8 +34,7 @@ export default async function HistoryPage() {
               {agentRuns.length} saved run{agentRuns.length === 1 ? "" : "s"}
             </div>
           </div>
-          <div className="mt-5 overflow-x-auto">
-            <table className="w-full min-w-[860px] text-left text-sm">
+          <DataTable caption="Saved agent runs" minWidth={860} className="mt-5">
               <thead className="text-xs uppercase tracking-[0.16em] text-white/36">
                 <tr>
                   <th className="pb-3 font-medium">Recommendation</th>
@@ -75,8 +75,7 @@ export default async function HistoryPage() {
                   </tr>
                 )}
               </tbody>
-            </table>
-          </div>
+          </DataTable>
         </section>
 
         <details className="glass-panel rounded-lg p-5">

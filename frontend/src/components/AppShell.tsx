@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { WalletConnectButton } from "@/components/WalletConnectButton";
+import { OfflineBanner } from "@/components/OfflineBanner";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
@@ -48,7 +49,17 @@ export function AppShell({ children }: { children: ReactNode }) {
           </nav>
           <WalletConnectButton />
         </div>
-        <nav aria-label="Primary" className="mx-auto flex w-full max-w-7xl gap-1 overflow-x-auto px-5 pb-3 md:hidden">
+        {/*
+          A second landmark cannot share the first one's name: a screen-reader
+          user listing landmarks would see "Primary" twice with no way to tell
+          them apart. The compact bar also scrolls, so it is reachable by
+          keyboard rather than by drag alone.
+        */}
+        <nav
+          aria-label="Primary, compact"
+          tabIndex={0}
+          className="mx-auto flex w-full max-w-7xl gap-1 overflow-x-auto px-5 pb-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d9a441] md:hidden"
+        >
           {navItems.map((item) => (
             <Link key={item.href} href={item.href} className={mobileNavLinkClassName}>
               {item.label}
@@ -56,6 +67,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           ))}
         </nav>
       </header>
+      <OfflineBanner />
       <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-7xl px-5 py-6 outline-none sm:px-8 sm:py-8">
         {children}
       </main>

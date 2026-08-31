@@ -54,7 +54,15 @@ const requiredReleaseMarkers = [
   "V2 Definition of Done",
   "V3 Definition of Done",
 ];
-const secretPattern = /(API_KEY=(?!\s|$)|cqt_[A-Za-z0-9]|sk-[A-Za-z0-9]|Bearer [A-Za-z0-9_\-]{16,}|0x[a-fA-F0-9]{64})/;
+// The `sk-` and `cqt_` prefixes are only credentials when they start a token.
+// Without the lookbehind they also match inside ordinary identifiers such as
+// `risk-snapshots`, `task-status` or the `rsk-mainnet` chain id.
+const secretPattern =
+  /(API_KEY=(?!\s|$)|(?<![A-Za-z0-9])cqt_[A-Za-z0-9]|(?<![A-Za-z0-9])sk-[A-Za-z0-9]|Bearer [A-Za-z0-9_\-]{16,}|0x[a-fA-F0-9]{64})/;
+// Public constants (event topic hashes, padded word values) are indistinguishable
+// from a 32-byte key by shape alone, so they opt out per line instead of
+// disabling the whole file.
+const secretAllowMarker = "deploy-readiness-allow-secret";
 const sourceExtensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs"]);
 const hostedProductionDeploy = process.env.VERCEL_ENV === "production";
 const strictProductionDeploy =
@@ -150,11 +158,18 @@ function checkSecrets() {
     .filter((file) => existsSync(join(root, file)));
 
   for (const file of files) {
-    const content = readFileSync(join(root, file), "utf8");
-    const match = content.match(secretPattern);
+    const lines = readFileSync(join(root, file), "utf8").split("\n");
 
-    if (match && !content.includes("rsk-mainnet")) {
-      fail(`possible secret-like value found in ${file}: ${match[0]}`);
+    for (const [index, line] of lines.entries()) {
+      if (line.includes(secretAllowMarker)) {
+        continue;
+      }
+
+      const match = line.match(secretPattern);
+
+      if (match) {
+        fail(`possible secret-like value found in ${file}:${index + 1}: ${match[0]}`);
+      }
     }
   }
 }
@@ -266,6 +281,61 @@ function checkProductionEnvironment() {
   }
 }
 
+/**
+ * Blocks a pubnet-enabled build whose governance-approved values are absent.
+ *
+ * The runtime gate already refuses pubnet actions, but a build that ships
+ * advertising pubnet and then refuses every action is a broken release, not a
+ * safe one. This fails the build instead.
+ */
+function checkPubnetReadinessGate() {
+  const configured = (process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "").trim().toLowerCase();
+  const pubnetRequested = ["stellar-pubnet", "stellar:pubnet", "pubnet"].includes(configured);
+
+  if (!pubnetRequested) {
+    return;
+  }
+
+  const approvedEnv = [
+    "STELLAR_PUBNET_APPROVED_REGISTRY_WASM_HASH",
+    "STELLAR_PUBNET_APPROVED_REGISTRY_ID",
+    "STELLAR_PUBNET_APPROVED_POLICY_ID",
+    "STELLAR_PUBNET_APPROVED_X402_PAY_TO",
+    "STELLAR_PUBNET_APPROVED_USDC_CONTRACT",
+    "STELLAR_PUBNET_APPROVED_FACILITATOR_ORIGIN",
+  ];
+  const missing = approvedEnv.filter((key) => !process.env[key]?.trim());
+
+  if (missing.length > 0) {
+    fail(
+      `pubnet is enabled but the governance-approved values are missing: ${missing.join(", ")}. ` +
+        "Pubnet moves real user funds and cannot be advertised unverified.",
+    );
+  }
+
+  const wasmHash = process.env.STELLAR_PUBNET_APPROVED_REGISTRY_WASM_HASH?.trim() ?? "";
+  if (wasmHash && !/^[0-9a-f]{64}$/i.test(wasmHash)) {
+    fail("STELLAR_PUBNET_APPROVED_REGISTRY_WASM_HASH must be a 64-character SHA-256 hex digest");
+  }
+
+  const payTo = process.env.STELLAR_PUBNET_APPROVED_X402_PAY_TO?.trim() ?? "";
+  if (payTo && !/^G[A-Z2-7]{55}$/.test(payTo)) {
+    fail("STELLAR_PUBNET_APPROVED_X402_PAY_TO must be a valid Stellar account address");
+  }
+
+  for (const key of ["STELLAR_PUBNET_APPROVED_REGISTRY_ID", "STELLAR_PUBNET_APPROVED_POLICY_ID", "STELLAR_PUBNET_APPROVED_USDC_CONTRACT"]) {
+    const value = process.env[key]?.trim() ?? "";
+    if (value && !/^C[A-Z2-7]{55}$/.test(value)) {
+      fail(`${key} must be a valid Stellar contract address`);
+    }
+  }
+
+  const facilitator = process.env.STELLAR_PUBNET_APPROVED_FACILITATOR_ORIGIN?.trim() ?? "";
+  if (facilitator && !facilitator.startsWith("https://")) {
+    fail("STELLAR_PUBNET_APPROVED_FACILITATOR_ORIGIN must be an HTTPS origin");
+  }
+}
+
 checkRequiredFiles();
 checkIgnoredSourceFiles();
 checkPathAliases();
@@ -273,6 +343,7 @@ checkSecrets();
 checkReleaseDocs();
 checkVercelBuildGate();
 checkProductionEnvironment();
+checkPubnetReadinessGate();
 
 const schema = readFileSync(join(root, "frontend/src/server/storage/schema.sql"), "utf8");
 for (const table of ["wallets", "agent_runs", "agent_results", "recommendations", "user_rules", "approvals", "transactions", "x402_payment_receipts", "token_identities", "source_snapshots"]) {

@@ -7,6 +7,7 @@ import type {
 } from "@/server/discovery/types";
 import type { DiscoveryProvider, ProviderRegistration } from "@/server/discovery/provider";
 import { defaultPollingConfigs, getChainsForProvider } from "@/server/discovery/provider";
+import logger from "@/server/observability/logger/logger";
 import { getCursor, isCursorReady, isCursorStale } from "@/server/discovery/cursor";
 import { storeObservations, pruneObservations } from "@/server/discovery/store";
 import { createDexScreenerProvider } from "@/server/discovery/providers/dexscreener";
@@ -183,7 +184,7 @@ export function startScheduler(config: DiscoveryServiceConfig = {}): void {
 
   // Run an initial poll cycle immediately
   pollAll().catch((error) => {
-    console.error(`[Discovery Scheduler] Initial poll failed: ${error instanceof Error ? error.message : error}`);
+    logger.error("discovery.scheduler", "Initial poll failed", { error: error instanceof Error ? error.message : String(error) });
   });
 
   // Set up interval for subsequent polls
@@ -194,11 +195,11 @@ export function startScheduler(config: DiscoveryServiceConfig = {}): void {
 
   state.pollIntervalId = setInterval(() => {
     pollAll().catch((error) => {
-      console.error(`[Discovery Scheduler] Poll cycle failed: ${error instanceof Error ? error.message : error}`);
+      logger.error("discovery.scheduler", "Poll cycle failed", { error: error instanceof Error ? error.message : String(error) });
     });
   }, intervalMs);
 
-  console.log(`[Discovery Scheduler] Started with ${state.registrations.length} provider(s), polling every ${intervalMs}ms`);
+  logger.info("discovery.scheduler", `Started with ${state.registrations.length} provider(s), polling every ${intervalMs}ms`, { providerCount: state.registrations.length, intervalMs });
 }
 
 export function stopScheduler(): void {
@@ -210,7 +211,7 @@ export function stopScheduler(): void {
   }
 
   state.running = false;
-  console.log("[Discovery Scheduler] Stopped");
+  logger.info("discovery.scheduler", "Stopped");
 }
 
 export function isSchedulerRunning(): boolean {

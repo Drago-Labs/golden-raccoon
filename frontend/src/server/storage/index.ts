@@ -1527,3 +1527,32 @@ export function getDecisionDetail(id: string) { return null; }
 export function getSourceSnapshotDetails(id: string) { return null; }
 export function listAgentRunRecordsPaginated() { return { data: [], nextCursor: null }; }
 export function listRecommendationRecordsPaginated() { return { data: [], nextCursor: null }; }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Retention / Erasure public API
+// ─────────────────────────────────────────────────────────────────────────────
+
+export {
+  eraseWalletData,
+} from "@/server/privacy/retention/erase";
+
+export {
+  checkErasureResidue,
+  checkFullErasureResidue,
+} from "@/server/privacy/retention/residue";
+
+export {
+  verifyErasureReceipt,
+  buildErasureReceipt,
+  createErasureReceipt,
+} from "@/server/privacy/retention/receipt";
+
+export {
+  RETENTION_POLICIES,
+  getTablePolicy,
+} from "@/server/privacy/retention/policy";
+
+export {
+  runRetentionPurge,
+  purgeExpiredMemoryData,
+} from "@/server/privacy/retention/purge";

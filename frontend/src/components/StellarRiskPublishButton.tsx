@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, Orbit, Shield, Hash, Fuel, Layers, Clock, FileText } from "lucide-react";
 import { getStellarNetwork, normalizeStellarNetworkId } from "@/lib/stellar/config";
 import { useStellarWallet } from "@/providers/StellarWalletProvider";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 type PublishStage = "idle" | "preview" | "simulating" | "preview_ready" | "signing" | "submitting" | "verifying" | "success" | "failed";
 
@@ -56,6 +57,7 @@ export function StellarRiskPublishButton({
   report: unknown;
 }) {
   const stellar = useStellarWallet();
+  const { actionsDisabled } = useOnlineStatus();
   const networkId = normalizeStellarNetworkId(network);
   const config = getStellarNetwork(networkId ?? undefined);
   const [stage, setStage] = useState<PublishStage>("idle");
@@ -75,6 +77,7 @@ export function StellarRiskPublishButton({
   if (!networkId || !assetKey || !config) return null;
 
   async function startPreview() {
+    if (actionsDisabled) return;
     if (!stellar.address) {
       await stellar.connect().catch(() => undefined);
       return;
@@ -115,7 +118,7 @@ export function StellarRiskPublishButton({
   }
 
   async function signAndSubmit() {
-    if (!preview || !stellar.address) return;
+    if (actionsDisabled || !preview || !stellar.address) return;
 
     try {
       setError(undefined);
@@ -194,7 +197,7 @@ export function StellarRiskPublishButton({
         <button
           type="button"
           onClick={() => void startPreview()}
-          disabled={isSimulating}
+          disabled={isSimulating || actionsDisabled}
           className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-[#a99aff]/35 bg-[#7b61ff]/12 px-5 text-sm font-semibold text-white transition hover:bg-[#7b61ff]/20 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isSimulating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Orbit className="h-4 w-4 text-[#a99aff]" />}
@@ -268,6 +271,7 @@ export function StellarRiskPublishButton({
             <button
               type="button"
               onClick={() => void signAndSubmit()}
+              disabled={actionsDisabled}
               className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-[#7b61ff] px-5 text-sm font-semibold text-white transition hover:bg-[#7b61ff]/80"
             >
               Sign with wallet &amp; submit

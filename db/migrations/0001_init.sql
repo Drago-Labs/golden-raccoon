@@ -1,0 +1,24 @@
+CREATE TABLE IF NOT EXISTS tokens (
+    address VARCHAR(255) PRIMARY KEY,
+    chain VARCHAR(64) NOT NULL,
+    symbol VARCHAR(32) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS risk_reports (
+    id SERIAL PRIMARY KEY,
+    token_address VARCHAR(255) REFERENCES tokens(address),
+    buy_risk_score NUMERIC(5, 2) NOT NULL,
+    confidence NUMERIC(5, 2) NOT NULL,
+    verdict VARCHAR(64) NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS migration_history (
+    id SERIAL PRIMARY KEY,
+    migration_name VARCHAR(255) UNIQUE NOT NULL,
+    checksum VARCHAR(64) NOT NULL,
+    applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);

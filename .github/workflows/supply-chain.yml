@@ -38,7 +38,7 @@ jobs:
             package-lock.json
             frontend/package-lock.json
             backend/contracts/package-lock.json
-      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: dtolnay/rust-toolchain@1.93.0
       - run: npm ci --ignore-scripts
       - run: npm ci --ignore-scripts --prefix frontend
       - run: npm ci --ignore-scripts --prefix backend/contracts
@@ -61,7 +61,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: backend/contracts/package-lock.json
-      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: dtolnay/rust-toolchain@1.93.0
         with:
           targets: wasm32v1-none
       - run: npm ci --ignore-scripts --prefix backend/contracts

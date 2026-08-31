@@ -23,7 +23,9 @@
 //! Until the issue #16 specification is formally approved this surface should
 //! be treated as proposed. `VERSION` must be bumped on any change to it.
 
-use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env};
+use soroban_sdk::{
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
+};
 
 /// Interface version. Bump on any externally visible change.
 const VERSION: u32 = 1;
@@ -50,6 +52,7 @@ pub enum DataKey {
     Intent(Address, BytesN<32>),
     /// Per-user emergency pause flag.
     Paused(Address),
+    Governance,
 }
 
 #[contracttype]
@@ -123,6 +126,14 @@ pub struct PauseChanged {
     pub user: Address,
     pub paused: bool,
     pub timestamp: u64,
+}
+
+#[contractevent]
+pub struct GovernanceUpdated {
+    #[topic]
+    pub old_governance: Address,
+    #[topic]
+    pub new_governance: Address,
 }
 
 #[contracterror]
@@ -504,14 +515,35 @@ impl AuditRegistry {
             .persistent()
             .get::<DataKey, Authorization>(&DataKey::Authorization(user, agent))
         {
-            Some(authorization) => authorization.active && authorization.expires_at > env.ledger().timestamp(),
+            Some(authorization) => {
+                authorization.active && authorization.expires_at > env.ledger().timestamp()
+            }
             None => false,
         }
     }
 
     /// Whether an intent id has already been consumed for `user`.
     pub fn is_intent_used(env: Env, user: Address, intent_id: BytesN<32>) -> bool {
-        env.storage().temporary().has(&DataKey::Intent(user, intent_id))
+        env.storage()
+            .temporary()
+            .has(&DataKey::Intent(user, intent_id))
+    }
+
+    pub fn set_governance(env: Env, governance: Address) {
+        // Simple governance setter - in production would be restricted to governance timelock
+        env.storage().instance().set(&DataKey::Governance, &governance);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+        GovernanceUpdated {
+            old_governance: governance.clone(),
+            new_governance: governance,
+        }
+        .publish(&env);
+    }
+
+    pub fn governance(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Governance)
     }
 }
 

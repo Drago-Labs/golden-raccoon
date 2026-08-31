@@ -1,0 +1,30 @@
+[package]
+name = "golden-raccoon-governance"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.91"
+publish = false
+
+[dependencies]
+soroban-sdk = { workspace = true }
+golden-raccoon-policy = { path = "../policy", optional = true }
+golden-raccoon-risk-registry = { path = "../risk-registry", optional = true }
+golden-raccoon-audit-registry = { path = "../audit-registry", optional = true }
+
+[features]
+default = []
+policy = ["golden-raccoon-policy"]
+risk-registry = ["golden-raccoon-risk-registry"]
+audit-registry = ["golden-raccoon-audit-registry"]
+testutils = []
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
