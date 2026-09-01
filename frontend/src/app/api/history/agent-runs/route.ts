@@ -5,6 +5,8 @@ import { withCacheHeaders } from "@/server/cache/strategy";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { createAgentRunRecord, listAgentRunRecordsPaginated } from "@/server/storage";
 import { scheduleIngestion } from "@/server/observability/alertIngestion";
+import { parseQuery } from "@/server/api/query/validate";
+import { jsonError } from "@/server/api/errors";
 
 const targetTokenSchema = z.object({
   symbol: z.string().optional(),
@@ -24,22 +26,31 @@ const bodySchema = z.object({
   userAction: z.enum(["pending", "approved", "rejected", "adjusted", "executed"]).optional(),
 });
 
+const filterSchemaAR = z.object({
+  walletAddress: z.string().optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().optional(),
+  sortBy: z.string().optional(),
+  sortDirection: z.enum(["asc", "desc"]).optional(),
+});
+
 export function GET(request: NextRequest) {
   const rateLimited = checkRateLimit(request, { namespace: "history:agent-runs", limit: 80, windowMs: 60_000 });
-
-  if (rateLimited) {
-    return rateLimited;
+  if (rateLimited) return rateLimited;
+  try {
+    const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
+    const q = parseQuery(raw, "agent-runs", filterSchemaAR);
+    const res = listAgentRunRecordsPaginated(q.walletAddress ?? q.filters.walletAddress, {
+      cursor: q.cursor,
+      limit: q.limit,
+      sortBy: q.sortBy,
+      sortDirection: q.sortDirection,
+    });
+    return withCacheHeaders(NextResponse.json({ items: res.items, nextCursor: res.nextCursor, hasMore: res.hasMore, total: res.total }), "history");
+  } catch (e: any) {
+    if (e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
+    throw e;
   }
-
-  const walletAddress = request.nextUrl.searchParams.get("walletAddress") ?? undefined;
-  const cursor = request.nextUrl.searchParams.get("cursor") ?? undefined;
-  const limitRaw = request.nextUrl.searchParams.get("limit");
-  const limit = limitRaw ? Math.min(Math.max(1, parseInt(limitRaw, 10)), 200) : 50;
-
-  return withCacheHeaders(
-    NextResponse.json(listAgentRunRecordsPaginated(walletAddress, { cursor, limit })),
-    "history",
-  );
 }
 
 export async function POST(request: Request) {

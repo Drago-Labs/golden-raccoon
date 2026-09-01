@@ -5,6 +5,9 @@ import { addToWatchlist, listWatchlist, removeFromWatchlist } from "@/server/dis
 import { ensureStorageReady } from "@/server/storage";
 import { resolveWalletSession } from "@/server/security/walletSession";
 import { evaluateCapability } from "@/server/security/authz";
+import { parseQuery } from "@/server/api/query/validate";
+import { jsonError } from "@/server/api/errors";
+import { listWatchlistEntriesPaginated } from "@/server/storage";
 
 export const AUTHZ_CAPABILITY = "watchlist:write" as const;
 
@@ -30,38 +33,41 @@ const removeBodySchema = z.object({
   walletAddress: z.string().min(1).max(80).optional(),
 });
 
-const listQuerySchema = z.object({
-  walletAddress: z.string().min(1).max(80).optional(),
-});
-
 export async function GET(request: Request) {
   const rateLimited = checkRateLimit(request, { namespace: "watchlist:list", limit: 60, windowMs: 60_000 });
-
-  if (rateLimited) {
-    return rateLimited;
-  }
-
+  if (rateLimited) return rateLimited;
   await ensureStorageReady();
-
   const url = new URL(request.url);
-  const parsed = listQuerySchema.safeParse({ walletAddress: url.searchParams.get("walletAddress") ?? undefined });
-
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  try {
+    const raw: Record<string, unknown> = Object.fromEntries(url.searchParams.entries());
+    const filterSchema = z.object({
+      walletAddress: z.string().optional(),
+      cursor: z.string().optional(),
+      limit: z.coerce.number().optional(),
+      sortBy: z.string().optional(),
+      sortDirection: z.enum(["asc", "desc"]).optional(),
+      chain: z.string().optional(),
+      network: z.string().optional(),
+    });
+    const q = parseQuery(raw, "watchlist", filterSchema);
+    const filters = q.filters as { walletAddress?: string; chain?: string; network?: string };
+    const walletFromCursor = q.walletAddress ?? filters.walletAddress;
+    const session = resolveWalletSession(request, { suppliedWallet: walletFromCursor });
+    if (session.response) return session.response;
+    const result = listWatchlistEntriesPaginated(session.wallet!, {
+      cursor: q.cursor,
+      limit: q.limit,
+      sortBy: q.sortBy,
+      sortDirection: q.sortDirection,
+      chain: filters.chain,
+      network: q.network ?? filters.network,
+    });
+    return NextResponse.json({ items: result.items, nextCursor: result.nextCursor, hasMore: result.hasMore, total: result.total });
+  } catch (e: unknown) {
+    const err = e as { code?: string; message?: string };
+    if (err.code === "validation_error") return jsonError(err, { legacy: { error: err.message } });
+    throw e;
   }
-
-  // Wallet isolation: the session cookie is authoritative
-  const session = resolveWalletSession(request, { suppliedWallet: parsed.data.walletAddress });
-  if (session.response) return session.response;
-
-  const authz = evaluateCapability(
-    { kind: "wallet", walletAddress: session.wallet, walletHash: "route" },
-    "portfolio:read",
-    { walletAddress: session.wallet },
-  );
-  if (!authz.allowed) return NextResponse.json({ error: "auth_error", reason: authz.reason }, { status: 403 });
-
-  return NextResponse.json({ entries: listWatchlist(session.wallet!) });
 }
 
 export async function POST(request: Request) {

@@ -71,6 +71,10 @@
     {
       "name": "health",
       "description": "Service and provider health checks."
+    },
+    {
+      "name": "pagination",
+      "description": "Shared cursor pagination, filtering, sorting contract"
     }
   ],
   "components": {
@@ -112,6 +116,37 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 500
+        }
+      },
+      "CursorQuery": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "description": "Opaque pagination cursor",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "SortByQuery": {
+        "name": "sortBy",
+        "in": "query",
+        "required": false,
+        "description": "Sort key",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "SortDirectionQuery": {
+        "name": "sortDirection",
+        "in": "query",
+        "required": false,
+        "description": "Sort direction",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "asc",
+            "desc"
+          ]
         }
       }
     },
@@ -851,7 +886,7 @@
         },
         "additionalProperties": true
       },
-      "NotificationPreferences": {
+"NotificationPreferences": {
         "type": "object",
         "required": [
           "walletAddress",
@@ -941,6 +976,91 @@
           },
           "updatedAt": {
             "type": "string"
+          }
+        }
+      },
+      "PaginatedEnvelope": {
+        "type": "object",
+        "description": "Uniform pagination envelope for all list endpoints. Issue #143.",
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true,
+            "description": "Opaque cursor for next page, null if no more"
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "PaginationEnvelope": {
+        "type": "object",
+        "description": "Uniform pagination envelope for all list endpoints. Issue #143.",
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true,
+            "description": "Opaque cursor for next page, null if no more"
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "CursorPaginationQuery": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "description": "Opaque cursor returned as nextCursor"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          },
+          "sortBy": {
+            "type": "string",
+            "description": "Sort key per resource"
+          },
+          "sortDirection": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "default": "desc"
           }
         }
       }
@@ -1856,6 +1976,45 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/WalletAddressQuery"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -1886,6 +2045,10 @@
           "429": {
             "$ref": "#/components/responses/RateLimited429"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       },
       "post": {
@@ -2088,6 +2251,45 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/WalletAddressQuery"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -2121,6 +2323,10 @@
           "429": {
             "$ref": "#/components/responses/RateLimited429"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       },
       "post": {
@@ -2239,6 +2445,9 @@
           "429": {
             "$ref": "#/components/responses/RateLimited429"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope"
         }
       }
     },
@@ -3110,6 +3319,45 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -3149,6 +3397,10 @@
           "429": {
             "$ref": "#/components/responses/RateLimited429"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       }
     },
@@ -3419,6 +3671,45 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/WalletAddressQuery"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -3438,6 +3729,10 @@
           "429": {
             "$ref": "#/components/responses/RateLimited429"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       }
     },
@@ -3451,6 +3746,45 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/WalletAddressQuery"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -3485,6 +3819,10 @@
           "429": {
             "$ref": "#/components/responses/RateLimited429"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       }
     },
@@ -3498,6 +3836,45 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/WalletAddressQuery"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -3517,6 +3894,10 @@
           "429": {
             "$ref": "#/components/responses/RateLimited429"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       },
       "post": {
@@ -3657,6 +4038,51 @@
           "429": {
             "$ref": "#/components/responses/RateLimited429"
           }
+        },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          }
+        ],
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       }
     },
@@ -3670,6 +4096,45 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/WalletAddressQuery"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -3689,6 +4154,10 @@
           "429": {
             "$ref": "#/components/responses/RateLimited429"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       }
     },
@@ -3795,6 +4264,45 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/WalletAddressQuery"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -3814,6 +4322,10 @@
           "429": {
             "$ref": "#/components/responses/RateLimited429"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       }
     },
@@ -3833,6 +4345,45 @@
             "schema": {
               "type": "string",
               "minLength": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
             }
           }
         ],
@@ -3861,6 +4412,10 @@
           "429": {
             "$ref": "#/components/responses/RateLimited429"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       },
       "post": {
@@ -3939,6 +4494,45 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/WalletAddressQuery"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -3958,6 +4552,10 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized401"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       },
       "post": {
@@ -4160,6 +4758,45 @@
           },
           {
             "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -4204,6 +4841,10 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized401"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       }
     },
@@ -4296,6 +4937,45 @@
           },
           {
             "$ref": "#/components/parameters/LimitQuery"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -4318,6 +4998,10 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized401"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       }
     },
@@ -4346,6 +5030,45 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/WalletAddressQuery"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -4365,6 +5088,10 @@
           "404": {
             "$ref": "#/components/responses/NotFound404"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       }
     },
@@ -4391,6 +5118,45 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
@@ -4413,6 +5179,10 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized401"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       }
     },
@@ -5449,12 +6219,55 @@
                 "csv"
               ]
             }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "Successful export"
           }
+        },
+        "x-pagination": {
+          "envelope": "PaginatedEnvelope",
+          "maxPageSize": 100
         }
       }
     },
