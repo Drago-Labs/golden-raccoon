@@ -33,10 +33,6 @@ const removeBodySchema = z.object({
   walletAddress: z.string().min(1).max(80).optional(),
 });
 
-const listQuerySchema = z.object({
-  walletAddress: z.string().min(1).max(80).optional(),
-});
-
 export async function GET(request: Request) {
   const rateLimited = checkRateLimit(request, { namespace: "watchlist:list", limit: 60, windowMs: 60_000 });
   if (rateLimited) return rateLimited;
@@ -54,7 +50,8 @@ export async function GET(request: Request) {
       network: z.string().optional(),
     });
     const q = parseQuery(raw, "watchlist", filterSchema);
-    const walletFromCursor = q.walletAddress ?? (q.filters as any).walletAddress;
+    const filters = q.filters as { walletAddress?: string; chain?: string; network?: string };
+    const walletFromCursor = q.walletAddress ?? filters.walletAddress;
     const session = resolveWalletSession(request, { suppliedWallet: walletFromCursor });
     if (session.response) return session.response;
     const result = listWatchlistEntriesPaginated(session.wallet!, {
@@ -62,12 +59,13 @@ export async function GET(request: Request) {
       limit: q.limit,
       sortBy: q.sortBy,
       sortDirection: q.sortDirection,
-      chain: (q.filters as any).chain,
-      network: q.network ?? (q.filters as any).network,
+      chain: filters.chain,
+      network: q.network ?? filters.network,
     });
     return NextResponse.json({ items: result.items, nextCursor: result.nextCursor, hasMore: result.hasMore, total: result.total });
-  } catch (e: any) {
-    if (e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
+  } catch (e: unknown) {
+    const err = e as { code?: string; message?: string };
+    if (err.code === "validation_error") return jsonError(err, { legacy: { error: err.message } });
     throw e;
   }
 }
