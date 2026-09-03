@@ -5,6 +5,7 @@ import { runExecutionAgent } from "@/server/agents/execution";
 import { assertApprovalOnly } from "@/server/security/policy";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { getUserRuleRecord } from "@/server/storage";
+import { withRouteSpan } from "@/server/observability/tracing/spans";
 
 const bodySchema = z.object({
   action: z.string().optional(),
@@ -33,6 +34,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  return withRouteSpan("agent.execution", { "http.method": "POST" }, async () => {
   const rateLimited = checkRateLimit(request, { namespace: "agent:execution", limit: 20, windowMs: 60_000 });
 
   if (rateLimited) {
@@ -57,4 +59,5 @@ export async function POST(request: Request) {
   const result = await runExecutionAgent({ ...parsed.data, rules });
 
   return withCacheHeaders(NextResponse.json(result), "execution");
+  });
 }

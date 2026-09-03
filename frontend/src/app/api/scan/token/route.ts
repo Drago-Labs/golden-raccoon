@@ -7,6 +7,7 @@ import { runTokenScan } from "@/server/scan/tokenScan";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { buildServerTimingHeader, createPhaseTimer, recordApiTiming } from "@/server/observability/timing";
 import { createCacheKey, getOrLoad, serverCache, walletCacheTag, resourceCacheTag } from "@/server/cache";
+import { withRouteSpan } from "@/server/observability/tracing/spans";
 
 const bodySchema = z.object({
   query: z.string().min(1).max(260),
@@ -17,6 +18,7 @@ const bodySchema = z.object({
 const API_TIMING_ROUTE = "scan:token";
 
 export async function POST(request: Request) {
+  return withRouteSpan("scan.token", { "http.method": "POST" }, async () => {
   const requestStartedAt = performance.now();
   const rateLimited = checkRateLimit(request, { namespace: "scan:token", limit: 25, windowMs: 60_000 });
 
@@ -60,4 +62,5 @@ export async function POST(request: Request) {
   response.headers.set("Server-Timing", buildServerTimingHeader(timing));
 
   return response;
+  });
 }

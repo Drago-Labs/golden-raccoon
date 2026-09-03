@@ -18,6 +18,7 @@ import { storageSchemaContract } from "@/server/storage/contract";
 import type { IStorageAdapter, AgentRunInsert, HealthProbeResult } from "./types";
 import type { RiskSnapshotRecord } from "@/server/snapshots/schema";
 import { alertDeliveryToRow, rowToAlertDelivery } from "./types";
+import { wrapStorageAdapter } from "@/server/observability/tracing/spans";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1163,4 +1164,8 @@ function x402ReceiptToRow(record: X402PaymentReceipt): X402Row {
     created_at: record.createdAt,
     updated_at: record.updatedAt,
   };
+}
+
+export function createTracedSupabaseStorageAdapter() {
+  return wrapStorageAdapter(new SupabaseStorageAdapter());
 }

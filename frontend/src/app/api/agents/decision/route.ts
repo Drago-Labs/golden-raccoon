@@ -5,6 +5,7 @@ import { withCacheHeaders } from "@/server/cache/strategy";
 import { runDecisionAgent } from "@/server/agents/decision";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { getUserRuleRecord } from "@/server/storage";
+import { withRouteSpan } from "@/server/observability/tracing/spans";
 
 const agentResultSchema = z.object({
   agent: z.enum(["portfolio", "news", "social", "onchain", "decision", "execution"]),
@@ -148,6 +149,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  return withRouteSpan("agent.decision", { "http.method": "POST" }, async () => {
   const rateLimited = checkRateLimit(request, { namespace: "agent:decision", limit: 40, windowMs: 60_000 });
 
   if (rateLimited) {
@@ -178,4 +180,5 @@ export async function POST(request: Request) {
     ),
     "decision",
   );
+  });
 }

@@ -1,3 +1,4 @@
+import { annotateProviderResult, withProviderSpan } from "@/server/observability/tracing/spans";
 import type { AgentSource } from "@/server/types";
 
 export type ProviderKind = "portfolio" | "onchain" | "news" | "social" | "decision" | "execution";
@@ -232,6 +233,10 @@ function circuitKey(options: ProviderAdapterOptions) {
 }
 
 export async function runProviderAdapter<T>(operation: (signal?: AbortSignal) => Promise<T>, options: ProviderAdapterOptions): Promise<ProviderAdapterResult<T>> {
+  return withProviderSpan(`provider.${options.kind}.${options.provider}`, {"provider.kind": options.kind, "provider.name": options.provider, "provider.label": options.label, ...(options.identity?.family ? {"chain.family": options.identity.family} : {}), ...(options.identity?.network ? {"chain.network": options.identity.network} : {}), ...(options.cache?.hit !== undefined ? {"cache.hit": options.cache.hit} : {})}, async (span) => { const result = await executeProviderAdapter(operation, options); annotateProviderResult(span, result); return result; });
+}
+
+async function executeProviderAdapter<T>(operation: (signal?: AbortSignal) => Promise<T>, options: ProviderAdapterOptions): Promise<ProviderAdapterResult<T>> {
   const now = options.now ?? Date.now;
   const startedAt = now();
   const timeoutMs = Math.max(1, options.timeoutMs ?? getProviderTimeoutBudget(options.kind));

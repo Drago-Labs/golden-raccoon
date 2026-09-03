@@ -16,6 +16,7 @@ import { storageSchemaContract } from "@/server/storage/contract";
 import type { IStorageAdapter, AgentRunInsert, HealthProbeResult, StoredErasureReceipt, ErasureAdapterResult, ResidueAdapterResult } from "./types";
 import type { RiskSnapshotRecord } from "@/server/snapshots/schema";
 import { alertDeliveryToRow, rowToAlertDelivery } from "./types";
+import { wrapStorageAdapter } from "@/server/observability/tracing/spans";
 
 const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonAgentRuns?: AgentRunRecord[];
@@ -468,4 +469,8 @@ export class MemoryStorageAdapter implements IStorageAdapter {
     memoryStore.__goldenRaccoonErasureReceipts ??= [];
     return memoryStore.__goldenRaccoonErasureReceipts.find((r) => r.receiptId === receiptId) ?? null;
   }
+}
+
+export function createTracedMemoryStorageAdapter() {
+  return wrapStorageAdapter(new MemoryStorageAdapter());
 }

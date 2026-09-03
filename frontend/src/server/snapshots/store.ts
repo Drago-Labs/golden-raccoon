@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { IStorageAdapter } from "@/server/storage/adapters/types";
 import { MemoryStorageAdapter } from "@/server/storage/adapters/memory";
+import { wrapStorageAdapter } from "@/server/observability/tracing/spans";
 import type { TokenScanResult } from "@/server/types";
 import { canonicalAssetIdentity, hashRiskSnapshot } from "./canonical";
 import {
@@ -32,9 +33,9 @@ export async function getSnapshotStorageAdapter(): Promise<IStorageAdapter> {
   adapterGlobal.__goldenRaccoonSnapshotAdapter ??= (async () => {
     if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
       const { SupabaseStorageAdapter } = await import("@/server/storage/adapters/supabase");
-      return new SupabaseStorageAdapter();
+      return wrapStorageAdapter(new SupabaseStorageAdapter());
     }
-    return new MemoryStorageAdapter();
+    return wrapStorageAdapter(new MemoryStorageAdapter());
   })();
   return adapterGlobal.__goldenRaccoonSnapshotAdapter;
 }

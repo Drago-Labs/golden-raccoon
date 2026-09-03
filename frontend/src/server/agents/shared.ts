@@ -1,6 +1,7 @@
 import type { AgentBlockingReason, AgentFinding, AgentMissingData, AgentRecommendedAction, AgentResult, AgentSource, RiskLevel, SourceDataQuality } from "@/server/types";
 import { validateAgentResult } from "@/server/agents/schema";
 import { assertNoMockSourcesInLive } from "@/server/env/runtimeMode";
+import { withAgentSpan } from "@/server/observability/tracing/spans";
 
 type BuildAgentResultInput = {
   agent: AgentResult["agent"];
@@ -322,13 +323,6 @@ export function buildUnavailableAgentResult(
   });
 }
 
-export async function runAgentSafely<T extends AgentResult["agent"]>(
-  agent: T,
-  task: () => Promise<AgentResult>,
-): Promise<AgentResult> {
-  try {
-    return await task();
-  } catch (error) {
-    return buildUnavailableAgentResult(agent, error instanceof Error ? error.message : "Agent failed unexpectedly.");
-  }
+export async function runAgentSafely<T extends AgentResult["agent"]>(agent: T, task: () => Promise<AgentResult>): Promise<AgentResult> {
+  return withAgentSpan(agent, {}, async () => { try { return await task(); } catch (error) { return buildUnavailableAgentResult(agent, error instanceof Error ? error.message : "Agent failed unexpectedly."); } });
 }

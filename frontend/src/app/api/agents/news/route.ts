@@ -4,6 +4,7 @@ import { withCacheHeaders } from "@/server/cache/strategy";
 import { runNewsAgent } from "@/server/agents/news";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { chainIdSchema, contractAddressSchema, externalUrlSchema, tokenSymbolSchema } from "@/server/security/inputValidation";
+import { withRouteSpan } from "@/server/observability/tracing/spans";
 
 const bodySchema = z.object({
   tokenName: z.string().min(1).max(120).optional(),
@@ -15,6 +16,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  return withRouteSpan("agent.news", { "http.method": "POST" }, async () => {
   const rateLimited = checkRateLimit(request, { namespace: "agent:news", limit: 30, windowMs: 60_000 });
 
   if (rateLimited) {
@@ -29,4 +31,5 @@ export async function POST(request: Request) {
   }
 
   return withCacheHeaders(NextResponse.json(await runNewsAgent(parsed.data)), "news");
+  });
 }

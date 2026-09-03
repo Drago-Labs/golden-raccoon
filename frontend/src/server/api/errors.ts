@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCorrelationId } from "@/server/observability/logger/context";
+import { getActiveTraceId } from "@/server/observability/tracing/spans";
 
 export type ApiErrorCode =
   | "validation_error"
@@ -43,6 +44,7 @@ export interface ApiErrorShape {
   retryable: boolean;
   recoveryAction: RecoveryAction;
   requestId: string;
+  traceId?: string;
   details?: unknown;
 }
 
@@ -132,10 +134,11 @@ export function jsonError(input: ApiError | JsonErrorInput, options?: JsonErrorO
       ? input
       : new ApiError(input.code, input.message, input.status, { retryable: input.retryable, recoveryAction: input.recoveryAction, details: input.details });
   const requestId = options?.requestId ?? getCorrelationId() ?? createRequestId();
-  const body = { ...toErrorShape(apiError, requestId), ...(options?.legacy ?? {}) };
+  const traceId = getActiveTraceId();
+  const body = { ...toErrorShape(apiError, requestId), ...(traceId ? { traceId } : {}), ...(options?.legacy ?? {}) };
 
   return NextResponse.json(body, {
     status: apiError.status,
-    headers: { "Cache-Control": "no-store", ...(options?.headers ?? {}) },
+    headers: { "Cache-Control": "no-store", ...(traceId ? { "X-Trace-Id": traceId } : {}), ...(options?.headers ?? {}) },
   });
 }

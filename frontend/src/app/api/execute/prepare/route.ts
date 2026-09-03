@@ -16,6 +16,7 @@ import { assertPrepareAllowedByRecovery, getIncidentMode } from "@/server/recove
 import { prepareTransaction } from "@/server/transactions/lifecycleManager";
 import { getStellarNetwork } from "@/lib/stellar/config";
 import type { TransactionRecord, TransactionExpectedEffect, TransactionPreview } from "@/server/types";
+import { withRouteSpan } from "@/server/observability/tracing/spans";
 
 export const AUTHZ_CAPABILITY = "execution:prepare" as const;
 
@@ -270,6 +271,7 @@ function buildIdempotencyKey(input: { walletAddress?: string; network?: string; 
 }
 
 export async function POST(request: Request) {
+  return withRouteSpan("execute.prepare", { "http.method": "POST" }, async () => {
   const rateLimited = checkRateLimit(request, { namespace: "execute:prepare", limit: 20, windowMs: 60_000 });
 
   if (rateLimited) {
@@ -406,4 +408,5 @@ export async function POST(request: Request) {
       transaction: prepared.transaction,
     },
   }), "execution");
+  });
 }
