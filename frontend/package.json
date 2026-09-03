@@ -41,7 +41,8 @@
     "test:privacy": "NODE_OPTIONS='--require ./scripts/stub-server-only.cjs' tsx --tsconfig tsconfig.json scripts/wallet-privacy-lifecycle-check.ts",
     "test:offline": "tsx --tsconfig tsconfig.json scripts/offline-check.ts",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "test:rate-limit": "NODE_OPTIONS='--require ./scripts/stub-server-only.cjs' tsx --tsconfig tsconfig.json scripts/rate-limit-check.ts"
   },
   "dependencies": {
     "@coinbase/x402": "^2.1.0",

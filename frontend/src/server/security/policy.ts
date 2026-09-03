@@ -1,3 +1,5 @@
+import { getRateLimitHealth } from "@/server/env/validation";
+
 const forbiddenServerSecretNames = ["PRIVATE_KEY", "MNEMONIC", "SEED_PHRASE", "WALLET_SECRET"];
 
 export function getSecurityHealth() {
@@ -9,6 +11,7 @@ export function getSecurityHealth() {
     approvalOnlyExecution: true,
     serverWalletSecretsPresent: configuredForbiddenSecrets.length > 0,
     forbiddenSecretNames: configuredForbiddenSecrets,
+    rateLimit: getRateLimitHealth(),
     detail:
       configuredForbiddenSecrets.length > 0
         ? "Server wallet secrets are present. Execution must remain approval-only and should not sign server-side."

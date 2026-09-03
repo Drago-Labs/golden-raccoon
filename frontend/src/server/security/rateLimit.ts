@@ -1,65 +1,43 @@
-import { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import {
+  buildRateLimitResponse,
+  evaluateRateLimitSync,
+  wasRateLimitCheckedByMiddleware,
+} from "@/server/security/rateLimit/limiter";
+import { buildBucketKeyFromRequest } from "@/server/security/rateLimit/keys";
+import { rateLimitProfiles, type RateLimitProfile } from "@/server/security/rateLimit/policy";
 
-type RateLimitOptions = {
-  limit: number;
-  windowMs: number;
-  namespace: string;
-};
+export { rateLimitProfiles };
+export type { RateLimitProfile };
+export {
+  HEALTH_PROBE_PATHS,
+  resolveRoutePolicy,
+} from "@/server/security/rateLimit/policy";
+export {
+  RATE_LIMIT_CHECKED_HEADER,
+  evaluateRateLimit,
+  evaluateRateLimitSync,
+  buildRateLimitResponse,
+} from "@/server/security/rateLimit/limiter";
+export { bucketKeyFingerprint, buildBucketKeyFromRequest, fingerprint, getClientIp } from "@/server/security/rateLimit/keys";
+export { consumeRateLimit, consumeRateLimitSync, resetAllRateLimitBuckets, resetRateLimitBucket } from "@/server/security/rateLimit/store";
 
-export const rateLimitProfiles = {
-  tokenScan: { namespace: "scan:token", limit: 25, windowMs: 60_000 },
-  portfolioReview: { namespace: "agent:portfolio", limit: 30, windowMs: 60_000 },
-  executionPrepare: { namespace: "execute:prepare", limit: 20, windowMs: 60_000 },
-  historyRead: { namespace: "history", limit: 80, windowMs: 60_000 },
-  expensiveProviderCall: { namespace: "provider:expensive", limit: 10, windowMs: 60_000 },
-  alertRead: { namespace: "alert:read", limit: 80, windowMs: 60_000 },
-  alertRuleWrite: { namespace: "alert:write", limit: 30, windowMs: 60_000 },
-  alertAcknowledge: { namespace: "alert:ack", limit: 30, windowMs: 60_000 },
-} satisfies Record<string, RateLimitOptions>;
-
-const buckets = globalThis as typeof globalThis & {
-  __goldenRaccoonRateLimit?: Map<string, { count: number; resetAt: number }>;
-};
-
-function getBuckets() {
-  buckets.__goldenRaccoonRateLimit ??= new Map();
-
-  return buckets.__goldenRaccoonRateLimit;
-}
+type RateLimitOptions = RateLimitProfile;
 
 export function getClientKey(request: Request | NextRequest, namespace: string) {
-  const headers = request.headers;
-  const forwardedFor = headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const realIp = headers.get("x-real-ip");
-
-  return `${namespace}:${forwardedFor || realIp || "local"}`;
+  return buildBucketKeyFromRequest(request, namespace);
 }
 
 export function checkRateLimit(request: Request | NextRequest, options: RateLimitOptions) {
-  const key = getClientKey(request, options.namespace);
-  const now = Date.now();
-  const bucket = getBuckets().get(key);
-
-  if (!bucket || bucket.resetAt <= now) {
-    getBuckets().set(key, { count: 1, resetAt: now + options.windowMs });
+  if (wasRateLimitCheckedByMiddleware(request)) {
     return null;
   }
 
-  if (bucket.count >= options.limit) {
-    const response = NextResponse.json(
-      {
-        error: "rate_limited",
-        detail: `Too many ${options.namespace} requests. Try again after ${new Date(bucket.resetAt).toISOString()}.`,
-      },
-      { status: 429 },
-    );
+  const decision = evaluateRateLimitSync(request, options);
 
-    response.headers.set("Retry-After", Math.ceil((bucket.resetAt - now) / 1000).toString());
-
-    return response;
+  if (!decision.allowed) {
+    return buildRateLimitResponse(options, decision);
   }
-
-  bucket.count += 1;
 
   return null;
 }

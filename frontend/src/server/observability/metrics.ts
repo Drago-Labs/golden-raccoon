@@ -2,6 +2,67 @@ import type { AgentResult, AgentRunRecord } from "@/server/types";
 import { getExecutionMetrics } from "@/server/observability/executionMetrics";
 import { getCacheMetrics } from "@/server/cache";
 
+type RateLimitMetricBucket = {
+  allowed: number;
+  denied: number;
+};
+
+type RateLimitMetricsSnapshot = {
+  allowed: number;
+  denied: number;
+  byNamespace: Record<string, RateLimitMetricBucket>;
+};
+
+const rateLimitMetricsGlobal = globalThis as typeof globalThis & {
+  __goldenRaccoonRateLimitMetrics?: RateLimitMetricsSnapshot;
+};
+
+function rateLimitMetricsStore() {
+  rateLimitMetricsGlobal.__goldenRaccoonRateLimitMetrics ??= {
+    allowed: 0,
+    denied: 0,
+    byNamespace: {},
+  };
+  return rateLimitMetricsGlobal.__goldenRaccoonRateLimitMetrics;
+}
+
+export function recordRateLimitDecision(input: {
+  namespace: string;
+  allowed: boolean;
+  bucketFingerprint: string;
+}) {
+  void input.bucketFingerprint;
+  const store = rateLimitMetricsStore();
+  const bucket = store.byNamespace[input.namespace] ?? { allowed: 0, denied: 0 };
+
+  if (input.allowed) {
+    store.allowed += 1;
+    bucket.allowed += 1;
+  } else {
+    store.denied += 1;
+    bucket.denied += 1;
+  }
+
+  store.byNamespace[input.namespace] = bucket;
+}
+
+export function getRateLimitMetrics(): RateLimitMetricsSnapshot {
+  const store = rateLimitMetricsStore();
+  return {
+    allowed: store.allowed,
+    denied: store.denied,
+    byNamespace: { ...store.byNamespace },
+  };
+}
+
+export function resetRateLimitMetricsForTests() {
+  rateLimitMetricsGlobal.__goldenRaccoonRateLimitMetrics = {
+    allowed: 0,
+    denied: 0,
+    byNamespace: {},
+  };
+}
+
 function percent(part: number, total: number) {
   return total > 0 ? Math.round((part / total) * 1000) / 10 : 0;
 }
@@ -24,6 +85,7 @@ export function getAgentRunMetrics(records: AgentRunRecord[]) {
     executionBlockedRate: percent(executionBlocked, results.filter((result) => result.agent === "execution").length),
     execution: executionMetrics,
     cache: getCacheMetrics(),
+    rateLimit: getRateLimitMetrics(),
     sampleSize: {
       runs: records.length,
       agentResults: results.length,

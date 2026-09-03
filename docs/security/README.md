@@ -16,6 +16,7 @@ This directory contains the production-hardening deliverables for Golden Raccoon
 | `emergency-pause-procedure.md` | 2-minute emergency pause runbook |
 | `low-value-smoke-test-procedure.md` | Post-deploy smoke test (< 5 min, < 0.01 ETH) |
 | `production-hardening-signoff.md` | Sign-off template for release readiness |
+| `RATE_LIMITING.md` | Inbound API rate limiting policies, headers, and store configuration |
 
 ## Scripts (in `scripts/`)
 

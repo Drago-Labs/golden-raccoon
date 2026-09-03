@@ -59,6 +59,12 @@ const serverEnvKeys = [
   "PROVIDER_CIRCUIT_OPEN_MS",
   "PROVIDER_MAX_RETRIES",
   "PROVIDER_RETRY_BUDGET_MS",
+  "RATE_LIMIT_ENABLED",
+  "RATE_LIMIT_KEY_SECRET",
+  "RATE_LIMIT_REDIS_REST_URL",
+  "RATE_LIMIT_REDIS_REST_TOKEN",
+  "UPSTASH_REDIS_REST_URL",
+  "UPSTASH_REDIS_REST_TOKEN",
 ] as const;
 
 const publicEnvKeys = [
@@ -93,6 +99,30 @@ function boundedInteger(name: string, fallback: number, minimum: number, maximum
   if (!raw) return fallback;
   const value = Number(raw);
   return Number.isInteger(value) && value >= minimum && value <= maximum ? value : fallback;
+}
+
+
+export function getRateLimitHealth() {
+  const enabled = process.env.RATE_LIMIT_ENABLED !== "0";
+  const keySecretConfigured = Boolean(process.env.RATE_LIMIT_KEY_SECRET?.trim());
+  const redisConfigured = Boolean(
+    (process.env.RATE_LIMIT_REDIS_REST_URL?.trim() && process.env.RATE_LIMIT_REDIS_REST_TOKEN?.trim()) ||
+      (process.env.UPSTASH_REDIS_REST_URL?.trim() && process.env.UPSTASH_REDIS_REST_TOKEN?.trim()),
+  );
+
+  return {
+    enabled,
+    keySecretConfigured,
+    redisConfigured,
+    store: redisConfigured ? "redis-rest" : "memory",
+    detail: !enabled
+      ? "Rate limiting is explicitly disabled via RATE_LIMIT_ENABLED=0."
+      : redisConfigured
+        ? "Shared Redis REST store is configured for cross-instance limits."
+        : keySecretConfigured
+          ? "In-memory store is active with a configured HMAC key secret."
+          : "In-memory store is active for local development; configure Redis REST for multi-instance deployments.",
+  };
 }
 
 export function getProviderResilienceConfig() {
@@ -174,6 +204,7 @@ export function getEnvHealth() {
     stellarConfig,
     pubnetApproval,
     providerResilience: getProviderResilienceConfig(),
+    rateLimit: getRateLimitHealth(),
     detail:
       configuredLiveSources.length > 0
         ? "At least one live data source is configured. Missing sources must stay transparent in UI."
