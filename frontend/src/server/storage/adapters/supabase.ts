@@ -17,6 +17,11 @@ import type {
 import { storageSchemaContract } from "@/server/storage/contract";
 import type { IStorageAdapter, AgentRunInsert, HealthProbeResult } from "./types";
 import type { RiskSnapshotRecord } from "@/server/snapshots/schema";
+import type {
+  StellarCursorRecord,
+  StellarEventGapRecord,
+  StellarEventRecord,
+} from "@/server/stellar/events/types";
 import { alertDeliveryToRow, rowToAlertDelivery } from "./types";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -327,6 +332,85 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
 
     if (error) throw new StorageError("createX402PaymentReceipt", error);
     return rowToX402Receipt(data);
+  }
+
+  // ─── Stellar event indexer ─────────────────────────────────────
+
+  async getStellarCursor(contractId: string, network: string): Promise<StellarCursorRecord | null> {
+    const { data, error } = await this.client
+      .from("stellar_event_cursors")
+      .select("*")
+      .eq("contract_id", contractId)
+      .eq("network", network)
+      .maybeSingle();
+
+    if (error) throw new StorageError("getStellarCursor", error);
+    return data ? rowToStellarCursor(data) : null;
+  }
+
+  async saveStellarCursor(cursor: StellarCursorRecord): Promise<void> {
+    const { error } = await this.client
+      .from("stellar_event_cursors")
+      .upsert(stellarCursorToRow(cursor), { onConflict: "contract_id,network" });
+
+    if (error) throw new StorageError("saveStellarCursor", error);
+  }
+
+  async insertStellarEvents(events: StellarEventRecord[]): Promise<void> {
+    if (events.length === 0) return;
+
+    const { error } = await this.client
+      .from("stellar_events")
+      .upsert(events.map((event) => stellarEventToRow(event)), {
+        onConflict: "event_id",
+        ignoreDuplicates: true,
+      });
+
+    if (error) throw new StorageError("insertStellarEvents", error);
+  }
+
+  async listStellarEvents(
+    contractId: string,
+    network: string,
+    limit = 100,
+    beforeLedger?: number,
+  ): Promise<StellarEventRecord[]> {
+    let query = this.client
+      .from("stellar_events")
+      .select("*")
+      .eq("contract_id", contractId)
+      .eq("network", network)
+      .order("ledger_sequence", { ascending: false })
+      .order("event_index", { ascending: false })
+      .limit(limit);
+
+    if (beforeLedger !== undefined) {
+      query = query.lt("ledger_sequence", beforeLedger);
+    }
+
+    const { data, error } = await query;
+    if (error) throw new StorageError("listStellarEvents", error);
+    return (data ?? []).map(rowToStellarEvent);
+  }
+
+  async insertStellarGap(gap: StellarEventGapRecord): Promise<void> {
+    const { error } = await this.client
+      .from("stellar_event_gaps")
+      .upsert(stellarGapToRow(gap), { onConflict: "id" });
+
+    if (error) throw new StorageError("insertStellarGap", error);
+  }
+
+  async listStellarGaps(contractId: string, network: string): Promise<StellarEventGapRecord[]> {
+    const { data, error } = await this.client
+      .from("stellar_event_gaps")
+      .select("*")
+      .eq("contract_id", contractId)
+      .eq("network", network)
+      .order("detected_at", { ascending: false });
+
+    if (error) throw new StorageError("listStellarGaps", error);
+    return (data ?? []).map(rowToStellarGap);
   }
 
   async getStorageCounts(): Promise<StorageCounts> {
@@ -843,6 +927,9 @@ type ApprovalRow = Record<string, unknown>;
 type UserRuleRow = Record<string, unknown>;
 type X402Row = Record<string, unknown>;
 type RiskSnapshotRow = Record<string, unknown>;
+type StellarCursorRow = Record<string, unknown>;
+type StellarEventRow = Record<string, unknown>;
+type StellarGapRow = Record<string, unknown>;
 
 function rowToRiskSnapshot(row: RiskSnapshotRow): RiskSnapshotRecord {
   return {
@@ -1162,5 +1249,85 @@ function x402ReceiptToRow(record: X402PaymentReceipt): X402Row {
     verification_status: record.verificationStatus,
     created_at: record.createdAt,
     updated_at: record.updatedAt,
+  };
+}
+
+function rowToStellarCursor(row: StellarCursorRow): StellarCursorRecord {
+  return {
+    contractId: String(row.contract_id ?? ""),
+    network: row.network as StellarCursorRecord["network"],
+    ledgerSequence: Number(row.ledger_sequence ?? 0),
+    cursor: String(row.cursor ?? ""),
+    updatedAt: String(row.updated_at ?? new Date().toISOString()),
+  };
+}
+
+function stellarCursorToRow(record: StellarCursorRecord): StellarCursorRow {
+  return {
+    contract_id: record.contractId,
+    network: record.network,
+    ledger_sequence: record.ledgerSequence,
+    cursor: record.cursor,
+    updated_at: record.updatedAt,
+  };
+}
+
+function rowToStellarEvent(row: StellarEventRow): StellarEventRecord {
+  return {
+    id: String(row.event_id ?? ""),
+    contractId: String(row.contract_id ?? ""),
+    network: row.network as StellarEventRecord["network"],
+    ledgerSequence: Number(row.ledger_sequence ?? 0),
+    txHash: String(row.tx_hash ?? ""),
+    eventIndex: Number(row.event_index ?? 0),
+    topic: Array.isArray(row.topic) ? (row.topic as string[]) : [],
+    data: String(row.data ?? ""),
+    eventType: (row.event_type as StellarEventRecord["eventType"]) ?? "unknown",
+    decoded: row.decoded ? (row.decoded as Record<string, unknown>) : null,
+    emittedAt: String(row.emitted_at ?? ""),
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+  };
+}
+
+function stellarEventToRow(record: StellarEventRecord): StellarEventRow {
+  return {
+    event_id: record.id,
+    contract_id: record.contractId,
+    network: record.network,
+    ledger_sequence: record.ledgerSequence,
+    tx_hash: record.txHash,
+    event_index: record.eventIndex,
+    topic: record.topic,
+    data: record.data,
+    event_type: record.eventType,
+    decoded: record.decoded,
+    emitted_at: record.emittedAt,
+    created_at: record.createdAt,
+  };
+}
+
+function rowToStellarGap(row: StellarGapRow): StellarEventGapRecord {
+  return {
+    id: String(row.id ?? ""),
+    contractId: String(row.contract_id ?? ""),
+    network: row.network as StellarEventGapRecord["network"],
+    fromLedger: Number(row.from_ledger ?? 0),
+    toLedger: Number(row.to_ledger ?? 0),
+    reason: String(row.reason ?? ""),
+    detectedAt: String(row.detected_at ?? ""),
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+  };
+}
+
+function stellarGapToRow(record: StellarEventGapRecord): StellarGapRow {
+  return {
+    id: record.id,
+    contract_id: record.contractId,
+    network: record.network,
+    from_ledger: record.fromLedger,
+    to_ledger: record.toLedger,
+    reason: record.reason,
+    detected_at: record.detectedAt,
+    created_at: record.createdAt,
   };
 }

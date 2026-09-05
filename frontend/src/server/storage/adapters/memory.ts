@@ -16,6 +16,7 @@ import { storageSchemaContract } from "@/server/storage/contract";
 import type { IStorageAdapter, AgentRunInsert, HealthProbeResult, StoredErasureReceipt, ErasureAdapterResult, ResidueAdapterResult } from "./types";
 import type { RiskSnapshotRecord } from "@/server/snapshots/schema";
 import { alertDeliveryToRow, rowToAlertDelivery } from "./types";
+import type { StellarEventCursor, StellarEventRecord, StellarGapRecord } from "@/server/stellar/events/types";
 
 const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonAgentRuns?: AgentRunRecord[];
@@ -30,6 +31,9 @@ const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonAdapterAlertDeliveries?: AlertDelivery[];
   __goldenRaccoonAdapterNotificationPreferences?: NotificationPreferences[];
   __goldenRaccoonErasureReceipts?: StoredErasureReceipt[];
+  __goldenRaccoonStellarEventCursors?: StellarEventCursor[];
+  __goldenRaccoonStellarEvents?: StellarEventRecord[];
+  __goldenRaccoonStellarEventGaps?: StellarGapRecord[];
 };
 
 function getAgentRuns(): AgentRunRecord[] {
@@ -68,6 +72,18 @@ function getRiskSnapshots(): RiskSnapshotRecord[] {
 function getAlertDeliveries(): AlertDelivery[] {
   memoryStore.__goldenRaccoonAdapterAlertDeliveries ??= [];
   return memoryStore.__goldenRaccoonAdapterAlertDeliveries;
+}
+function getStellarEventCursors(): StellarEventCursor[] {
+  memoryStore.__goldenRaccoonStellarEventCursors ??= [];
+  return memoryStore.__goldenRaccoonStellarEventCursors;
+}
+function getStellarEvents(): StellarEventRecord[] {
+  memoryStore.__goldenRaccoonStellarEvents ??= [];
+  return memoryStore.__goldenRaccoonStellarEvents;
+}
+function getStellarEventGaps(): StellarGapRecord[] {
+  memoryStore.__goldenRaccoonStellarEventGaps ??= [];
+  return memoryStore.__goldenRaccoonStellarEventGaps;
 }
 
 function getNotificationPreferences(): NotificationPreferences[] {
@@ -291,6 +307,139 @@ export class MemoryStorageAdapter implements IStorageAdapter {
     if (index < 0) return null;
     store[index] = rowToAlertDelivery(alertDeliveryToRow({ ...store[index], ...patch }));
     return store[index];
+  }
+
+  // ─── Stellar event indexer ────────────────────────────────────
+
+  async listStellarEventRecords(
+    contractId: string,
+    network: string,
+    limitOrOptions?: number | { limit?: number; after?: string },
+    after?: string,
+  ): Promise<StellarEventRecord[]> {
+    let limit: number | undefined;
+    let afterId: string | undefined;
+    if (typeof limitOrOptions === "number") {
+      limit = limitOrOptions;
+      afterId = after;
+    } else if (limitOrOptions) {
+      limit = limitOrOptions.limit;
+      afterId = limitOrOptions.after;
+    }
+    let records = getStellarEvents()
+      .filter((record) => record.contractId === contractId && record.network === network)
+      .sort(
+        (a, b) =>
+          new Date((a as any).createdAt).getTime() - new Date((b as any).createdAt).getTime(),
+      );
+    if (afterId) {
+      const afterIdx = records.findIndex(
+        (record) => ((record as any).eventId ?? (record as any).id) === afterId,
+      );
+      if (afterIdx >= 0) records = records.slice(afterIdx + 1);
+    }
+    if (limit && limit > 0) records = records.slice(0, limit);
+    return records;
+  }
+
+  async listStellarEvents(
+    contractId: string,
+    network: string,
+    limitOrOptions?: number | { limit?: number; after?: string },
+    after?: string,
+  ): Promise<StellarEventRecord[]> {
+    return this.listStellarEventRecords(contractId, network, limitOrOptions, after);
+  }
+
+  async createStellarEventRecord(record: StellarEventRecord): Promise<StellarEventRecord> {
+    const records = getStellarEvents();
+    const eventId = (record as any).eventId ?? (record as any).id;
+    const existing = records.find(
+      (item) =>
+        item.contractId === record.contractId &&
+        item.network === record.network &&
+        ((item as any).eventId ?? (item as any).id) === eventId,
+    );
+    if (existing) return existing;
+    records.unshift(record);
+    return record;
+  }
+
+  async createStellarEvent(record: StellarEventRecord): Promise<StellarEventRecord> {
+    return this.createStellarEventRecord(record);
+  }
+
+  async getStellarEventCursor(
+    contractId: string,
+    network: string,
+  ): Promise<StellarEventCursor | null> {
+    return (
+      getStellarEventCursors().find(
+        (cursor) => cursor.contractId === contractId && cursor.network === network,
+      ) ?? null
+    );
+  }
+
+  async getStellarCursor(
+    contractId: string,
+    network: string,
+  ): Promise<StellarEventCursor | null> {
+    return this.getStellarEventCursor(contractId, network);
+  }
+
+  async upsertStellarEventCursor(cursor: StellarEventCursor): Promise<StellarEventCursor> {
+    const cursors = getStellarEventCursors();
+    const idx = cursors.findIndex(
+      (item) => item.contractId === cursor.contractId && item.network === cursor.network,
+    );
+    if (idx >= 0) {
+      cursors[idx] = cursor;
+    } else {
+      cursors.unshift(cursor);
+    }
+    return cursor;
+  }
+
+  async upsertStellarCursor(cursor: StellarEventCursor): Promise<StellarEventCursor> {
+    return this.upsertStellarEventCursor(cursor);
+  }
+
+  async createStellarGapRecord(gap: StellarGapRecord): Promise<StellarGapRecord> {
+    const gaps = getStellarEventGaps();
+    const gapId = (gap as any).id;
+    const existing = gaps.find(
+      (item) =>
+        item.contractId === gap.contractId &&
+        item.network === gap.network &&
+        (item as any).id === gapId,
+    );
+    if (existing) return existing;
+    gaps.unshift(gap);
+    return gap;
+  }
+
+  async createStellarGap(gap: StellarGapRecord): Promise<StellarGapRecord> {
+    return this.createStellarGapRecord(gap);
+  }
+
+  async listStellarGapRecords(
+    contractId: string,
+    network: string,
+  ): Promise<StellarGapRecord[]> {
+    return getStellarEventGaps()
+      .filter((gap) => gap.contractId === contractId && gap.network === network)
+      .sort(
+        (a, b) =>
+          new Date((b as any).detectedAt ?? (b as any).createdAt).getTime() -
+          new Date((a as any).detectedAt ?? (a as any).createdAt).getTime(),
+      );
+  }
+
+  async listStellarGaps(
+    contractId: string,
+    network: string,
+  ): Promise<StellarGapRecord[]> {
+    return this.listStellarGapRecords(contractId, network);
   }
 
   // ─── Notification preferences ──────────────────────────────────

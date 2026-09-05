@@ -868,3 +868,58 @@ select
     'delete','delete','delete',
     'anonymize','delete'
   ]) as strategy;
+
+-- Stellar Soroban contract event indexer.
+-- Durable cursors are partitioned by network so testnet and pubnet ingestion
+-- can never share or overwrite checkpoint state.
+create table if not exists stellar_event_cursors (
+  contract_id text not null,
+  network text not null check (network in ('testnet', 'pubnet')),
+  cursor text not null,
+  last_ledger_sequence bigint,
+  updated_at timestamptz not null default now(),
+  primary key (contract_id, network)
+);
+
+-- Append-only event timeline. event_id is the stable RPC event identity used
+-- to make replays and overlapping pages idempotent; raw_event preserves the
+-- full opaque payload for unknown topics.
+create table if not exists stellar_contract_events (
+  event_id text not null,
+  contract_id text not null,
+  network text not null check (network in ('testnet', 'pubnet')),
+  ledger_sequence bigint not null,
+  ledger_closed_at timestamptz,
+  transaction_hash text,
+  operation_index bigint,
+  event_index bigint,
+  topic jsonb not null,
+  data jsonb not null,
+  decoded_type text,
+  decoded_payload jsonb,
+  raw_event jsonb not null,
+  ingested_at timestamptz not null default now(),
+  primary key (contract_id, network, event_id)
+);
+
+create index if not exists stellar_contract_events_contract_network_ledger_idx
+  on stellar_contract_events(contract_id, network, ledger_sequence, event_index);
+
+create index if not exists stellar_contract_events_network_idx
+  on stellar_contract_events(network, contract_id, ledger_sequence, event_index);
+
+-- Explicit gap records for cursors that fall outside the RPC retention window.
+create table if not exists stellar_event_gaps (
+  id text primary key,
+  contract_id text not null,
+  network text not null check (network in ('testnet', 'pubnet')),
+  from_cursor text,
+  to_cursor text,
+  from_ledger_sequence bigint,
+  to_ledger_sequence bigint,
+  reason text not null,
+  detected_at timestamptz not null default now()
+);
+
+create index if not exists stellar_event_gaps_contract_network_detected_idx
+  on stellar_event_gaps(contract_id, network, detected_at desc);
