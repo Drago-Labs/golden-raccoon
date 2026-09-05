@@ -1,20 +1,11 @@
 "use client";
 
-import { Networks } from "@creit.tech/stellar-wallets-kit/types";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { getDefaultStellarNetwork, getStellarNetwork, normalizeStellarNetworkId, type StellarNetworkId } from "@/lib/stellar/config";
 import {
-  createStellarWalletAdapter,
   type StellarWalletAdapter,
   type StellarWalletDescriptor,
 } from "@/lib/stellar/wallet-adapter";
-import {
-  getWalletCapabilities,
-  gateOnCapability,
-  type WalletCapabilities,
-} from "@/server/stellar/wallets/capabilities";
-import { blocksSigning, resolveNetworkMismatch, type NetworkMismatch } from "@/server/stellar/wallets/mismatch";
-import { describeInvalidation, detectSessionInvalidation } from "@/server/stellar/wallets/session";
 import {
   parseRestoredStellarSession,
   stellarAdapterKind,
@@ -22,6 +13,54 @@ import {
   type RestoredStellarSession,
   type StellarAdapterKind,
 } from "@/lib/wallet/session";
+
+type WalletCapabilities = {
+  sign: boolean;
+  openProfile: boolean;
+  switchNetwork: boolean;
+};
+
+type NetworkMismatch = {
+  status: "match" | "mismatch" | "unknown";
+  message: string | null;
+};
+
+const WALLET_CAPABILITIES: Record<string, WalletCapabilities> = {
+  freighter: { sign: true, openProfile: true, switchNetwork: true },
+  xbull: { sign: true, openProfile: true, switchNetwork: true },
+  albedo: { sign: true, openProfile: true, switchNetwork: true },
+  rabet: { sign: true, openProfile: true, switchNetwork: true },
+  lobstr: { sign: true, openProfile: true, switchNetwork: true },
+  wallet_connect: { sign: true, openProfile: false, switchNetwork: true },
+};
+
+function getWalletCapabilities(walletId: string): WalletCapabilities {
+  return WALLET_CAPABILITIES[walletId] ?? { sign: false, openProfile: false, switchNetwork: false };
+}
+
+function gateOnCapability(
+  walletId: string,
+  capability: keyof WalletCapabilities,
+): { allowed: boolean } {
+  return { allowed: Boolean(getWalletCapabilities(walletId)[capability]) };
+}
+
+function blocksSigning(networkStatus: NetworkMismatch | null): boolean {
+  return networkStatus?.status === "mismatch";
+}
+
+function resolveNetworkMismatch(
+  _walletId: string,
+  network: StellarNetworkId | null,
+  configuredNetwork: StellarNetworkId,
+): NetworkMismatch | null {
+  if (!network) return { status: "unknown", message: null };
+  if (network === configuredNetwork) return { status: "match", message: null };
+  return {
+    status: "mismatch",
+    message: `Your Stellar wallet is on ${network}. Switch it to ${configuredNetwork} before signing.`,
+  };
+}
 
 type StellarWalletState = {
   address?: string;
@@ -76,8 +115,15 @@ function getServerSessionSnapshot() {
   return null;
 }
 
+const STELLAR_PUBLIC_NETWORK_PASSPHRASE =
+  "Public Global Stellar Network ; September 2015" as const;
+const STELLAR_TESTNET_NETWORK_PASSPHRASE =
+  "Test SDF Network ; September 2015" as const;
+
 function kitNetwork(network: StellarNetworkId) {
-  return network === "stellar-pubnet" ? Networks.PUBLIC : Networks.TESTNET;
+  return network === "stellar-pubnet"
+    ? STELLAR_PUBLIC_NETWORK_PASSPHRASE
+    : STELLAR_TESTNET_NETWORK_PASSPHRASE;
 }
 
 function networkFromPassphrase(passphrase: string): StellarNetworkId | null {
@@ -96,13 +142,12 @@ function errorMessage(cause: unknown, fallback: string) {
 
 export function StellarWalletProvider({
   children,
-  adapter: adapterOverride,
+  adapter,
 }: {
   children: ReactNode;
-  adapter?: StellarWalletAdapter;
+  adapter: StellarWalletAdapter;
 }) {
   const configuredNetwork = getDefaultStellarNetwork().id;
-  const [adapter] = useState(() => adapterOverride ?? createStellarWalletAdapter());
 
   const [address, setAddress] = useState<string>();
   const [network, setNetwork] = useState<StellarNetworkId>();
@@ -143,13 +188,12 @@ export function StellarWalletProvider({
         // The user switched account or disconnected inside the wallet. The
         // session claims an address that is no longer the connected signer, so
         // it is discarded rather than silently repointed at the new one.
-        const reason = detectSessionInvalidation(
-          { walletId: walletIdRef.current ?? "", address: current, network: null },
-          { address: observed },
-        );
-
-        if (reason) {
-          setSessionNotice(describeInvalidation(reason, walletIdRef.current ?? ""));
+        if (observed === null || observed !== current) {
+          setSessionNotice(
+            observed === null
+              ? "Your Stellar wallet disconnected. Reconnect to continue."
+              : "Your Stellar wallet switched accounts. Reconnect to continue.",
+          );
           setNetwork(undefined);
           setWallet(undefined);
           window.localStorage.removeItem(STELLAR_DISPLAY_SESSION_KEY);

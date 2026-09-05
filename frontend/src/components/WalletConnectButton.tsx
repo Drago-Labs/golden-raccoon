@@ -1,12 +1,25 @@
 "use client";
 
-import { ConnectButton } from "@rainbow-me/rainbowkit";
+import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, Laptop, Orbit, RefreshCw, Smartphone, Wallet, X } from "lucide-react";
 import { useWalletSession } from "@/hooks/useWalletSession";
 import { shortenWalletAddress } from "@/lib/wallet/session";
-import { NetworkMismatchNotice } from "@/components/NetworkMismatchNotice";
-import { WalletBadge } from "@/components/WalletBadge";
+
+const ConnectButtonCustom = dynamic(
+  () => import("@rainbow-me/rainbowkit").then((m) => m.ConnectButton.Custom),
+  { ssr: false, loading: () => null }
+);
+
+const NetworkMismatchNotice = dynamic(
+  () => import("@/components/NetworkMismatchNotice").then((m) => m.NetworkMismatchNotice),
+  { ssr: false, loading: () => null }
+);
+
+const WalletBadge = dynamic(
+  () => import("@/components/WalletBadge").then((m) => m.WalletBadge),
+  { ssr: false, loading: () => null }
+);
 
 export function WalletConnectButton() {
   const session = useWalletSession();
@@ -45,25 +58,26 @@ export function WalletConnectButton() {
 
   return (
     <div className="relative">
-      <ConnectButton.Custom>
-        {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => (
-          <>
-            <button
-              type="button"
-              aria-haspopup="dialog"
-              aria-expanded={isOpen}
-              onClick={() => setIsOpen((value) => !value)}
-              className={`inline-flex h-11 items-center justify-center gap-2 rounded-full px-4 text-sm font-semibold transition sm:px-5 ${
-                hasSession
-                  ? "border border-white/10 bg-white/8 text-white hover:bg-white/12"
-                  : "bg-[#d9a441] text-black hover:bg-[#f2c86d]"
-              }`}
-            >
-              {session.family === "stellar" ? <Orbit className="h-4 w-4 text-[#a99aff]" /> : <Wallet className="h-4 w-4" />}
-              <span className="max-w-28 truncate">{buttonLabel}</span>
-            </button>
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen((value) => !value)}
+        onMouseEnter={() => void import("@rainbow-me/rainbowkit")}
+        onFocus={() => void import("@rainbow-me/rainbowkit")}
+        className={`inline-flex h-11 items-center justify-center gap-2 rounded-full px-4 text-sm font-semibold transition sm:px-5 ${
+          hasSession
+            ? "border border-white/10 bg-white/8 text-white hover:bg-white/12"
+            : "bg-[#d9a441] text-black hover:bg-[#f2c86d]"
+        }`}
+      >
+        {session.family === "stellar" ? <Orbit className="h-4 w-4 text-[#a99aff]" /> : <Wallet className="h-4 w-4" />}
+        <span className="max-w-28 truncate">{buttonLabel}</span>
+      </button>
 
-            {isOpen ? (
+      {isOpen ? (
+        <ConnectButtonCustom>
+        {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => (
               <div
                 role="dialog"
                 aria-modal="false"
@@ -196,10 +210,9 @@ export function WalletConnectButton() {
                   </div>
                 )}
               </div>
-            ) : null}
-          </>
         )}
-      </ConnectButton.Custom>
+        </ConnectButtonCustom>
+      ) : null}
     </div>
   );
 }
