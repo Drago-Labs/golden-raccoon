@@ -1,32 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withCacheHeaders } from "@/server/cache/strategy";
 import { checkRateLimit } from "@/server/security/rateLimit";
-import { listApprovalRecordsPaginated } from "@/server/storage";
 import { parseQuery } from "@/server/api/query/validate";
 import { ApiError, jsonError } from "@/server/api/errors";
+import { listDiscoveryAlertsPaginated } from "@/server/storage";
 import { z } from "zod";
 
 const filterSchema = z.object({
-  walletAddress: z.string().optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().optional(),
   sortBy: z.string().optional(),
   sortDirection: z.enum(["asc", "desc"]).optional(),
+  walletAddress: z.string().optional(),
 });
 
-export function GET(request: NextRequest) {
-  const rateLimited = checkRateLimit(request, { namespace: "history:approvals", limit: 80, windowMs: 60_000 });
+export async function GET(request: NextRequest) {
+  const rateLimited = checkRateLimit(request, { namespace: "discovery:list", limit: 60, windowMs: 60_000 });
   if (rateLimited) return rateLimited;
   try {
     const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
-    const q = parseQuery(raw, "approvals", filterSchema);
-    const result = listApprovalRecordsPaginated(q.walletAddress ?? q.filters.walletAddress, {
+    const q = parseQuery(raw, "discovery", filterSchema);
+    const result = listDiscoveryAlertsPaginated(q.walletAddress ?? q.filters.walletAddress, {
       cursor: q.cursor,
       limit: q.limit,
       sortBy: q.sortBy,
       sortDirection: q.sortDirection,
     });
-    return withCacheHeaders(NextResponse.json({ items: result.items, nextCursor: result.nextCursor, hasMore: result.hasMore, total: result.total }), "history");
+    return NextResponse.json({ items: result.items, nextCursor: result.nextCursor, hasMore: result.hasMore, total: result.total });
   } catch (e: unknown) {
     if (e instanceof ApiError && e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
     throw e;
