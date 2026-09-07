@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { parseQuery } from "@/server/api/query/validate";
-import { jsonError } from "@/server/api/errors";
-import { paginateArray } from "@/server/api/query/envelope";
+import { ApiError, jsonError } from "@/server/api/errors";
 import { listDiscoveryAlertsPaginated } from "@/server/storage";
 import { z } from "zod";
 
@@ -20,15 +19,15 @@ export async function GET(request: NextRequest) {
   try {
     const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
     const q = parseQuery(raw, "discovery", filterSchema);
-    const result = listDiscoveryAlertsPaginated(q.walletAddress ?? (q.filters as any).walletAddress, {
+    const result = listDiscoveryAlertsPaginated(q.walletAddress ?? q.filters.walletAddress, {
       cursor: q.cursor,
       limit: q.limit,
       sortBy: q.sortBy,
       sortDirection: q.sortDirection,
     });
     return NextResponse.json({ items: result.items, nextCursor: result.nextCursor, hasMore: result.hasMore, total: result.total });
-  } catch (e: any) {
-    if (e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
+  } catch (e: unknown) {
+    if (e instanceof ApiError && e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
     throw e;
   }
 }

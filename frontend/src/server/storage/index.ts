@@ -869,20 +869,14 @@ export function listTransactionRecordsPaginated(
   const sortDirection = options.sortDirection ?? "desc";
   const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, options.limit ?? DEFAULT_PAGE_SIZE));
   // Apply secondary sort for stability: sort by sortBy then hash
-  const sorted = [...all].sort((a: any, b: any) => {
-    const av = a[sortBy];
-    const bv = b[sortBy];
-    if (av === bv) return String(a.hash).localeCompare(String(b.hash));
-    if (sortDirection === "asc") return av > bv ? 1 : -1;
-    return av < bv ? 1 : -1;
-  });
+  const sorted = sortByKey(all, sortBy, sortDirection, "hash");
   const filtered = options.network
     ? sorted.filter((r) => (r.network ?? "").toLowerCase() === options.network!.toLowerCase())
     : sorted;
   const chainFiltered = options.chainFamily
     ? filtered.filter((r) => (r.chainFamily ?? "evm") === options.chainFamily)
     : filtered;
-  const { items, nextCursor, hasMore } = paginateArray(chainFiltered as any, {
+  const { items, nextCursor, hasMore } = paginateArray(chainFiltered, {
     cursor: options.cursor,
     limit,
     walletAddress,
@@ -1681,8 +1675,8 @@ export {
 } from "@/server/privacy/retention/purge";
 
 // ─── Shared paginated helpers ───────────────────────────────────────────
-function sortByKey<T extends Record<string, any>>(items: T[], sortBy: string, direction: "asc" | "desc", idKey = "id"): T[] {
-  return [...items].sort((a: any, b: any) => {
+function sortByKey<T extends Record<string, unknown>>(items: T[], sortBy: string, direction: "asc" | "desc", idKey = "id"): T[] {
+  return [...items].sort((a: T, b: T) => {
     const av = a[sortBy];
     const bv = b[sortBy];
     if (av === bv) return String(a[idKey]).localeCompare(String(b[idKey]));
@@ -1699,8 +1693,8 @@ export function listAgentRunRecordsPaginated(
   const sortBy = opts.sortBy ?? "createdAt";
   const sortDirection = opts.sortDirection ?? "desc";
   const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, opts.limit ?? DEFAULT_PAGE_SIZE));
-  const sorted = sortByKey(all as any, sortBy, sortDirection);
-  const { items, nextCursor, hasMore } = paginateArray(sorted as any, { cursor: opts.cursor, limit, walletAddress, sortBy, sortDirection });
+  const sorted = sortByKey(all, sortBy, sortDirection);
+  const { items, nextCursor, hasMore } = paginateArray(sorted, { cursor: opts.cursor, limit, walletAddress, sortBy, sortDirection });
   return { items: items as AgentRunRecord[], nextCursor, hasMore, total: all.length };
 }
 
@@ -1712,8 +1706,8 @@ export function listRecommendationRecordsPaginated(
   const sortBy = opts.sortBy ?? "createdAt";
   const sortDirection = opts.sortDirection ?? "desc";
   const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, opts.limit ?? DEFAULT_PAGE_SIZE));
-  const sorted = sortByKey(all as any, sortBy, sortDirection);
-  const { items, nextCursor, hasMore } = paginateArray(sorted as any, { cursor: opts.cursor, limit, walletAddress, sortBy, sortDirection });
+  const sorted = sortByKey(all, sortBy, sortDirection);
+  const { items, nextCursor, hasMore } = paginateArray(sorted, { cursor: opts.cursor, limit, walletAddress, sortBy, sortDirection });
   return { items: items as RecommendationRecord[], nextCursor, hasMore, total: all.length };
 }
 
@@ -1725,8 +1719,8 @@ export function listApprovalRecordsPaginated(
   const sortBy = opts.sortBy ?? "createdAt";
   const sortDirection = opts.sortDirection ?? "desc";
   const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, opts.limit ?? DEFAULT_PAGE_SIZE));
-  const sorted = sortByKey(all as any, sortBy, sortDirection);
-  const { items, nextCursor, hasMore } = paginateArray(sorted as any, { cursor: opts.cursor, limit, walletAddress, sortBy, sortDirection });
+  const sorted = sortByKey(all, sortBy, sortDirection);
+  const { items, nextCursor, hasMore } = paginateArray(sorted, { cursor: opts.cursor, limit, walletAddress, sortBy, sortDirection });
   return { items: items as UserApprovalRecord[], nextCursor, hasMore, total: all.length };
 }
 
@@ -1740,8 +1734,8 @@ export function listWatchlistEntriesPaginated(
   const sortBy = opts.sortBy ?? "createdAt";
   const sortDirection = opts.sortDirection ?? "desc";
   const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, opts.limit ?? DEFAULT_PAGE_SIZE));
-  const sorted = sortByKey(all as any, sortBy, sortDirection);
-  const { items, nextCursor, hasMore } = paginateArray(sorted as any, { cursor: opts.cursor, limit, walletAddress, network: opts.network, sortBy, sortDirection });
+  const sorted = sortByKey(all, sortBy, sortDirection);
+  const { items, nextCursor, hasMore } = paginateArray(sorted, { cursor: opts.cursor, limit, walletAddress, network: opts.network, sortBy, sortDirection });
   return { items: items as WatchlistEntry[], nextCursor, hasMore, total: all.length };
 }
 
@@ -1750,12 +1744,12 @@ export function listAlertsPaginated(
   opts: { cursor?: string; limit?: number; sortBy?: string; sortDirection?: "asc" | "desc"; status?: string } = {},
 ) {
   // Use listAlerts which already filters by wallet and status
-  const all = listAlerts(walletAddress, opts.status as any);
+  const all = listAlerts(walletAddress, opts.status as Alert["status"] | undefined);
   const sortBy = opts.sortBy ?? "triggeredAt";
   const sortDirection = opts.sortDirection ?? "desc";
   const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, opts.limit ?? DEFAULT_PAGE_SIZE));
-  const sorted = sortByKey(all as any, sortBy, sortDirection);
-  const { items, nextCursor, hasMore } = paginateArray(sorted as any, { cursor: opts.cursor, limit, walletAddress, sortBy, sortDirection });
+  const sorted = sortByKey(all, sortBy, sortDirection);
+  const { items, nextCursor, hasMore } = paginateArray(sorted, { cursor: opts.cursor, limit, walletAddress, sortBy, sortDirection });
   return { items: items as Alert[], nextCursor, hasMore, total: all.length };
 }
 
@@ -1767,8 +1761,8 @@ export function listDiscoveryAlertsPaginated(
   const sortBy = opts.sortBy ?? "createdAt";
   const sortDirection = opts.sortDirection ?? "desc";
   const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, opts.limit ?? DEFAULT_PAGE_SIZE));
-  const sorted = sortByKey(all as any, sortBy, sortDirection);
-  const { items, nextCursor, hasMore } = paginateArray(sorted as any, { cursor: opts.cursor, limit, walletAddress, sortBy, sortDirection });
+  const sorted = sortByKey(all, sortBy, sortDirection);
+  const { items, nextCursor, hasMore } = paginateArray(sorted, { cursor: opts.cursor, limit, walletAddress, sortBy, sortDirection });
   return { items: items as DiscoveryAlert[], nextCursor, hasMore, total: all.length };
 }
 
@@ -1780,8 +1774,8 @@ export function listWatchlistScanRunsPaginated(
   const sortBy = opts.sortBy ?? "scannedAt";
   const sortDirection = opts.sortDirection ?? "desc";
   const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, opts.limit ?? DEFAULT_PAGE_SIZE));
-  const sorted = sortByKey(all as any, sortBy, sortDirection);
-  const { items, nextCursor, hasMore } = paginateArray(sorted as any, { cursor: opts.cursor, limit, sortBy, sortDirection });
+  const sorted = sortByKey(all, sortBy, sortDirection);
+  const { items, nextCursor, hasMore } = paginateArray(sorted, { cursor: opts.cursor, limit, sortBy, sortDirection });
   return { items: items as WatchlistScanRun[], nextCursor, hasMore, total: all.length };
 }
 
@@ -1794,7 +1788,7 @@ export function listAlertDeliveriesPaginated(
   const sortBy = opts.sortBy ?? "createdAt";
   const sortDirection = opts.sortDirection ?? "desc";
   const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, opts.limit ?? DEFAULT_PAGE_SIZE));
-  const sorted = sortByKey(all as any, sortBy, sortDirection);
-  const { items, nextCursor, hasMore } = paginateArray(sorted as any, { cursor: opts.cursor, limit, walletAddress, sortBy, sortDirection });
+  const sorted = sortByKey(all, sortBy, sortDirection);
+  const { items, nextCursor, hasMore } = paginateArray(sorted, { cursor: opts.cursor, limit, walletAddress, sortBy, sortDirection });
   return { items: items as AlertDelivery[], nextCursor, hasMore, total: all.length };
 }

@@ -373,18 +373,18 @@ export class MemoryStorageAdapter implements IStorageAdapter {
   }
 
   // ─── Paginated (Issue #143) — identical via paginateArray ──────────
-  private paginate<T extends Record<string, any>>(items: T[], opts: PaginationOpts, idKey = "id"): PaginatedResult<T> {
+  private paginate<T extends Record<string, unknown>>(items: T[], opts: PaginationOpts, idKey = "id"): PaginatedResult<T> {
     const sortBy = opts.sortBy ?? "createdAt";
     const sortDirection = opts.sortDirection ?? "desc";
     const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, opts.limit ?? DEFAULT_PAGE_SIZE));
-    const sorted = [...items].sort((a: any, b: any) => {
+    const sorted = [...items].sort((a: T, b: T) => {
       const av = a[sortBy];
       const bv = b[sortBy];
       if (av === bv) return String(a[idKey]).localeCompare(String(b[idKey]));
       if (sortDirection === "asc") return av > bv ? 1 : -1;
       return av < bv ? 1 : -1;
     });
-    const { items: page, nextCursor, hasMore } = paginateArray(sorted as any, {
+    const { items: page, nextCursor, hasMore } = paginateArray(sorted, {
       cursor: opts.cursor,
       limit,
       walletAddress: opts.walletAddress,
@@ -394,49 +394,49 @@ export class MemoryStorageAdapter implements IStorageAdapter {
       sortDirection,
       idKey,
     });
-    return { items: page as T[], nextCursor, hasMore, total: items.length };
+    return { items: page, nextCursor, hasMore, total: items.length };
   }
 
   async listAgentRunRecordsPaginated(opts: PaginationOpts & { walletAddress?: string }): Promise<PaginatedResult<AgentRunRecord>> {
     const nw = opts.walletAddress?.toLowerCase();
     const filtered = getAgentRuns().filter((r) => !nw || r.walletAddress.toLowerCase() === nw);
-    return this.paginate(filtered as any, opts);
+    return this.paginate(filtered, opts);
   }
 
   async listRecommendationRecordsPaginated(opts: PaginationOpts & { walletAddress?: string }): Promise<PaginatedResult<RecommendationRecord>> {
     const nw = opts.walletAddress?.toLowerCase();
     const filtered = getRecommendations().filter((r) => !nw || r.walletAddress.toLowerCase() === nw);
-    return this.paginate(filtered as any, opts);
+    return this.paginate(filtered, opts);
   }
 
   async listTransactionRecordsPaginated(opts: PaginationOpts & { walletAddress?: string }): Promise<PaginatedResult<TransactionRecord>> {
     const nw = opts.walletAddress?.toLowerCase();
-    let filtered = getTransactions().filter((r) => !nw || (r.walletAddress ?? "").toLowerCase() === nw);
-    if (opts.network) filtered = filtered.filter((r) => (r.network ?? "").toLowerCase() === opts.network!.toLowerCase());
-    if (opts.chainFamily) filtered = filtered.filter((r) => (r.chainFamily ?? "evm") === opts.chainFamily);
-    return this.paginate(filtered as any, { ...opts, sortBy: opts.sortBy ?? "createdAt" }, "hash");
+    const filtered = getTransactions().filter((r) => !nw || (r.walletAddress ?? "").toLowerCase() === nw);
+    const networkFiltered = opts.network ? filtered.filter((r) => (r.network ?? "").toLowerCase() === opts.network!.toLowerCase()) : filtered;
+    const chainFiltered = opts.chainFamily ? networkFiltered.filter((r) => (r.chainFamily ?? "evm") === opts.chainFamily) : networkFiltered;
+    return this.paginate(chainFiltered, { ...opts, sortBy: opts.sortBy ?? "createdAt" }, "hash");
   }
 
   async listApprovalRecordsPaginated(opts: PaginationOpts & { walletAddress?: string }): Promise<PaginatedResult<UserApprovalRecord>> {
     const nw = opts.walletAddress?.toLowerCase();
     const filtered = getApprovals().filter((r) => !nw || r.walletAddress.toLowerCase() === nw);
-    return this.paginate(filtered as any, opts);
+    return this.paginate(filtered, opts);
   }
 
   async listAlertDeliveriesPaginated(opts: PaginationOpts & { alertId?: string; walletAddress?: string }): Promise<PaginatedResult<AlertDelivery>> {
     const nw = opts.walletAddress?.toLowerCase();
-    let filtered = getAlertDeliveries().filter(
+    const filtered = getAlertDeliveries().filter(
       (d) => (!opts.alertId || d.alertId === opts.alertId) && (!nw || d.walletAddress.toLowerCase() === nw),
     );
-    return this.paginate(filtered as any, opts);
+    return this.paginate(filtered, opts);
   }
 
   async listWatchlistEntriesPaginated(opts: PaginationOpts & { walletAddress?: string; chain?: string; network?: string }): Promise<PaginatedResult<WatchlistEntry>> {
-    const store = (globalThis as any).__goldenRaccoonWatchlistEntries as WatchlistEntry[] | undefined ?? [];
+    const store = memoryStore.__goldenRaccoonWatchlistEntries ?? [];
     let filtered = store.filter((e) => !opts.walletAddress || e.walletAddress.toLowerCase() === opts.walletAddress.toLowerCase());
-    if ((opts as any).chain) filtered = filtered.filter((e) => (e.chain ?? "").toLowerCase() === (opts as any).chain.toLowerCase());
-    if (opts.network) filtered = filtered.filter((e) => (e.network ?? "").toLowerCase() === opts.network.toLowerCase());
-    return this.paginate(filtered as any, opts);
+    if (opts.chain) filtered = filtered.filter((e) => (e.chain ?? "").toLowerCase() === opts.chain!.toLowerCase());
+    if (opts.network) filtered = filtered.filter((e) => (e.network ?? "").toLowerCase() === opts.network!.toLowerCase());
+    return this.paginate(filtered, opts);
   }
 
   

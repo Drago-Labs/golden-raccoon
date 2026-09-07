@@ -3,7 +3,7 @@ import { z } from "zod";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { acknowledgeDiscoveryAlert, listDiscoveryAlertsPaginated } from "@/server/storage";
 import { parseQuery } from "@/server/api/query/validate";
-import { jsonError } from "@/server/api/errors";
+import { ApiError, jsonError } from "@/server/api/errors";
 
 const acknowledgeSchema = z.object({
   action: z.literal("acknowledge"),
@@ -25,12 +25,12 @@ export async function GET(request: Request) {
     const raw = Object.fromEntries(url.searchParams.entries());
     // walletAddress is required for this resource; include in raw
     const q = parseQuery(raw, "alerts", filterSchema);
-    const wallet = q.walletAddress ?? (q.filters as any).walletAddress;
-    if (!wallet) return jsonError({ code: "validation_error", message: "walletAddress required", status: 400 } as any);
+    const wallet = q.walletAddress ?? q.filters.walletAddress;
+    if (!wallet) return jsonError({ code: "validation_error", message: "walletAddress required", status: 400 });
     const result = listDiscoveryAlertsPaginated(wallet, { cursor: q.cursor, limit: q.limit, sortBy: q.sortBy, sortDirection: q.sortDirection });
     return NextResponse.json({ items: result.items, nextCursor: result.nextCursor, hasMore: result.hasMore, total: result.total });
-  } catch (e: any) {
-    if (e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
+  } catch (e: unknown) {
+    if (e instanceof ApiError && e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
     throw e;
   }
 }

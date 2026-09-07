@@ -4,7 +4,7 @@
  * Stable under insertion via keyset (id + sortValue) rather than offset.
  */
 
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 
 export interface CursorPayload {
   v: 1;
@@ -43,7 +43,10 @@ export function decodeCursor(cursor: string): CursorPayload {
   if (parts.length !== 2) throw new Error("Invalid cursor format");
   const [b64, sig] = parts;
   const expected = sign(b64);
-  if (sig !== expected) throw new Error("Invalid cursor signature");
+  // Constant-time comparison to avoid leaking signature validity via timing.
+  const sigBuf = Buffer.from(sig, "utf8");
+  const expectedBuf = Buffer.from(expected, "utf8");
+  if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) throw new Error("Invalid cursor signature");
   const json = b64urlDecode(b64);
   const payload = JSON.parse(json) as CursorPayload;
   if (payload.v !== 1 || !payload.lastId || !payload.sortBy) throw new Error("Invalid cursor payload");

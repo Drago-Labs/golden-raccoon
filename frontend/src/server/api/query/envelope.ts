@@ -14,12 +14,33 @@ export function createEnvelope<T>(items: T[], nextCursor: string | null, hasMore
 }
 
 /**
+ * Read a dynamic sort/filter field from a record without `any`.
+ */
+export function readRecordValue(item: object, key: string): unknown {
+  return (item as unknown as Record<string, unknown>)[key];
+}
+
+/**
+ * Relational compare for keyset sort values (ISO date strings, numbers).
+ * Mirrors JS `>`/`<` semantics for homogeneous fields while staying
+ * type-safe (no `any`). Returns -1, 0, or 1.
+ */
+export function compareSortValues(a: unknown, b: unknown): number {
+  if (a === b) return 0;
+  if (typeof a === "number" && typeof b === "number") return a < b ? -1 : 1;
+  const sa = String(a);
+  const sb = String(b);
+  if (sa === sb) return 0;
+  return sa < sb ? -1 : 1;
+}
+
+/**
  * Helper to paginate an already sorted array using keyset cursor.
  * Ensures insertion mid-page does not skip/duplicate via id+sortValue keyset.
  */
 import { encodeCursor, decodeCursor, validateCursorBoundary, type CursorPayload } from "./cursor";
 
-export function paginateArray<T extends Record<string, any>>(
+export function paginateArray<T extends object>(
   sorted: T[],
   opts: {
     cursor?: string;
@@ -43,7 +64,7 @@ export function paginateArray<T extends Record<string, any>>(
     }
     // Find position after lastId+lastSortValue using keyset logic
     // For stability, we find index of lastId and start after it, but also handle insertion via sortValue comparison
-    const lastIdx = sorted.findIndex((item) => String(item[idKey]) === payload.lastId);
+    const lastIdx = sorted.findIndex((item) => String(readRecordValue(item, idKey)) === payload.lastId);
     if (lastIdx >= 0) {
       // Verify sortValue matches to detect tampering; if mismatched, still start after lastId for stability
       startIndex = lastIdx + 1;
@@ -53,9 +74,9 @@ export function paginateArray<T extends Record<string, any>>(
       const targetVal = payload.lastSortValue;
       // Find first item that sorts after the cursor value in the requested direction
       startIndex = sorted.findIndex((item) => {
-        const val = item[sortBy];
-        if (sortDirection === "desc") return val < targetVal || (val === targetVal && String(item[idKey]) > payload.lastId);
-        return val > targetVal || (val === targetVal && String(item[idKey]) > payload.lastId);
+        const cmp = compareSortValues(readRecordValue(item, sortBy), targetVal);
+        if (cmp !== 0) return sortDirection === "desc" ? cmp < 0 : cmp > 0;
+        return String(readRecordValue(item, idKey)) > payload.lastId;
       });
       if (startIndex === -1) startIndex = sorted.length;
     }
@@ -73,8 +94,8 @@ export function paginateArray<T extends Record<string, any>>(
       chainFamily: opts.chainFamily,
       sortBy,
       sortDirection,
-      lastId: String(last[idKey]),
-      lastSortValue: last[sortBy],
+      lastId: String(readRecordValue(last, idKey)),
+      lastSortValue: readRecordValue(last, sortBy) as string | number,
     };
     nextCursor = encodeCursor(payload);
   }

@@ -6,7 +6,7 @@ import { checkRateLimit } from "@/server/security/rateLimit";
 import { createAgentRunRecord, listAgentRunRecordsPaginated } from "@/server/storage";
 import { scheduleIngestion } from "@/server/observability/alertIngestion";
 import { parseQuery } from "@/server/api/query/validate";
-import { jsonError } from "@/server/api/errors";
+import { ApiError, jsonError } from "@/server/api/errors";
 
 const targetTokenSchema = z.object({
   symbol: z.string().optional(),
@@ -47,8 +47,8 @@ export function GET(request: NextRequest) {
       sortDirection: q.sortDirection,
     });
     return withCacheHeaders(NextResponse.json({ items: res.items, nextCursor: res.nextCursor, hasMore: res.hasMore, total: res.total }), "history");
-  } catch (e: any) {
-    if (e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
+  } catch (e: unknown) {
+    if (e instanceof ApiError && e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
     throw e;
   }
 }

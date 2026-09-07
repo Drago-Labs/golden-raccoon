@@ -3,7 +3,7 @@ import { withCacheHeaders } from "@/server/cache/strategy";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { listTransactionObservations, listTransactionRecordsPaginated } from "@/server/storage";
 import { parseQuery } from "@/server/api/query/validate";
-import { jsonError } from "@/server/api/errors";
+import { ApiError, jsonError } from "@/server/api/errors";
 import { z } from "zod";
 
 const filterSchemaTx = z.object({
@@ -22,13 +22,13 @@ export function GET(request: NextRequest) {
   try {
     const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
     const q = parseQuery(raw, "transactions", filterSchemaTx);
-    const result = listTransactionRecordsPaginated(q.walletAddress ?? (q.filters as any).walletAddress, {
+    const result = listTransactionRecordsPaginated(q.walletAddress ?? q.filters.walletAddress, {
       cursor: q.cursor,
       limit: q.limit,
       sortBy: q.sortBy,
       sortDirection: q.sortDirection,
-      network: q.network ?? (q.filters as any).network,
-      chainFamily: q.chainFamily ?? (q.filters as any).chainFamily,
+      network: q.network ?? q.filters.network,
+      chainFamily: q.chainFamily ?? q.filters.chainFamily,
     });
     const items = result.items.map((record) => ({
       ...record,
@@ -40,8 +40,8 @@ export function GET(request: NextRequest) {
       },
     }));
     return withCacheHeaders(NextResponse.json({ items, nextCursor: result.nextCursor, hasMore: result.hasMore, total: result.total }), "transactions");
-  } catch (e: any) {
-    if (e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
+  } catch (e: unknown) {
+    if (e instanceof ApiError && e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
     throw e;
   }
 }

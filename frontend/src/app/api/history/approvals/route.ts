@@ -3,7 +3,7 @@ import { withCacheHeaders } from "@/server/cache/strategy";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { listApprovalRecordsPaginated } from "@/server/storage";
 import { parseQuery } from "@/server/api/query/validate";
-import { jsonError } from "@/server/api/errors";
+import { ApiError, jsonError } from "@/server/api/errors";
 import { z } from "zod";
 
 const filterSchema = z.object({
@@ -27,8 +27,8 @@ export function GET(request: NextRequest) {
       sortDirection: q.sortDirection,
     });
     return withCacheHeaders(NextResponse.json({ items: result.items, nextCursor: result.nextCursor, hasMore: result.hasMore, total: result.total }), "history");
-  } catch (e) {
-    if (e instanceof Error && (e as any).code === "validation_error") return jsonError(e as any, { legacy: { error: (e as any).message } });
+  } catch (e: unknown) {
+    if (e instanceof ApiError && e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
     throw e;
   }
 }

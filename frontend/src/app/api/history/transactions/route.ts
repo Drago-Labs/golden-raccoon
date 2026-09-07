@@ -5,7 +5,7 @@ import { listTransactionLifecycleEvents, listTransactionObservations, listTransa
 import { attachExplorerUrl } from "@/server/transactions/explorer";
 import { getChainFamily } from "@/lib/chainIdentity";
 import { parseQuery } from "@/server/api/query/validate";
-import { jsonError } from "@/server/api/errors";
+import { ApiError, jsonError } from "@/server/api/errors";
 import { z } from "zod";
 
 const filterSchemaHT = z.object({
@@ -24,13 +24,13 @@ export async function GET(request: NextRequest) {
   try {
     const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
     const q = parseQuery(raw, "transactions", filterSchemaHT);
-    const result = listTransactionRecordsPaginated(q.walletAddress ?? (q.filters as any).walletAddress, {
+    const result = listTransactionRecordsPaginated(q.walletAddress ?? q.filters.walletAddress, {
       cursor: q.cursor,
       limit: q.limit,
       sortBy: q.sortBy,
       sortDirection: q.sortDirection,
-      network: q.network ?? (q.filters as any).network,
-      chainFamily: q.chainFamily ?? (q.filters as any).chainFamily,
+      network: q.network ?? q.filters.network,
+      chainFamily: q.chainFamily ?? q.filters.chainFamily,
     });
     const items = result.items.map((record) => ({
       ...record,
@@ -44,8 +44,8 @@ export async function GET(request: NextRequest) {
       explorerUrl: record.explorerUrl ?? attachExplorerUrl({ hash: record.hash, network: record.network, chainFamily: getChainFamily(record.network) }),
     }));
     return withCacheHeaders(NextResponse.json({ items, nextCursor: result.nextCursor, hasMore: result.hasMore, total: result.total }), "transactions");
-  } catch (e: any) {
-    if (e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
+  } catch (e: unknown) {
+    if (e instanceof ApiError && e.code === "validation_error") return jsonError(e, { legacy: { error: e.message } });
     throw e;
   }
 }
