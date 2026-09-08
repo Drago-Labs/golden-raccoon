@@ -8,9 +8,9 @@ import { checkRateLimit } from "@/server/security/rateLimit";
 import { resolveWalletSession } from "@/server/security/walletSession";
 import { submitTransaction } from "@/server/transactions/lifecycleManager";
 import { evaluateCapability } from "@/server/security/authz";
+import { withRouteSpan } from "@/server/observability/tracing/spans";
 
 export const AUTHZ_CAPABILITY = "execution:submit" as const;
-
 const bodySchema = z.object({
   chainFamily: z.enum(["evm", "stellar"]),
   network: z.string().min(1).max(64),
@@ -38,6 +38,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  return withRouteSpan("execute.submit", { "http.method": "POST" }, async () => {
   const rateLimited = checkRateLimit(request, { namespace: "execute:submit", limit: 30, windowMs: 60_000 });
   if (rateLimited) return rateLimited;
 
@@ -118,4 +119,5 @@ export async function POST(request: Request) {
       : 502;
     return jsonError({ code: code as any, message: error instanceof Error ? error.message : "Could not submit transaction.", status, legacy: (error && typeof error === "object" && "detail" in error ? { extra: (error as { detail?: unknown }).detail } : {}) });
   }
+  });
 }

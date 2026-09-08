@@ -5,6 +5,7 @@ import { runOnchainAgent } from "@/server/agents/onchain";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { chainIdSchema, validateContractAddressForChain } from "@/server/security/inputValidation";
 import { commonErrorCodes, jsonError } from "@/server/api/errors";
+import { withRouteSpan } from "@/server/observability/tracing/spans";
 
 const bodySchema = z.object({
   chain: chainIdSchema,
@@ -20,6 +21,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  return withRouteSpan("agent.onchain", { "http.method": "POST" }, async () => {
   const rateLimited = checkRateLimit(request, { namespace: "agent:onchain", limit: 20, windowMs: 60_000 });
 
   if (rateLimited) {
@@ -39,4 +41,5 @@ export async function POST(request: Request) {
   }
 
   return withCacheHeaders(NextResponse.json(await runOnchainAgent(parsed.data)), "onchain");
+  });
 }

@@ -28,9 +28,9 @@
     "test:watchlist": "tsx --tsconfig tsconfig.json scripts/watchlist-portability-check.ts",
     "test:portfolio-stress": "tsx --tsconfig tsconfig.json scripts/portfolio-stress-check.ts",
     "test:risk-snapshots": "tsx --tsconfig tsconfig.json scripts/risk-snapshot-check.ts",
-    "test": "vitest run src/server/observability/__tests__/slo.test.ts",
-    "test:reconciliation": "node --conditions=react-server --import txs scripts/transaction-reconciliation-check.ts",
-    "test:alert-delivery": "NODE_OPTIONS=--require ./scripts/stub-server-only.cjs' tsx --tsconfig tsconfig.json scripts/alert-delivery-check.ts",
+    "test": "vitest run src/server/observability/__tests__/slo.test.ts src/server/observability/__tests__/tracing-redact.test.ts",
+    "test:reconciliation": "node --conditions=react-server --import tsx scripts/transaction-reconciliation-check.ts",
+    "test:alert-delivery": "NODE_OPTIONS='--require ./scripts/stub-server-only.cjs' tsx --tsconfig tsconfig.json scripts/alert-delivery-check.ts",
     "backup:drill": "node ../scripts/backup/drill.mjs",
     "backup:verify": "node ../scripts/backup/verify.mjs",
     "logging-check": "tsx --tsconfig tsconfig.json scripts/logging-check.ts",
@@ -68,7 +68,13 @@
     "server-only": "^0.0.1",
     "viem": "^2.56.0",
     "wagmi": "^3.7.6",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.57.2",
+    "@opentelemetry/resources": "^1.30.1",
+    "@opentelemetry/sdk-trace-base": "^1.30.1",
+    "@opentelemetry/sdk-trace-node": "^1.30.1",
+    "@opentelemetry/semantic-conventions": "^1.28.0"
   },
   "optionalDependencies": {
     "@emnapi/core": "1.11.3",
