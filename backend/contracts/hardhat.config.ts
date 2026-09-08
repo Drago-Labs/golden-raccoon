@@ -13,6 +13,11 @@ const config: HardhatUserConfig = {
         bytecodeHash: "ipfs",
         useLiteralContent: true,
       },
+      outputSelection: {
+        "*": {
+          "*": ["storageLayout"],
+        },
+      },
     },
   },
   networks: {

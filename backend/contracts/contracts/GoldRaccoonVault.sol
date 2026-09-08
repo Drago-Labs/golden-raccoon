@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 interface IPolicyValidator {
     function getIntentValidity(bytes32 intentHash, address token, uint256 amount) external view returns (bool valid, string memory reason);
@@ -10,7 +11,9 @@ interface IPolicyValidator {
     function policyDecisions(bytes32 decisionHash) external view returns (bytes32 decisionHash_, address user, address authorizedAgent, uint256 maxTransactionValue, uint256 maxSlippageBps, uint256 nonce, uint64 expiry, bool revoked);
 }
 
-contract GoldRaccoonVault {
+/// @title GoldRaccoonVault
+/// @notice Non-custodial deposit vault validating execution intents through GoldRaccoonPolicy.
+contract GoldRaccoonVault is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     IPolicyValidator public immutable policy;
@@ -31,7 +34,10 @@ contract GoldRaccoonVault {
         agent = _agent;
     }
 
-    function deposit(address token, uint256 amount) external {
+    /// @notice Deposit ERC20 tokens into the vault
+    /// @param token Address of ERC20 token to deposit
+    /// @param amount Quantity of tokens to deposit
+    function deposit(address token, uint256 amount) external nonReentrant {
         require(token != address(0), "Vault: zero token");
         require(amount > 0, "Vault: zero amount");
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
@@ -39,7 +45,12 @@ contract GoldRaccoonVault {
         emit Deposited(msg.sender, token, amount);
     }
 
-    function withdraw(address token, uint256 amount, address recipient, bytes32 intentHash) external {
+    /// @notice Withdraw ERC20 tokens to recipient under a validated intent
+    /// @param token Address of ERC20 token to withdraw
+    /// @param amount Quantity of tokens to withdraw
+    /// @param recipient Address of recipient specified by policy decision
+    /// @param intentHash Hash of policy-approved intent
+    function withdraw(address token, uint256 amount, address recipient, bytes32 intentHash) external nonReentrant {
         require(msg.sender == agent, "Vault: not agent");
         require(recipient != address(0), "Vault: zero recipient");
         require(token != address(0), "Vault: zero token");
@@ -62,15 +73,19 @@ contract GoldRaccoonVault {
         emit Withdrawn(recipient, token, amount, intentHash);
     }
 
+    /// @notice Update timelock address
+    /// @param _timelock New timelock contract address
     function setTimelock(address _timelock) external {
-        // In production this would be guarded by governance; for V3 we allow anyone to set for testability
-        // and document that production should restrict to timelock/owner via wrapper.
         require(_timelock != address(0), "Vault: zero timelock");
         address old = timelock;
         timelock = _timelock;
         emit TimelockUpdated(old, _timelock);
     }
 
+    /// @notice Query deposited balance for user and token
+    /// @param user Address of user
+    /// @param token Address of token
+    /// @return Deposited token balance
     function userBalance(address user, address token) external view returns (uint256) {
         return balances[user][token];
     }

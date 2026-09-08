@@ -58,7 +58,7 @@ hash_creation_bytecode() {
     const meta = typeof art.metadata === "string" ? art.metadata : JSON.stringify(art.metadata || {});
     const creation = crypto.createHash("sha256").update(Buffer.from(hex, "hex")).digest("hex");
     const metadata = crypto.createHash("sha256").update(meta).digest("hex");
-    process.stdout.write(`${creation} ${metadata}`);
+    process.stdout.write(`${creation} ${metadata}\n`);
   ' "$artifact"
 }
 

@@ -1,0 +1,9 @@
+{
+  "GoldRaccoonVault.deposit": 86268,
+  "GoldRaccoonVault.withdraw": 96637,
+  "GoldRaccoonPolicy.applyPolicy": 207367,
+  "GoldRaccoonPolicy.createIntent": 232057,
+  "GoldRaccoonPolicy.executeIntent": 49173,
+  "GoldenRaccoonAudit.logDecision": 35258,
+  "GoldenRaccoonAudit.recordIntent": 58576
+}
