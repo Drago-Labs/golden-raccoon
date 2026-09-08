@@ -1,21 +1,23 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { AlertTriangle, ArrowRight, BrainCircuit, Check, ChevronDown, CircleHelp, Loader2, Search, Wallet, X } from "lucide-react";
 import type { AgentResult, PortfolioSnapshot, TokenHolding, TokenScanResult } from "@/server/types";
-import { AgentResultPanel } from "@/components/AgentResultPanel";
 import { NoDataState } from "@/components/NoDataState";
-import { RiskScoreCard } from "@/components/RiskScoreCard";
-import { WalletPortfolioCard } from "@/components/WalletPortfolioCard";
 import { WalletConnectButton } from "@/components/WalletConnectButton";
 import { getScanNetwork, normalizeScanNetworkId, scanNetworks } from "@/lib/scanNetworks";
 import { useWalletSession } from "@/hooks/useWalletSession";
 import { ApprovalFlowClient } from "@/components/ApprovalFlowClient";
-import { StellarRiskPublishButton } from "@/components/StellarRiskPublishButton";
 import { LiveRegion } from "@/components/a11y/LiveRegion";
 import { captureOfflinePortfolio, captureOfflineScan } from "@/lib/offlineStore";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+
+const AgentResultPanel = dynamic(() => import("@/components/AgentResultPanel").then((mod) => mod.AgentResultPanel), { ssr: false });
+const RiskScoreCard = dynamic(() => import("@/components/RiskScoreCard").then((mod) => mod.RiskScoreCard), { ssr: false });
+const StellarRiskPublishButton = dynamic(() => import("@/components/StellarRiskPublishButton").then((mod) => mod.StellarRiskPublishButton), { ssr: false });
+const WalletPortfolioCard = dynamic(() => import("@/components/WalletPortfolioCard").then((mod) => mod.WalletPortfolioCard), { ssr: false });
 
 const scanCheckLabels = ["Deployed", "Honeypot", "Sell tax", "Ownership", "Holders", "Liquidity", "LP lock", "Market"];
 
