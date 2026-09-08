@@ -1,47 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { withCacheHeaders } from "@/server/cache/strategy";
 import { assertApprovalOnly } from "@/server/security/policy";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { getUserRuleRecord, upsertUserRuleRecord } from "@/server/storage";
 import {
   chainFamilySchema,
-  networkSchema,
   validateChainScopedWallet,
 } from "@/server/security/inputValidation";
 import { evaluateCapability } from "@/server/security/authz";
+import { validateRule } from "@/server/rules/validate";
+import { RuleMigrationError } from "@/server/rules/migrate";
+import { listStrategyPresets, STRATEGY_PRESET_VERSION } from "@/server/rules/presets";
+import { jsonError } from "@/server/api/errors";
 
 export const AUTHZ_CAPABILITY = "rules:write" as const;
-
-const ruleSchema = z.object({
-  chainFamily: chainFamilySchema.optional(),
-  network: networkSchema.optional(),
-  walletAddress: z.string().min(1),
-  maxRiskScore: z.number().min(0).max(100),
-  maxTradePercent: z.number().min(0).max(100),
-  maxMemeExposurePercent: z.number().min(0).max(100),
-  maxDailyTransactionValueUsd: z.number().min(0).optional(),
-  maxSlippageBps: z.number().min(0).max(10_000).optional(),
-  minStableReservePercent: z.number().min(0).max(100).optional(),
-  allowedChains: z.array(z.string().min(1)).optional(),
-  blockedTokens: z.array(z.string().min(1)).optional(),
-  blockedIssuers: z.array(z.string().min(1)).optional(),
-  blockedCategories: z.array(z.string().min(1)).optional(),
-  allowedActions: z
-    .array(z.enum(["hold", "watch", "reduce_exposure", "swap_to_stable", "avoid", "manual_review", "prepare_transaction", "no_action"]))
-    .optional(),
-  autoExecute: z.boolean(),
-  version: z.number().int().min(1).optional(),
-  createdAt: z.string().optional(),
-}).superRefine((value, context) => {
-  if (!validateChainScopedWallet(value)) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["walletAddress"],
-      message: "Wallet address does not match chainFamily/network.",
-    });
-  }
-});
 
 export function GET(request: NextRequest) {
   const rateLimited = checkRateLimit(request, { namespace: "rules", limit: 60, windowMs: 60_000 });
@@ -56,15 +28,34 @@ export function GET(request: NextRequest) {
   );
   const network = request.nextUrl.searchParams.get("network") ?? undefined;
 
-  return withCacheHeaders(
-    NextResponse.json(
-      getUserRuleRecord(walletAddress, {
-        chainFamily: chainFamily.success ? chainFamily.data : undefined,
-        network,
+  try {
+    const record = getUserRuleRecord(walletAddress, {
+      chainFamily: chainFamily.success ? chainFamily.data : undefined,
+      network,
+    });
+    return withCacheHeaders(
+      NextResponse.json({
+        ...record,
+        rule: record,
+        presets: listStrategyPresets(),
+        presetVersion: STRATEGY_PRESET_VERSION,
       }),
-    ),
-    "rules",
-  );
+      "rules",
+    );
+  } catch (error) {
+    if (error instanceof RuleMigrationError) {
+      return jsonError(
+        {
+          code: "validation_error",
+          message: error.message,
+          status: error.status,
+          details: error.issues,
+        },
+        { legacy: { error: error.message, issues: error.issues } },
+      );
+    }
+    return jsonError({ code: "internal_error", message: "Failed to load rules", status: 500 });
+  }
 }
 
 export async function POST(request: Request) {
@@ -74,31 +65,94 @@ export async function POST(request: Request) {
     return rateLimited;
   }
 
-  const body = await request.json().catch(() => ({}));
-  const parsed = ruleSchema.safeParse(body);
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonError(
+      {
+        code: "validation_error",
+        message: "Malformed JSON payload",
+        status: 400,
+        details: ["Malformed JSON payload"],
+      },
+      { legacy: { error: "Malformed JSON payload", issues: [{ field: "body", message: "Malformed JSON" }] } },
+    );
+  }
 
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  const payload = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
+  const sanitized = { ...payload, autoExecute: false };
+  const validation = validateRule(sanitized);
+
+  if (!validation.ok) {
+    return jsonError(
+      {
+        code: "validation_error",
+        message: validation.error,
+        status: 400,
+        details: validation.issues,
+      },
+      { legacy: { error: validation.error, issues: validation.issues } },
+    );
+  }
+
+  const candidate = validation.rule;
+  if (candidate.chainFamily && !validateChainScopedWallet(candidate)) {
+    return jsonError(
+      {
+        code: "validation_error",
+        message: "Wallet address does not match chainFamily/network.",
+        status: 400,
+        details: ["Wallet address does not match chainFamily/network."],
+      },
+      { legacy: { error: "Wallet address does not match chainFamily/network." } },
+    );
   }
 
   try {
     const authz = evaluateCapability(
-      { kind: "wallet", walletAddress: parsed.data.walletAddress, walletHash: "route", chainFamily: parsed.data.chainFamily, network: parsed.data.network?.toLowerCase() },
+      {
+        kind: "wallet",
+        walletAddress: candidate.walletAddress,
+        walletHash: "route",
+        chainFamily: candidate.chainFamily,
+        network: candidate.network?.toLowerCase(),
+      },
       AUTHZ_CAPABILITY,
-      { walletAddress: parsed.data.walletAddress, chainFamily: parsed.data.chainFamily, network: parsed.data.network },
+      {
+        walletAddress: candidate.walletAddress,
+        chainFamily: candidate.chainFamily,
+        network: candidate.network,
+      },
     );
-    if (!authz.allowed) return NextResponse.json({ error: "auth_error", reason: authz.reason }, { status: 403 });
-    assertApprovalOnly({ autoExecute: parsed.data.autoExecute });
+    if (!authz.allowed) {
+      return jsonError({
+        code: "auth_error",
+        message: authz.reason ?? "Unauthorized",
+        status: 403,
+      });
+    }
+    assertApprovalOnly({ autoExecute: candidate.autoExecute });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Execution policy failed" }, { status: 403 });
+    return jsonError({
+      code: "auth_error",
+      message: error instanceof Error ? error.message : "Execution policy failed",
+      status: 403,
+    });
   }
 
-  return withCacheHeaders(NextResponse.json(upsertUserRuleRecord({
-    ...parsed.data,
+  const stored = upsertUserRuleRecord({
+    ...candidate,
     autoExecute: false,
-    // Only pass version if the client explicitly provided one; otherwise
-    // upsertUserRuleRecord auto-increments from the current stored version.
-    ...(parsed.data.version !== undefined ? { version: parsed.data.version } : {}),
-    createdAt: parsed.data.createdAt ?? new Date().toISOString(),
-  })), "rules");
+    ...(candidate.version !== undefined ? { version: candidate.version } : {}),
+    createdAt: candidate.createdAt ?? new Date().toISOString(),
+  });
+
+  return withCacheHeaders(
+    NextResponse.json({
+      ...stored,
+      rule: stored,
+    }),
+    "rules",
+  );
 }

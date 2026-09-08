@@ -1,32 +1,43 @@
 import type { UserRule } from "../types";
 import { isStellarAddress, resolveChainContext, type ChainContext } from "@/lib/chainIdentity";
+import { CURRENT_RULE_SCHEMA_VERSION, type CurrentRule } from "./schema";
+import { STRATEGY_PRESET_VERSION, STRATEGY_PRESETS } from "./presets";
 
+/**
+ * Returns default rules expressed in current schema version 2 seeded from the balanced preset.
+ */
 export function getDefaultRules(
   walletAddress = "0xDemoWallet",
   contextInput: Partial<ChainContext> = {},
-): UserRule {
+): CurrentRule & ChainContext & UserRule {
   const context = resolveChainContext({
     ...contextInput,
     network: contextInput.network ?? (isStellarAddress(walletAddress) ? "stellar-testnet" : "legacy-evm"),
     identifier: walletAddress,
   });
 
+  const balanced = STRATEGY_PRESETS.balanced;
+  const now = new Date().toISOString();
+
   return {
     ...context,
+    schemaVersion: CURRENT_RULE_SCHEMA_VERSION,
     walletAddress,
-    maxRiskScore: 80,
-    maxTradePercent: 20,
-    maxMemeExposurePercent: 10,
-    maxDailyTransactionValueUsd: 1_000,
-    maxSlippageBps: 100,
-    minStableReservePercent: 15,
-    allowedChains: ["GOAT Network", "Base", "Ethereum", "Arbitrum", "Optimism", "Polygon", "BSC", "Stellar Testnet", "Stellar Pubnet"],
+    profileId: "balanced",
+    presetVersion: STRATEGY_PRESET_VERSION,
+    ...balanced.limits,
+    allowedChains: [...balanced.allowedChains],
     blockedAssets: [],
     blockedIssuers: [],
-    blockedCategories: [],
-    allowedActions: ["hold", "watch", "reduce_exposure", "swap_to_stable", "prepare_transaction", "no_action"],
+    blockedCategories: [...balanced.blockedCategories],
+    allowedActions: [...balanced.allowedActions],
     autoExecute: false,
     version: 1,
-    createdAt: new Date().toISOString(),
+    createdAt: now,
+    updatedAt: now,
+    maxRiskScore: balanced.limits.maxBuyRisk,
+    maxDailyTransactionValueUsd: balanced.limits.maxDailyValueUsd,
+    blockedTokens: [],
   };
 }
+
