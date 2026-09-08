@@ -1,0 +1,222 @@
+{
+  "GoldRaccoonPolicy": {
+    "source": "contracts/GoldRaccoonPolicy.sol",
+    "storage": [
+      {
+        "label": "owner",
+        "offset": 0,
+        "slot": "0",
+        "type": "address"
+      },
+      {
+        "label": "emergencyAdmin",
+        "offset": 0,
+        "slot": "1",
+        "type": "address"
+      },
+      {
+        "label": "agent",
+        "offset": 0,
+        "slot": "2",
+        "type": "address"
+      },
+      {
+        "label": "maxTransactionValue",
+        "offset": 0,
+        "slot": "3",
+        "type": "uint256"
+      },
+      {
+        "label": "maxSlippageBps",
+        "offset": 0,
+        "slot": "4",
+        "type": "uint256"
+      },
+      {
+        "label": "maxDailySpend",
+        "offset": 0,
+        "slot": "5",
+        "type": "uint256"
+      },
+      {
+        "label": "userNonce",
+        "offset": 0,
+        "slot": "6",
+        "type": "mapping(address => uint256)"
+      },
+      {
+        "label": "dailySpend",
+        "offset": 0,
+        "slot": "7",
+        "type": "mapping(address => uint256)"
+      },
+      {
+        "label": "lastDailyReset",
+        "offset": 0,
+        "slot": "8",
+        "type": "uint256"
+      },
+      {
+        "label": "allowedAssets",
+        "offset": 0,
+        "slot": "9",
+        "type": "mapping(address => bool)"
+      },
+      {
+        "label": "blockedAssets",
+        "offset": 0,
+        "slot": "10",
+        "type": "mapping(address => bool)"
+      },
+      {
+        "label": "allowedAssetList",
+        "offset": 0,
+        "slot": "11",
+        "type": "address[]"
+      },
+      {
+        "label": "blockedAssetList",
+        "offset": 0,
+        "slot": "12",
+        "type": "address[]"
+      },
+      {
+        "label": "policyDecisions",
+        "offset": 0,
+        "slot": "13",
+        "type": "mapping(bytes32 => struct GoldRaccoonPolicy.PolicyDecision)"
+      },
+      {
+        "label": "intents",
+        "offset": 0,
+        "slot": "14",
+        "type": "mapping(bytes32 => struct GoldRaccoonPolicy.Intent)"
+      },
+      {
+        "label": "paused",
+        "offset": 0,
+        "slot": "15",
+        "type": "bool"
+      },
+      {
+        "label": "_status",
+        "offset": 0,
+        "slot": "16",
+        "type": "uint256"
+      }
+    ]
+  },
+  "GoldRaccoonPolicyV2": {
+    "source": "contracts/GoldRaccoonPolicyV2.sol",
+    "storage": [
+      {
+        "label": "owner",
+        "offset": 0,
+        "slot": "0",
+        "type": "address"
+      },
+      {
+        "label": "emergencyAdmin",
+        "offset": 0,
+        "slot": "1",
+        "type": "address"
+      },
+      {
+        "label": "agent",
+        "offset": 0,
+        "slot": "2",
+        "type": "address"
+      },
+      {
+        "label": "maxTransactionValue",
+        "offset": 0,
+        "slot": "3",
+        "type": "uint256"
+      },
+      {
+        "label": "maxSlippageBps",
+        "offset": 0,
+        "slot": "4",
+        "type": "uint256"
+      },
+      {
+        "label": "maxDailySpend",
+        "offset": 0,
+        "slot": "5",
+        "type": "uint256"
+      },
+      {
+        "label": "userNonce",
+        "offset": 0,
+        "slot": "6",
+        "type": "mapping(address => uint256)"
+      },
+      {
+        "label": "dailySpend",
+        "offset": 0,
+        "slot": "7",
+        "type": "mapping(address => uint256)"
+      },
+      {
+        "label": "lastDailyReset",
+        "offset": 0,
+        "slot": "8",
+        "type": "uint256"
+      },
+      {
+        "label": "allowedAssets",
+        "offset": 0,
+        "slot": "9",
+        "type": "mapping(address => bool)"
+      },
+      {
+        "label": "blockedAssets",
+        "offset": 0,
+        "slot": "10",
+        "type": "mapping(address => bool)"
+      },
+      {
+        "label": "allowedAssetList",
+        "offset": 0,
+        "slot": "11",
+        "type": "address[]"
+      },
+      {
+        "label": "blockedAssetList",
+        "offset": 0,
+        "slot": "12",
+        "type": "address[]"
+      },
+      {
+        "label": "policyDecisions",
+        "offset": 0,
+        "slot": "13",
+        "type": "mapping(bytes32 => struct GoldRaccoonPolicy.PolicyDecision)"
+      },
+      {
+        "label": "intents",
+        "offset": 0,
+        "slot": "14",
+        "type": "mapping(bytes32 => struct GoldRaccoonPolicy.Intent)"
+      },
+      {
+        "label": "paused",
+        "offset": 0,
+        "slot": "15",
+        "type": "bool"
+      },
+      {
+        "label": "_status",
+        "offset": 0,
+        "slot": "16",
+        "type": "uint256"
+      },
+      {
+        "label": "timelock",
+        "offset": 0,
+        "slot": "17",
+        "type": "address"
+      }
+    ]
+  }
+}

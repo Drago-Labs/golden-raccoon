@@ -1,10 +1,15 @@
 {
-  "name": "gold-raccoon-contracts",
-  "private": true,
+  "name": "contracts",
+  "version": "1.0.0",
   "scripts": {
     "compile": "hardhat compile",
     "deploy": "hardhat run scripts/deploy.ts",
     "test": "hardhat test",
+    "test:invariant": "hardhat test test/invariant/*.test.ts",
+    "test:fuzz": "hardhat test test/fuzz/*.test.ts",
+    "test:security": "hardhat test test/security/*.test.ts",
+    "test:upgrade": "hardhat test test/upgrade/*.test.ts",
+    "test:gas": "hardhat test test/gas/*.test.ts",
     "deploy:audit": "hardhat run scripts/deploy-audit.ts"
   },
   "devDependencies": {
