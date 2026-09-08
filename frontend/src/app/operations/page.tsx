@@ -1,18 +1,93 @@
-import { AlertTriangle, CheckCircle2, ClipboardCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ClipboardCheck, ShieldAlert, ShieldCheck } from "lucide-react";
+import { resolve } from "node:path";
 import { AppShell } from "@/components/AppShell";
 import { knownLimitations, releaseReadinessChecks } from "@/server/operations/releaseReadiness";
 import { evaluatePubnetReadiness, summarizeReadiness } from "@/server/stellar/pubnetGate";
 import { getFeatureFlagHealth } from "@/server/env/validation";
 import { OperationsSloPanel } from "@/components/OperationsSloPanel";
 import { getConfiguredProviderHealth } from "@/server/observability/providerHealth";
+import { evaluateReadinessVerdict } from "@/server/operations/gates/verdict";
 
 export default async function OperationsPage() {
   const pubnetGate = summarizeReadiness(await evaluatePubnetReadiness());
   const featureFlags = getFeatureFlagHealth();
   const providerHealth = getConfiguredProviderHealth();
+
+  const rootDir = resolve(process.cwd(), "..");
+  const readinessVerdict = await evaluateReadinessVerdict({
+    commitSha: process.env.VERCEL_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || "head",
+    environment: process.env.APP_MODE || "production",
+    rootDir,
+  });
+
   return (
     <AppShell>
-      <section className="grid gap-8 lg:grid-cols-[0.95fr_1.05fr]">
+      {/* Machine-Checkable Release Gates Verdict Header */}
+      <section className={`rounded-lg border p-6 ${
+        readinessVerdict.verdict === "ready"
+          ? "border-emerald-500/30 bg-emerald-950/20"
+          : "border-amber-500/30 bg-amber-950/20"
+      }`}>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            {readinessVerdict.verdict === "ready" ? (
+              <ShieldCheck className="h-8 w-8 text-emerald-400" />
+            ) : (
+              <ShieldAlert className="h-8 w-8 text-amber-400" />
+            )}
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs uppercase font-bold tracking-wider text-white/60">Pipeline Readiness Gate</span>
+                <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                  readinessVerdict.verdict === "ready"
+                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                    : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                }`}>
+                  {readinessVerdict.verdict.toUpperCase()}
+                </span>
+              </div>
+              <h2 className="text-xl font-bold text-white mt-1">
+                Release Gate Verdict: {readinessVerdict.verdict === "ready" ? "Cleared for Release" : "Gated / Action Required"}
+              </h2>
+            </div>
+          </div>
+          <div className="text-right text-xs text-white/60">
+            <div>Commit: <code className="text-white/80">{readinessVerdict.commitSha.slice(0, 10)}</code></div>
+            <div>Env: <span className="text-white/80 uppercase">{readinessVerdict.environment}</span></div>
+            <div>Passing: <span className="text-emerald-400 font-semibold">{readinessVerdict.summary.passed}/{readinessVerdict.summary.total}</span></div>
+          </div>
+        </div>
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {readinessVerdict.gates.map((g) => (
+            <div key={g.id} className="rounded-md border border-white/10 bg-black/30 p-3.5 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between text-xs mb-1.5">
+                  <span className={`px-1.5 py-0.5 rounded font-mono text-[10px] uppercase font-bold ${
+                    g.severity === "critical"
+                      ? "bg-red-950/80 text-red-400 border border-red-800/40"
+                      : "bg-yellow-950/80 text-yellow-400 border border-yellow-800/40"
+                  }`}>
+                    {g.severity}
+                  </span>
+                  <span className={`font-semibold ${g.status === "pass" ? "text-emerald-400" : "text-amber-400"}`}>
+                    {g.status === "pass" ? "PASS" : "BLOCKED"}
+                  </span>
+                </div>
+                <h3 className="text-sm font-semibold text-white">{g.name}</h3>
+                <p className="mt-1 text-xs text-white/50 line-clamp-2">{g.detail}</p>
+              </div>
+              {g.failureReason && (
+                <p className="mt-2 text-[11px] text-amber-300/90 font-mono bg-amber-950/40 rounded p-1.5 border border-amber-800/30">
+                  {g.failureReason}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-10 grid gap-8 lg:grid-cols-[0.95fr_1.05fr]">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-[#d9a441]/25 bg-[#d9a441]/10 px-4 py-2 text-sm text-[#f2c86d]">
             <ClipboardCheck className="h-4 w-4" />
@@ -28,6 +103,7 @@ export default async function OperationsPage() {
           <div className="mt-7 rounded-lg border border-white/10 bg-white/6 p-5">
             <div className="text-sm font-semibold text-white">Required gates</div>
             <div className="mt-4 grid gap-3 text-sm text-white/64">
+              <code className="rounded-md bg-black/35 px-3 py-2">node scripts/release-gate.mjs</code>
               <code className="rounded-md bg-black/35 px-3 py-2">npm run deploy:check</code>
               <code className="rounded-md bg-black/35 px-3 py-2">npm run test:agents --prefix frontend</code>
               <code className="rounded-md bg-black/35 px-3 py-2">{"curl -i \"$SMOKE_BASE_URL/api/x402/deep-scan?query=GOAT&chain=base\""}</code>

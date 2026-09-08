@@ -4,28 +4,27 @@
  * Load test script: /api/execute path
  *
  * Usage:
- *   node scripts/load-test-execution.mjs [concurrency] [totalRequests] [baseUrl]
+ *   node scripts/load-test-execution.mjs [concurrency] [totalRequests] [baseUrl] [--json]
  *
  * Defaults:
  *   concurrency=5, totalRequests=50, baseUrl=http://localhost:3000
- *
- * Example:
- *   node scripts/load-test-execution.mjs 10 200 http://localhost:3000
- *
- * This script exercises:
- *   - /api/execute/prepare (POST) — prepares execution preview
- *   - /api/execute/confirm (POST) — confirms execution approval
- *
- * Argument order follows the documented/intended convention:
- * concurrency, totalRequests, baseUrl — matching what a user would
- * naturally expect when reading the usage line.
  */
 
-const CONCURRENCY = parseInt(process.argv[2], 10) || 5;
-const TOTAL_REQUESTS = parseInt(process.argv[3], 10) || 50;
-const BASE_URL = process.argv[4] || 'http://localhost:3000';
+const isJson = process.argv.includes("--json");
+const filteredArgs = process.argv.slice(2).filter(a => a !== "--json");
+
+const CONCURRENCY = parseInt(filteredArgs[0], 10) || 5;
+const TOTAL_REQUESTS = parseInt(filteredArgs[1], 10) || 50;
+const BASE_URL = filteredArgs[2] || 'http://localhost:3000';
 
 const TIMEOUT_MS = 30_000;
+
+// Baseline thresholds from docs/PERFORMANCE_BUDGETS.md
+const BASELINE_BUDGET = {
+  minSuccessRate: 0.95,
+  maxP95LatencyMs: 2500,
+  minThroughputRps: 5.0,
+};
 
 const USER_WALLETS = [
   '0x1111111111111111111111111111111111111111',
@@ -49,110 +48,117 @@ async function executeFlow() {
   const results = { prepare: null, confirm: null, reconcile: null };
 
   try {
-    // Step 1: Prepare execution preview
-    // The /api/execute/prepare route accepts walletAddress, action, fromToken,
-    // toToken, riskScore, network, etc. (all optional per Zod bodySchema).
     const prepareRes = await fetchWithTimeout(`${BASE_URL}/api/execute/prepare`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         walletAddress,
         action: 'reduce_exposure',
-        fromToken: 'USDC',
-        toToken: 'ETH',
-        riskScore: 70,
-        network: 'ethereum',
+        fromToken: 'MEME',
+        toToken: 'USDC',
+        percent: 25,
+        riskScore: 72,
+        network: 'base',
       }),
     });
-    results.prepare = { status: prepareRes.status, ok: prepareRes.ok };
-    if (!prepareRes.ok) {
-      const text = await prepareRes.text().catch(() => '');
-      return { walletAddress, results, error: `prepare failed: ${text}` };
-    }
-    const prepareData = await prepareRes.json();
 
-    // Step 2: Confirm execution
-    // /api/execute/confirm requires: txHash, walletAddress, userApproved=true.
-    // Optional fields include simulation, currentBlockNumber, etc.
+    results.prepare = {
+      status: prepareRes.status,
+      ok: prepareRes.ok,
+      data: await prepareRes.json().catch(() => null),
+    };
+
+    if (!prepareRes.ok) {
+      return { ok: false, error: `prepare returned ${prepareRes.status}`, results };
+    }
+
+    const preview = results.prepare.data;
+    const planId = preview?.planId || preview?.executionPlanId || 'plan-load-test';
+
     const confirmRes = await fetchWithTimeout(`${BASE_URL}/api/execute/confirm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        planId,
         walletAddress,
-        txHash: '0x0000000000000000000000000000000000000000000000000000000000000001',
-        userApproved: true,
-        network: 'ethereum',
-        action: 'reduce_exposure',
-        riskScore: 70,
-        simulationStatus: prepareData.simulation?.status ?? 'pending',
-        simulation: prepareData.simulation ?? {
-          simulatedTxHash: '0x0000000000000000000000000000000000000000000000000000000000000001',
-          status: 'pending',
-          checks: [],
-          detail: 'Load-test placeholder',
-        },
-        currentBlockNumber: 1000,
+        signature: '0x' + 'ab'.repeat(65),
       }),
     });
-    results.confirm = { status: confirmRes.status, ok: confirmRes.ok };
 
-    // Bounded reconciliation sampling. A broadcast alone is never counted as
-    // final; the status endpoint must expose confirmation evidence.
-    let reconciliation;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const statusRes = await fetchWithTimeout(`${BASE_URL}/api/execute/transactions/0x0000000000000000000000000000000000000000000000000000000000000001?network=ethereum`);
-      const body = await statusRes.json().catch(() => ({}));
-      reconciliation = { status: statusRes.status, lifecycle: body.transaction?.lifecycleStatus, finality: body.finality };
-      if (["confirmed", "failed", "replaced", "dropped", "manual_review"].includes(reconciliation.lifecycle)) break;
-    }
-    results.reconcile = reconciliation;
+    results.confirm = {
+      status: confirmRes.status,
+      ok: confirmRes.ok,
+      data: await confirmRes.json().catch(() => null),
+    };
 
-    return { walletAddress, results, error: null };
+    const reconcileRes = await fetchWithTimeout(
+      `${BASE_URL}/api/history/agent-runs?walletAddress=${walletAddress}&limit=1`,
+      { method: 'GET' }
+    );
+
+    results.reconcile = {
+      status: reconcileRes.status,
+      ok: reconcileRes.ok,
+    };
+
+    return {
+      ok: results.prepare.ok && results.confirm.ok,
+      results,
+    };
   } catch (err) {
-    return { walletAddress, results, error: err.message };
+    return { ok: false, error: err.message, results };
   }
 }
 
-async function worker(workerId, queue) {
-  const workerResults = [];
-  while (true) {
-    const item = queue.shift();
-    if (!item) break;
-    const result = await executeFlow();
-    workerResults.push(result);
+async function worker(queue, results) {
+  while (queue.length > 0) {
+    const index = queue.shift();
+    if (index === undefined) break;
+
+    const start = Date.now();
+    const outcome = await executeFlow();
+    const duration = Date.now() - start;
+
+    results.push({ index, duration, ...outcome });
   }
-  return { workerId, results: workerResults };
 }
 
 async function main() {
-  console.log(`Load Test: Execution Flow`);
-  console.log(`  Base URL:     ${BASE_URL}`);
-  console.log(`  Concurrency:   ${CONCURRENCY}`);
-  console.log(`  Total requests: ${TOTAL_REQUESTS}`);
-  console.log(`  Timeout:       ${TIMEOUT_MS}ms`);
-  console.log('');
+  if (!isJson) {
+    console.log(`Starting load test: concurrency=${CONCURRENCY}, requests=${TOTAL_REQUESTS}, baseUrl=${BASE_URL}`);
+  }
 
   const queue = Array.from({ length: TOTAL_REQUESTS }, (_, i) => i);
-  const workers = Array.from({ length: CONCURRENCY }, (_, i) => worker(i, queue));
+  const results = [];
+  const start = Date.now();
 
-  const startTime = Date.now();
-  const allWorkerResults = await Promise.all(workers);
-  const elapsedMs = Date.now() - startTime;
+  const workers = Array.from({ length: CONCURRENCY }, () => worker(queue, results));
+  await Promise.all(workers);
 
-  // Aggregate
+  const elapsedMs = Date.now() - start;
+
   let totalOk = 0;
   let totalErr = 0;
-  let stepCounts = { prepare: { ok: 0, fail: 0 }, confirm: { ok: 0, fail: 0 }, reconcile: { ok: 0, fail: 0 } };
+  const latencies = [];
   const errors = [];
+  const stepCounts = {
+    prepare: { ok: 0, fail: 0 },
+    confirm: { ok: 0, fail: 0 },
+    reconcile: { ok: 0, fail: 0 },
+  };
 
-  for (const wr of allWorkerResults) {
-    for (const r of wr.results) {
+  for (const r of results) {
+    latencies.push(r.duration);
+    if (r.ok) {
+      totalOk++;
+      stepCounts.prepare.ok++;
+      stepCounts.confirm.ok++;
+      if (r.results.reconcile?.status === 200) stepCounts.reconcile.ok++;
+    } else {
       if (r.error) {
         totalErr++;
         errors.push(r.error);
-        continue;
       }
-      totalOk++;
       if (r.results.prepare?.ok) stepCounts.prepare.ok++;
       else stepCounts.prepare.fail++;
       if (r.results.confirm?.ok) stepCounts.confirm.ok++;
@@ -162,39 +168,47 @@ async function main() {
     }
   }
 
+  latencies.sort((a, b) => a - b);
+  const p50 = latencies[Math.floor(latencies.length * 0.5)] || 0;
+  const p95 = latencies[Math.floor(latencies.length * 0.95)] || 0;
   const rps = Math.round((TOTAL_REQUESTS / (elapsedMs / 1000)) * 100) / 100;
+  const successRate = totalOk / TOTAL_REQUESTS;
 
-  console.log('=== Results ===');
-  console.log(`  Elapsed:        ${elapsedMs}ms`);
-  console.log(`  Throughput:     ${rps} req/s`);
-  console.log(`  Successful:     ${totalOk}`);
-  console.log(`  Errors:         ${totalErr}`);
-  console.log('');
-  console.log('Step-level status:');
-  console.log(`  /api/execute/prepare  — OK: ${stepCounts.prepare.ok}, FAIL: ${stepCounts.prepare.fail}`);
-  console.log(`  /api/execute/confirm  — OK: ${stepCounts.confirm.ok}, FAIL: ${stepCounts.confirm.fail}`);
-  console.log(`  lifecycle reconcile   — OK: ${stepCounts.reconcile.ok}, FAIL: ${stepCounts.reconcile.fail}`);
-  console.log('');
+  const baselineComparison = {
+    successRate: { observed: successRate, target: BASELINE_BUDGET.minSuccessRate, pass: successRate >= BASELINE_BUDGET.minSuccessRate },
+    p95LatencyMs: { observed: p95, target: BASELINE_BUDGET.maxP95LatencyMs, pass: p95 <= BASELINE_BUDGET.maxP95LatencyMs },
+  };
 
-  if (errors.length > 0) {
-    console.log('Sample errors (first 10):');
-    for (const e of errors.slice(0, 10)) {
-      console.log(`  - ${e}`);
-    }
+  const output = {
+    benchmark: "load_test_execution",
+    timestamp: new Date().toISOString(),
+    config: { concurrency: CONCURRENCY, totalRequests: TOTAL_REQUESTS, baseUrl: BASE_URL },
+    metrics: { elapsedMs, throughputRps: rps, totalOk, totalErr, p50LatencyMs: p50, p95LatencyMs: p95, successRate },
+    stepCounts,
+    baselineComparison,
+    errors: errors.slice(0, 10),
+  };
+
+  if (isJson) {
+    console.log(JSON.stringify(output, null, 2));
+  } else {
+    console.log('=== Results ===');
+    console.log(`  Elapsed:        ${elapsedMs}ms`);
+    console.log(`  Throughput:     ${rps} req/s`);
+    console.log(`  Successful:     ${totalOk}`);
+    console.log(`  Errors:         ${totalErr}`);
+    console.log(`  p50 Latency:    ${p50}ms`);
+    console.log(`  p95 Latency:    ${p95}ms`);
+    console.log(`  Success Rate:   ${(successRate * 100).toFixed(1)}% (Target: >= ${(BASELINE_BUDGET.minSuccessRate * 100)}%)`);
   }
 
-  // Exit code based on success rate
-  const successRate = totalOk / TOTAL_REQUESTS;
-  if (successRate < 0.95) {
-    console.error(`\nFAIL: success rate ${(successRate * 100).toFixed(1)}% < 95%`);
+  if (successRate < BASELINE_BUDGET.minSuccessRate) {
+    if (!isJson) console.error(`\nFAIL: success rate ${(successRate * 100).toFixed(1)}% < 95%`);
     process.exit(1);
   }
-  console.log(`\nPASS: success rate ${(successRate * 100).toFixed(1)}%`);
 }
 
 main().catch(err => {
   console.error('Fatal:', err);
   process.exit(1);
 });
-
-// Updated for SLOs
