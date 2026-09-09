@@ -26,6 +26,15 @@ import {
   removeTransactionRecordByHash,
   updateTransactionRecord,
 } from "@/server/storage";
+import {
+  globalIdempotencyStore,
+  assertValidIdempotencyKey,
+  computePayloadFingerprint,
+  buildCompositeIdempotencyKey,
+} from "@/server/transactions/idempotency";
+import { verifyQuoteBinding } from "@/server/providers/quote/binding";
+import { reconcileTransactionAgainstChain } from "@/server/transactions/reconcile";
+import { ApiError } from "@/server/api/errors";
 import type {
   PollTransactionResult,
   SubmitTransactionInput,
@@ -64,6 +73,8 @@ export type PrepareTransactionInput = {
   decisionId?: string;
   decisionAction?: TransactionRecord["decisionAction"];
   asset: string;
+  toAsset?: string;
+  inputAmount?: string;
   valueUsd?: number;
   expectedEffects?: TransactionExpectedEffect[];
   simulationStatus?: NonNullable<TransactionRecord["simulationStatus"]>;
@@ -71,6 +82,8 @@ export type PrepareTransactionInput = {
   idempotencyKey: string;
   /** Pre-built EVM calldata (0x-prefixed hex) or Stellar envelope XDR (base64) */
   rawPayload?: string;
+  quoteBinding?: import("@/server/providers/quote/types").QuoteBinding;
+  quoteHash?: string;
 };
 
 export type PrepareTransactionResult = {
@@ -266,10 +279,40 @@ export function prepareTransaction(input: PrepareTransactionInput): PrepareTrans
     );
   }
 
+  if (input.quoteBinding) {
+    const bindingCheck = verifyQuoteBinding(input.quoteBinding, {
+      chain: input.network,
+      walletAddress: input.walletAddress,
+      fromAsset: input.asset,
+      toAsset: input.toAsset ?? input.asset,
+      inputAmount: input.inputAmount ?? (input.valueUsd ? String(input.valueUsd) : undefined),
+    });
+
+    if (!bindingCheck.valid) {
+      if (bindingCheck.expired) {
+        throw new ApiError(
+          "quote_expired",
+          bindingCheck.reason ?? "Quote has expired.",
+          400,
+          { retryable: true, recoveryAction: "refresh_data" },
+        );
+      }
+      throw new ApiError(
+        "quote_binding_mismatch",
+        bindingCheck.reason ?? "Cryptographic quote binding mismatch.",
+        400,
+        { retryable: false, recoveryAction: "stop" },
+      );
+    }
+  }
+
   const existing = storage.getByIdempotencyKey(input.walletAddress, input.idempotencyKey);
   if (existing) {
     return { transaction: existing, idempotent: true, created: false };
   }
+
+  const fingerprint = computePayloadFingerprint(input);
+  const quoteHash = input.quoteBinding?.quoteHash ?? input.quoteHash;
 
   const record = storage.create({
     hash: canonicalizeTransactionHash(`pending:${input.walletAddress}:${input.idempotencyKey}`, family),
@@ -289,6 +332,8 @@ export function prepareTransaction(input: PrepareTransactionInput): PrepareTrans
     policyStatus: input.policyStatus,
     expectedEffects: input.expectedEffects,
     idempotencyKey: input.idempotencyKey,
+    fingerprint,
+    quoteHash,
     explorerUrl: undefined,
     calldata: input.rawPayload,
     stellarDetails: input.rawPayload && input.chainFamily === "stellar"
@@ -318,131 +363,247 @@ export async function submitTransaction(input: SubmitTransactionInput): Promise<
     throw new TransactionLifecycleError("network_chain_family_mismatch", `Network ${input.network} does not match chain family ${family}.`);
   }
 
-  const existingByKey = input.idempotencyKey
-    ? storage.getByIdempotencyKey(input.walletAddress, input.idempotencyKey)
-    : undefined;
-  if (existingByKey && existingByKey.hash !== canonicalizeTransactionHash(`pending:${input.walletAddress}:${input.idempotencyKey}`, family)) {
-    return {
-      transaction: existingByKey,
-      outcome: "ignored_duplicate",
-      result: {
-        hash: existingByKey.hash,
-        chainFamily: existingByKey.chainFamily,
-        network: existingByKey.network,
-        submittedAt: existingByKey.submittedAt ?? existingByKey.createdAt,
-        status: existingByKey.lifecycleStatus ?? "prepared",
-        explorerUrl: existingByKey.explorerUrl,
-        idempotent: true,
-        reuseReason: "idempotency_key",
-        lifecycle: storage.listEvents(existingByKey.hash),
-      },
-    };
+  // 1. Cryptographic Quote Binding Verification:
+  // Refuse broadcast if submission carries a stale or mismatched quote binding.
+  if (input.quoteBinding) {
+    const bindingCheck = verifyQuoteBinding(input.quoteBinding, {
+      chain: input.network,
+      walletAddress: input.walletAddress,
+      fromAsset: input.asset,
+      toAsset: input.toAsset ?? input.asset,
+      inputAmount: input.inputAmount ?? (input.valueUsd ? String(input.valueUsd) : undefined),
+    });
+
+    if (!bindingCheck.valid) {
+      if (bindingCheck.expired) {
+        throw new ApiError(
+          "quote_expired",
+          bindingCheck.reason ?? "Quote has expired.",
+          400,
+          { retryable: true, recoveryAction: "refresh_data" },
+        );
+      }
+      throw new ApiError(
+        "quote_binding_mismatch",
+        bindingCheck.reason ?? "Cryptographic quote binding mismatch.",
+        400,
+        { retryable: false, recoveryAction: "stop" },
+      );
+    }
   }
 
-  const normalizedHash = await deriveSubmitHash(input).catch(() => {
-    // Cannot derive a chain-native hash (non-hash payload used with simulator).
-    // Fall back to a synthetic canonical hash using the payload bytes so the
-    // lifecycle record has a stable, unique identifier without blocking on
-    // provider resolution.
-    const fallbackPayload = input.signedPayload ?? `${input.chainFamily}:${input.walletAddress}:${input.idempotencyKey ?? Date.now()}`;
-    const syntheticHash = `0x${createHash("sha256").update(fallbackPayload).digest("hex")}`;
-    return normalizeHashForRecord(syntheticHash, family);
+  // 2. Idempotency Key & Fingerprint Gate:
+  const rawKey = input.idempotencyKey ?? buildCompositeIdempotencyKey({
+    walletAddress: input.walletAddress,
+    network: input.network,
+    asset: input.asset,
+    decisionId: input.decisionId,
+    action: input.decisionAction,
   });
-  const existingByHash = storage.getByHash(normalizedHash);
+  const idempotencyKey = assertValidIdempotencyKey(rawKey);
 
-  if (existingByHash) {
-    storage.appendEvent(normalizedHash, "duplicate_rejected", { reason: "duplicate_hash", walletAddress: input.walletAddress });
+  // Compute canonical SHA-256 fingerprint over normalized request payload
+  const fingerprint = computePayloadFingerprint(input);
+
+  // Acquire concurrency execution gate
+  const gate = await globalIdempotencyStore.acquireOrWait<SubmissionReport>(
+    idempotencyKey,
+    input.walletAddress,
+    fingerprint,
+  );
+
+  // If replayed or observed concurrent duplicate, return stored winner outcome directly
+  if (gate.isReplay && gate.outcome) {
     return {
-      transaction: existingByHash,
-      outcome: "ignored_duplicate",
+      ...gate.outcome,
       result: {
-        hash: existingByHash.hash,
-        chainFamily: existingByHash.chainFamily,
-        network: existingByHash.network,
-        submittedAt: existingByHash.submittedAt ?? existingByHash.createdAt,
-        status: existingByHash.lifecycleStatus ?? "prepared",
-        explorerUrl: existingByHash.explorerUrl,
+        ...gate.outcome.result,
         idempotent: true,
-        reuseReason: "duplicate_hash",
-        lifecycle: storage.listEvents(existingByHash.hash),
+        replayed: true,
+        reuseReason: "idempotency_key",
       },
     };
   }
 
-  if (existingByKey) {
-    // A prepared placeholder exists with the same idempotency key. Remove it so
-    // the real record below can use the same key without violating the unique
-    // (wallet_address, idempotency_key) index.
-    storage.removeByHash(existingByKey.hash);
-  }
-
-  const base = buildBaseRecord(input, normalizedHash);
-  const record = storage.create({ ...base, status: "prepared", lifecycleStatus: "prepared" });
-  storage.appendEvent(normalizedHash, "prepared", { walletAddress: input.walletAddress, network: input.network, chainFamily: family });
-
-  let submitResult;
   try {
-    submitResult = await submitToChainAdapter(input);
-  } catch (error) {
-    const failureReason = error instanceof Error ? error.message : "Unknown adapter failure during submission.";
-    storage.appendEvent(normalizedHash, SUBMISSION_FAILED_EVENT, {
-      reason: failureReason,
-      network: input.network,
-      chainFamily: family,
-    }, { label: family === "stellar" ? "stellar_rpc" : "evm_rpc", url: getProviderUrl(family, input.network) });
+    const existingByKey = storage.getByIdempotencyKey(input.walletAddress, idempotencyKey);
+    if (existingByKey && existingByKey.hash !== canonicalizeTransactionHash(`pending:${input.walletAddress}:${idempotencyKey}`, family)) {
+      const report: SubmissionReport = {
+        transaction: existingByKey,
+        outcome: "ignored_duplicate",
+        result: {
+          hash: existingByKey.hash,
+          chainFamily: existingByKey.chainFamily,
+          network: existingByKey.network,
+          submittedAt: existingByKey.submittedAt ?? existingByKey.createdAt,
+          status: existingByKey.lifecycleStatus ?? "prepared",
+          explorerUrl: existingByKey.explorerUrl,
+          idempotent: true,
+          replayed: true,
+          reuseReason: "idempotency_key",
+          lifecycle: storage.listEvents(existingByKey.hash),
+        },
+      };
+      globalIdempotencyStore.resolveKey(idempotencyKey, report);
+      return report;
+    }
 
-    const failedRecord = storage.update(normalizedHash, {
-      lifecycleStatus: "failed",
-      status: "failed",
-      terminalAt: new Date().toISOString(),
-      failureReason,
+    const normalizedHash = await deriveSubmitHash(input).catch(() => {
+      const fallbackPayload = input.signedPayload ?? `${input.chainFamily}:${input.walletAddress}:${idempotencyKey ?? Date.now()}`;
+      const syntheticHash = `0x${createHash("sha256").update(fallbackPayload).digest("hex")}`;
+      return normalizeHashForRecord(syntheticHash, family);
+    });
+
+    const existingByHash = storage.getByHash(normalizedHash);
+    if (existingByHash) {
+      storage.appendEvent(normalizedHash, "duplicate_rejected", { reason: "duplicate_hash", walletAddress: input.walletAddress });
+      const report: SubmissionReport = {
+        transaction: existingByHash,
+        outcome: "ignored_duplicate",
+        result: {
+          hash: existingByHash.hash,
+          chainFamily: existingByHash.chainFamily,
+          network: existingByHash.network,
+          submittedAt: existingByHash.submittedAt ?? existingByHash.createdAt,
+          status: existingByHash.lifecycleStatus ?? "prepared",
+          explorerUrl: existingByHash.explorerUrl,
+          idempotent: true,
+          replayed: true,
+          reuseReason: "duplicate_hash",
+          lifecycle: storage.listEvents(existingByHash.hash),
+        },
+      };
+      globalIdempotencyStore.resolveKey(idempotencyKey, report);
+      return report;
+    }
+
+    if (existingByKey) {
+      storage.removeByHash(existingByKey.hash);
+    }
+
+    const base = buildBaseRecord(input, normalizedHash);
+    const record = storage.create({
+      ...base,
+      status: "prepared",
+      lifecycleStatus: "prepared",
+      idempotencyKey,
+      fingerprint,
+      quoteHash: input.quoteBinding?.quoteHash ?? input.quoteHash,
+    });
+    storage.appendEvent(normalizedHash, "prepared", { walletAddress: input.walletAddress, network: input.network, chainFamily: family, idempotencyKey });
+
+    // 3. At-Most-Once Broadcast with Reconciliation Fallback
+    let submitResult;
+    try {
+      submitResult = await submitToChainAdapter(input);
+    } catch (broadcastError) {
+      // Replay Safety Invariant: Never blindly re-broadcast!
+      // Attempt on-chain reconciliation to check if transaction reached the chain/mempool
+      const recon = await reconcileTransactionAgainstChain(normalizedHash, {
+        network: input.network,
+        chainFamily: family,
+        walletAddress: input.walletAddress,
+        expectedEffects: input.expectedEffects,
+        record,
+      }).catch(() => null);
+
+      if (recon && recon.onChain) {
+        const report: SubmissionReport = {
+          transaction: recon.transaction ?? record,
+          outcome: "submitted",
+          result: {
+            hash: normalizedHash,
+            chainFamily: family,
+            network: input.network,
+            submittedAt: new Date().toISOString(),
+            status: recon.status,
+            explorerUrl: attachExplorerUrl({ hash: normalizedHash, network: input.network, chainFamily: family }),
+            idempotent: false,
+            replayed: false,
+            reconciled: true,
+            lifecycle: storage.listEvents(normalizedHash),
+          },
+        };
+        globalIdempotencyStore.resolveKey(idempotencyKey, report);
+        return report;
+      }
+
+      const failureReason = broadcastError instanceof Error ? broadcastError.message : "Unknown adapter failure during submission.";
+      storage.appendEvent(normalizedHash, SUBMISSION_FAILED_EVENT, {
+        reason: failureReason,
+        network: input.network,
+        chainFamily: family,
+      }, { label: family === "stellar" ? "stellar_rpc" : "evm_rpc", url: getProviderUrl(family, input.network) });
+
+      const failedRecord = storage.update(normalizedHash, {
+        lifecycleStatus: "failed",
+        status: "failed",
+        terminalAt: new Date().toISOString(),
+        failureReason,
+        fingerprint,
+        idempotencyKey,
+      }) ?? record;
+
+      const report: SubmissionReport = {
+        transaction: failedRecord,
+        outcome: "terminally_recorded",
+        result: {
+          hash: failedRecord.hash,
+          chainFamily: failedRecord.chainFamily,
+          network: failedRecord.network,
+          submittedAt: failedRecord.submittedAt ?? failedRecord.createdAt,
+          status: failedRecord.lifecycleStatus,
+          explorerUrl: failedRecord.explorerUrl,
+          idempotent: false,
+          replayed: false,
+          lifecycle: storage.listEvents(failedRecord.hash),
+        },
+      };
+
+      globalIdempotencyStore.resolveKey(idempotencyKey, report);
+      return report;
+    }
+
+    const submittedAt = submitResult.broadcastAcceptedAt ?? new Date().toISOString();
+
+    const updated = storage.update(normalizedHash, {
+      lifecycleStatus: "submitted",
+      status: "submitted",
+      submittedAt,
+      fingerprint,
+      idempotencyKey,
+      quoteHash: input.quoteBinding?.quoteHash ?? input.quoteHash,
+      explorerUrl: attachExplorerUrl({ hash: normalizedHash, network: input.network, chainFamily: family }),
     }) ?? record;
 
-    return {
-      transaction: failedRecord,
-      outcome: "terminally_recorded",
+    storage.appendEvent(normalizedHash, "submitted", {
+      network: input.network,
+      providerUrl: submitResult.providerUrl,
+      detail: submitResult.detail,
+    }, { label: "chain_adapter", url: submitResult.providerUrl });
+
+    const report: SubmissionReport = {
+      transaction: updated,
+      outcome: "submitted",
       result: {
-        hash: failedRecord.hash,
-        chainFamily: failedRecord.chainFamily,
-        network: failedRecord.network,
-        submittedAt: failedRecord.submittedAt ?? failedRecord.createdAt,
-        status: failedRecord.lifecycleStatus,
-        explorerUrl: failedRecord.explorerUrl,
+        hash: updated.hash,
+        chainFamily: updated.chainFamily,
+        network: updated.network,
+        submittedAt,
+        status: updated.lifecycleStatus ?? "prepared",
+        explorerUrl: updated.explorerUrl,
         idempotent: false,
-        lifecycle: storage.listEvents(failedRecord.hash),
+        replayed: false,
+        lifecycle: storage.listEvents(updated.hash),
       },
     };
+
+    globalIdempotencyStore.resolveKey(idempotencyKey, report);
+    return report;
+  } catch (err) {
+    globalIdempotencyStore.rejectKey(idempotencyKey, err);
+    throw err;
   }
-
-  const submittedAt = submitResult.broadcastAcceptedAt ?? new Date().toISOString();
-
-  const updated = storage.update(normalizedHash, {
-    lifecycleStatus: "submitted",
-    status: "submitted",
-    submittedAt,
-    explorerUrl: attachExplorerUrl({ hash: normalizedHash, network: input.network, chainFamily: family }),
-  }) ?? record;
-
-  storage.appendEvent(normalizedHash, "submitted", {
-    network: input.network,
-    providerUrl: submitResult.providerUrl,
-    detail: submitResult.detail,
-  }, { label: "chain_adapter", url: submitResult.providerUrl });
-
-  return {
-    transaction: updated,
-    outcome: "submitted",
-    result: {
-      hash: updated.hash,
-      chainFamily: updated.chainFamily,
-      network: updated.network,
-      submittedAt,
-      status: updated.lifecycleStatus ?? "prepared",
-      explorerUrl: updated.explorerUrl,
-      idempotent: false,
-      lifecycle: storage.listEvents(updated.hash),
-    },
-  };
 }
 
 async function submitToChainAdapter(input: SubmitTransactionInput) {

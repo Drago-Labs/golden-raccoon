@@ -19,7 +19,7 @@ type ApprovalState =
   | { phase: "signing" }
   | { phase: "signed"; signedPayload: string }
   | { phase: "submitting" }
-  | { phase: "submitted"; txHash: string }
+  | { phase: "submitted"; txHash: string; replayed?: boolean }
   | { phase: "rejected"; reason: string }
   | { phase: "expired" }
   | { phase: "wallet_error"; error: string }
@@ -69,7 +69,10 @@ export function ApprovalFlowClient({
 
       const response = await fetch("/api/execute/approve", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
         body: JSON.stringify({
           idempotencyKey,
           walletAddress,
@@ -194,7 +197,10 @@ export function ApprovalFlowClient({
       const displayParams = (payload as { displayParams?: Record<string, unknown> })?.displayParams ?? {};
       const submitResponse = await fetch("/api/execute/submit", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
         body: JSON.stringify({
           chainFamily,
           network,
@@ -216,7 +222,12 @@ export function ApprovalFlowClient({
       }
 
       const submitResult = await submitResponse.json();
-      setState({ phase: "submitted", txHash: submitResult.hash ?? submitResult.transaction?.hash });        onComplete?.(submitResult.hash ?? submitResult.transaction?.hash);
+      setState({
+        phase: "submitted",
+        txHash: submitResult.hash ?? submitResult.transaction?.hash,
+        replayed: submitResult.replayed,
+      });
+      onComplete?.(submitResult.hash ?? submitResult.transaction?.hash);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Signing failed.";
 
@@ -666,7 +677,14 @@ function StatusPanel({
     case "submitted":
       return (
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-4">
-          <div className="text-sm font-semibold text-sky-200">Transaction broadcast</div>
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold text-sky-200">Transaction broadcast</div>
+            {state.replayed && (
+              <span className="rounded bg-sky-500/20 px-2 py-0.5 text-[10px] font-medium text-sky-300 border border-sky-500/30">
+                Replayed (Idempotent)
+              </span>
+            )}
+          </div>
           <div className="mt-1 text-xs text-slate-400">Hash: {state.txHash}</div>
           <p className="mt-2 text-xs text-white/55">Broadcast acceptance is not finality. Wait for the required confirmation depth; replacement, reorg, or provider disagreement will require review.</p>
           {onClose && (

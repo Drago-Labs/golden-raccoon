@@ -29,7 +29,12 @@ export type ApiErrorCode =
   | "payment_proof_rejected"
   | "duplicate_payment"
   | "expected_effects_mismatch"
-  | "incident_mode";
+  | "incident_mode"
+  | "idempotency_payload_mismatch"
+  | "idempotency_key_required"
+  | "quote_binding_mismatch"
+  | "quote_expired"
+  | "quote_binding_required";
 
 export type RecoveryAction =
   | "retry"
@@ -60,6 +65,11 @@ export const commonErrorCodes: Record<string, ApiErrorCode> = {
   simulationFailure: "simulation_failure",
   submissionFailure: "submission_failure",
   internalError: "internal_error",
+  idempotencyPayloadMismatch: "idempotency_payload_mismatch",
+  idempotencyKeyRequired: "idempotency_key_required",
+  quoteBindingMismatch: "quote_binding_mismatch",
+  quoteExpired: "quote_expired",
+  quoteBindingRequired: "quote_binding_required",
 };
 
 const RETRYABLE_CODES: ReadonlySet<ApiErrorCode> = new Set([

@@ -164,6 +164,11 @@ export type QuoteResult = {
   /** Human-readable detail for display in the UI. */
   detail: string;
 
+  /** Cryptographic quote binding properties */
+  quoteHash?: string;
+  quoteSignature?: string;
+  binding?: QuoteBinding;
+
   /** Provider execution metadata. */
   providerMeta: {
     provider: string;
@@ -173,6 +178,20 @@ export type QuoteResult = {
     fallbackUsed?: boolean;
     detail?: string;
   };
+};
+
+export type QuoteBinding = {
+  quoteHash: string;
+  signature: string;
+  quoteSignature?: string;
+  chain: string;
+  walletAddress?: string;
+  fromAsset: string;
+  toAsset: string;
+  inputAmount: string;
+  minReceiveAmount?: string;
+  expiresAt: string;
+  createdAt: string;
 };
 
 // ─── Verification result ─────────────────────────────────────────────

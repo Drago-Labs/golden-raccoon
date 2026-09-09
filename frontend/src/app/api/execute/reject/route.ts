@@ -43,6 +43,10 @@ export async function POST(request: Request) {
     }, { status: 403 });
   }
 
+  const idempotencyKey =
+    request.headers.get("Idempotency-Key") ??
+    request.headers.get("x-idempotency-key");
+
   try {
     const transaction = await recordUserRejection(parsed.data.txHash, {
       walletAddress: parsed.data.walletAddress,
@@ -50,8 +54,11 @@ export async function POST(request: Request) {
       source: parsed.data.source ?? "wallet",
     });
 
+    const isReplay = transaction.lifecycleStatus === "user_rejected" && !!transaction.terminalAt;
+
     return withCacheHeaders(NextResponse.json({
       success: true,
+      replayed: isReplay,
       status: transaction.lifecycleStatus,
       rejectedAt: transaction.terminalAt,
       transaction,
