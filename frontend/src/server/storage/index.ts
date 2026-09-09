@@ -67,6 +67,11 @@ export {
 import { clearPortfolioCacheForWallet } from "@/server/stellar/portfolio";
 import { invalidatePortfolioForWallet, invalidateWalletCache } from "@/server/cache";
 import { resetDevEnvironment, seedDevEnvironment } from "./bootstrap";
+import {
+  exportSessionsForWallet,
+  revokeAllSessionsForWallet,
+  eraseSessionsForWallet,
+} from "@/server/security/session";
 
 export const devReset = resetDevEnvironment;
 export const devSeed = seedDevEnvironment;
@@ -1393,6 +1398,7 @@ export async function exportWalletData(walletAddress: string, network?: string, 
     watchlistEntries: getWatchlistEntries().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
     watchlistScanRuns: getWatchlistScanRuns().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
     discoveryAlerts: getDiscoveryAlerts().filter((r) => matchesWalletAddress(r.walletAddress, canonicalWallet)),
+    sessions: exportSessionsForWallet(canonicalWallet),
   };
 
   let pgData: Record<string, unknown[]> = {};
@@ -1438,6 +1444,10 @@ export async function deleteWalletData(
 
   let memoryRecordsRemoved = 0;
   let memoryAuditRecordsUnlinked = 0;
+
+  const sessionsRevoked = revokeAllSessionsForWallet(canonicalWallet, "privacy_deletion");
+  eraseSessionsForWallet(canonicalWallet);
+  memoryRecordsRemoved += sessionsRevoked;
 
   if (memoryStore.__goldenRaccoonAgentRuns && !targetNetwork) {
     const before = memoryStore.__goldenRaccoonAgentRuns.length;
