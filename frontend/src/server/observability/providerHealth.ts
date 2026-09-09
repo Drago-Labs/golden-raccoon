@@ -173,9 +173,21 @@ export async function checkStellarProviderHealth(params: {
 
   try {
     const health = await getStellarRpcHealth(params.network);
-    const latencyMs = health.latencyMs;
+    const isOutage = health.outage?.isOutage;
+    const bestScore = health.providers.length > 0
+      ? Math.max(...health.providers.map((p) => p.score ?? (p.healthy ? 85 : 0)))
+      : undefined;
+    const status: HealthStatus = isOutage
+      ? "unavailable"
+      : health.healthy
+        ? "healthy"
+        : "degraded";
 
-    const status: HealthStatus = health.healthy ? "healthy" : "degraded";
+    const detail = isOutage
+      ? `Stellar RPC network-wide outage for ${params.network}: ${health.outage?.reason ?? "all endpoints down"}`
+      : health.healthy
+        ? `Stellar RPC healthy at ledger ${health.latestLedger} (${latencyMs}ms).`
+        : `Stellar RPC degraded: status=${health.status}, ledger=${health.latestLedger}.`;
 
     recordAuditEvent(auditProviderHealthCheck({
       correlationId: `health_stellar_${params.network}`,
@@ -183,7 +195,7 @@ export async function checkStellarProviderHealth(params: {
       providerUrl: health.providerUrl ? redactProviderUrl(health.providerUrl) : undefined,
       chainFamily: "stellar",
       network: params.network,
-      healthy: health.healthy,
+      healthy: health.healthy && !isOutage,
       latencyMs,
     }));
 
@@ -193,9 +205,8 @@ export async function checkStellarProviderHealth(params: {
       network: params.network,
       status,
       latencyMs,
-      detail: health.healthy
-        ? `Stellar RPC healthy at ledger ${health.latestLedger} (${latencyMs}ms).`
-        : `Stellar RPC degraded: status=${health.status}, ledger=${health.latestLedger}.`,
+      score: bestScore,
+      detail,
       checkedAt: health.checkedAt,
     };
   } catch (error) {

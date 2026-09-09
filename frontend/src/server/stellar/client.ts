@@ -98,6 +98,7 @@ export async function getStellarRpcHealth(value?: string) {
         ) > 0
       : false,
     providerDisagreement: report.providerDisagreement,
+    outage: report.outage,
     providers: report.providers,
   };
 }
