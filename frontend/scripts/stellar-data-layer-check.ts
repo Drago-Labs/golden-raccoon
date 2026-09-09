@@ -109,24 +109,81 @@ function expectDataLayerError(
 
 async function checkSdkLedgerKeys() {
   const accountKey = buildAccountLedgerKey(accountId);
-  assert.equal(accountKey.switch(), xdr.LedgerEntryType.account());
+  const accountType =
+    (accountKey as any).switch !== undefined
+      ? typeof (accountKey as any).switch === "function"
+        ? (accountKey as any).switch()
+        : (accountKey as any).switch
+      : accountKey.type;
+  const expectedAccountType =
+    typeof xdr.LedgerEntryType.account === "function"
+      ? (xdr.LedgerEntryType.account as any)()
+      : xdr.LedgerEntryType.account;
+  assert.equal(
+    accountType?.name ?? accountType,
+    expectedAccountType?.name ?? expectedAccountType,
+  );
+
+  const accountArm =
+    typeof (accountKey as any).account === "function"
+      ? (accountKey as any).account()
+      : (accountKey as any).account;
+  const accountIdArm =
+    typeof accountArm.accountId === "function"
+      ? accountArm.accountId()
+      : accountArm.accountId;
+  const ed25519Arm =
+    typeof accountIdArm.ed25519 === "function"
+      ? accountIdArm.ed25519()
+      : (accountIdArm.ed25519.value ?? accountIdArm.ed25519);
   assert.deepEqual(
-    Buffer.from(accountKey.account().accountId().ed25519()),
-    Keypair.fromPublicKey(accountId).rawPublicKey(),
+    Buffer.from(ed25519Arm),
+    Buffer.from(Keypair.fromPublicKey(accountId).rawPublicKey()),
   );
 
   const contractKey = buildContractDataLedgerKey(
     contractId,
     xdr.ScVal.scvSymbol("risk"),
   );
-  assert.equal(contractKey.switch(), xdr.LedgerEntryType.contractData());
+  const contractType =
+    (contractKey as any).switch !== undefined
+      ? typeof (contractKey as any).switch === "function"
+        ? (contractKey as any).switch()
+        : (contractKey as any).switch
+      : contractKey.type;
+  const expectedContractType =
+    typeof xdr.LedgerEntryType.contractData === "function"
+      ? (xdr.LedgerEntryType.contractData as any)()
+      : xdr.LedgerEntryType.contractData;
   assert.equal(
-    Address.fromScAddress(contractKey.contractData().contract()).toString(),
+    contractType?.name ?? contractType,
+    expectedContractType?.name ?? expectedContractType,
+  );
+
+  const contractDataArm =
+    typeof (contractKey as any).contractData === "function"
+      ? (contractKey as any).contractData()
+      : (contractKey as any).contractData;
+  const contractAddr =
+    typeof contractDataArm.contract === "function"
+      ? contractDataArm.contract()
+      : contractDataArm.contract;
+  assert.equal(
+    Address.fromScAddress(contractAddr).toString(),
     contractId,
   );
+
+  const durabilityArm =
+    typeof contractDataArm.durability === "function"
+      ? contractDataArm.durability()
+      : contractDataArm.durability;
+  const expectedDurability =
+    typeof xdr.ContractDataDurability.persistent === "function"
+      ? (xdr.ContractDataDurability.persistent as any)()
+      : xdr.ContractDataDurability.persistent;
   assert.equal(
-    contractKey.contractData().durability(),
-    xdr.ContractDataDurability.persistent(),
+    durabilityArm?.name ?? durabilityArm,
+    expectedDurability?.name ?? expectedDurability,
   );
 }
 

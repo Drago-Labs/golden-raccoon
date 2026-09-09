@@ -16,6 +16,24 @@ import {
 } from "@/lib/stellar/config";
 import { redactProviderUrl } from "@/lib/stellar/failover";
 import { sharedProviderCircuits } from "@/server/providers/adapter";
+import {
+  StellarDataLayerError,
+  type StellarProviderAttempt,
+  type StellarProviderErrorCode,
+} from "./errors";
+import {
+  EndpointSelector,
+  hedgedExecute,
+  ProbeScheduler,
+  RequestBudget,
+  type EndpointHealthState,
+} from "./transport";
+
+export {
+  StellarDataLayerError,
+  type StellarProviderAttempt,
+  type StellarProviderErrorCode,
+};
 
 export type StellarRpcTransport = Pick<
   rpc.Server,
@@ -34,30 +52,6 @@ export type StellarRpcTransportFactory = (
   requestId: string,
 ) => StellarRpcTransport;
 
-export type StellarProviderErrorCode =
-  | "all_providers_failed"
-  | "invalid_request"
-  | "malformed_xdr"
-  | "missing_entry"
-  | "network_mismatch"
-  | "provider_lag"
-  | "rpc_error"
-  | "simulation_failed"
-  | "submission_failed"
-  | "timeout"
-  | "transport_error";
-
-export type StellarProviderAttempt = {
-  providerUrl: string;
-  stage: "health" | "operation";
-  attempt: number;
-  ok: boolean;
-  latencyMs: number;
-  ledgerHeight?: number;
-  errorCode?: StellarProviderErrorCode;
-  error?: string;
-};
-
 export type StellarProviderMetadata = {
   requestId: string;
   network: StellarNetworkId;
@@ -73,6 +67,7 @@ export type StellarProviderMetadata = {
   attempts: StellarProviderAttempt[];
   reliability: number;
   confidence: number;
+  hedged?: boolean;
 };
 
 export type StellarRpcResult<T> = {
@@ -83,6 +78,8 @@ export type StellarRpcResult<T> = {
 export type StellarProviderHealth = {
   providerUrl: string;
   healthy: boolean;
+  score?: number;
+  state?: EndpointHealthState;
   passphrase?: string;
   protocolVersion?: string;
   ledgerHeight?: number;
@@ -100,6 +97,10 @@ export type StellarHealthReport = {
   checkedAt: string;
   highestObservedLedger?: number;
   providerDisagreement: boolean;
+  outage?: {
+    isOutage: boolean;
+    reason?: string;
+  };
   providers: StellarProviderHealth[];
 };
 
@@ -111,19 +112,26 @@ export type StellarDataLayerOptions = {
   providerUrls?: readonly string[];
   transportFactory?: StellarRpcTransportFactory;
   timeoutMs?: number;
+  totalBudgetMs?: number;
   retryLimit?: number;
   retryDelayMs?: number;
   maxLedgerLag?: number;
+  enableHedging?: boolean;
+  hedgeDelayMs?: number;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
 };
 
-type ExecuteOptions = {
+export type ExecuteOptions = {
   requestId?: string;
   retryLimit?: number;
+  totalBudgetMs?: number;
+  enableHedging?: boolean;
+  hedgeDelayMs?: number;
 };
 
 const DEFAULT_TIMEOUT_MS = 12_000;
+const DEFAULT_TOTAL_BUDGET_MS = 8_000;
 const DEFAULT_MAX_LEDGER_LAG = 3;
 
 function defaultTransportFactory(providerUrl: string, requestId: string) {
@@ -205,18 +213,6 @@ function boundedScore(value: number) {
   return Math.max(0, Math.min(1, Number(value.toFixed(2))));
 }
 
-export class StellarDataLayerError extends Error {
-  constructor(
-    readonly code: StellarProviderErrorCode,
-    message: string,
-    readonly retryable: boolean,
-    readonly attempts: readonly StellarProviderAttempt[] = [],
-  ) {
-    super(message);
-    this.name = "StellarDataLayerError";
-  }
-}
-
 /**
  * Cache helper that makes the network dimension mandatory. A testnet value
  * cannot be addressed through a pubnet key, even when the resource ID matches.
@@ -285,14 +281,20 @@ export function buildContractDataLedgerKey(
     );
   }
 
+  const persistentVal =
+    typeof xdr.ContractDataDurability.persistent === "function"
+      ? (xdr.ContractDataDurability.persistent as unknown as () => xdr.ContractDataDurability)()
+      : xdr.ContractDataDurability.persistent;
+  const temporaryVal =
+    typeof xdr.ContractDataDurability.temporary === "function"
+      ? (xdr.ContractDataDurability.temporary as unknown as () => xdr.ContractDataDurability)()
+      : xdr.ContractDataDurability.temporary;
+
   return xdr.LedgerKey.contractData(
     new xdr.LedgerKeyContractData({
       contract,
       key: key instanceof xdr.ScVal ? key : nativeToScVal(key),
-      durability:
-        durability === "persistent"
-          ? xdr.ContractDataDurability.persistent()
-          : xdr.ContractDataDurability.temporary(),
+      durability: durability === "persistent" ? persistentVal : temporaryVal,
     }),
   );
 }
@@ -302,11 +304,16 @@ export class StellarRpcDataLayer {
   private readonly providerUrls: readonly string[];
   private readonly transportFactory: StellarRpcTransportFactory;
   private readonly timeoutMs: number;
+  private readonly totalBudgetMs: number;
   private readonly retryLimit: number;
   private readonly retryDelayMs: number;
   private readonly maxLedgerLag: number;
+  private readonly enableHedging: boolean;
+  private readonly hedgeDelayMs: number;
   private readonly now: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
+  private readonly scheduler: ProbeScheduler;
+  private readonly selector: EndpointSelector;
 
   constructor(networkId: StellarNetworkId, options: StellarDataLayerOptions = {}) {
     const network = getStellarNetwork(networkId);
@@ -321,9 +328,12 @@ export class StellarRpcDataLayer {
     this.providerUrls = options.providerUrls ?? getStellarRpcUrls(network);
     this.transportFactory = options.transportFactory ?? defaultTransportFactory;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.totalBudgetMs = options.totalBudgetMs ?? DEFAULT_TOTAL_BUDGET_MS;
     this.retryLimit = Math.max(0, options.retryLimit ?? 1);
     this.retryDelayMs = Math.max(0, options.retryDelayMs ?? 150);
     this.maxLedgerLag = Math.max(0, options.maxLedgerLag ?? DEFAULT_MAX_LEDGER_LAG);
+    this.enableHedging = options.enableHedging ?? false;
+    this.hedgeDelayMs = options.hedgeDelayMs ?? 150;
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? defaultSleep;
 
@@ -334,6 +344,25 @@ export class StellarRpcDataLayer {
         false,
       );
     }
+
+    this.scheduler = new ProbeScheduler({
+      endpoints: this.providerUrls,
+      transportFactory: (url) => this.transportFactory(url, "probe"),
+      expectedPassphrase: this.network.networkPassphrase,
+      expectedProtocolVersion: this.network.expectedProtocolVersion,
+      maxLag: this.maxLedgerLag,
+      timeoutMs: this.timeoutMs,
+      now: this.now,
+    });
+    this.selector = new EndpointSelector(this.scheduler);
+  }
+
+  getScheduler(): ProbeScheduler {
+    return this.scheduler;
+  }
+
+  getSelector(): EndpointSelector {
+    return this.selector;
   }
 
   private async probeProvider(
@@ -435,7 +464,7 @@ export class StellarRpcDataLayer {
     const highestObservedLedger =
       heights.length > 0 ? Math.max(...heights) : undefined;
 
-    return probes.map((probe) => {
+    const evaluated = probes.map((probe) => {
       const lag =
         highestObservedLedger !== undefined && probe.ledgerHeight !== undefined
           ? highestObservedLedger - probe.ledgerHeight
@@ -451,6 +480,18 @@ export class StellarRpcDataLayer {
       }
       return { ...probe, lag };
     });
+
+    for (const probe of evaluated) {
+      this.scheduler.recordOutcome(probe.providerUrl, {
+        ok: probe.healthy,
+        latencyMs: probe.latencyMs,
+        ledgerHeight: probe.ledgerHeight,
+        errorCode: probe.errorCode,
+        error: probe.error,
+      });
+    }
+
+    return evaluated;
   }
 
   async getHealth(
@@ -470,25 +511,36 @@ export class StellarRpcDataLayer {
           provider.errorCode === "provider_lag",
       );
 
+    const outageStatus = this.selector.getOutageStatus();
+    const states = this.scheduler.getAllStates();
+
     return {
-      healthy: providers.every((provider) => provider.healthy),
+      healthy: !outageStatus.isOutage && providers.length > 0 && providers.every((provider) => provider.healthy),
       requestId,
       network: this.network.id,
       checkedAt: new Date(this.now()).toISOString(),
       highestObservedLedger,
       providerDisagreement,
-      providers: providers.map((provider) => ({
-        providerUrl: provider.providerUrl,
-        healthy: provider.healthy,
-        passphrase: provider.passphrase,
-        protocolVersion: provider.protocolVersion,
-        ledgerHeight: provider.ledgerHeight,
-        lag: provider.lag,
-        latencyMs: provider.latencyMs,
-        checkedAt: provider.checkedAt,
-        errorCode: provider.errorCode,
-        error: provider.error,
-      })),
+      outage: outageStatus.isOutage
+        ? { isOutage: true, reason: outageStatus.reason }
+        : undefined,
+      providers: providers.map((provider) => {
+        const state = states.find((s) => s.safeUrl === provider.providerUrl);
+        return {
+          providerUrl: provider.providerUrl,
+          healthy: provider.healthy,
+          score: state?.score,
+          state: state?.state,
+          passphrase: provider.passphrase,
+          protocolVersion: provider.protocolVersion,
+          ledgerHeight: provider.ledgerHeight,
+          lag: provider.lag,
+          latencyMs: provider.latencyMs,
+          checkedAt: provider.checkedAt,
+          errorCode: provider.errorCode,
+          error: provider.error,
+        };
+      }),
     };
   }
 
@@ -498,6 +550,13 @@ export class StellarRpcDataLayer {
   ): Promise<StellarRpcResult<T>> {
     const requestId = options.requestId ?? randomUUID();
     const requestStartedAt = this.now();
+    const totalBudgetMs = options.totalBudgetMs ?? this.totalBudgetMs;
+    const budget = new RequestBudget({
+      totalBudgetMs,
+      startedAt: requestStartedAt,
+      now: this.now,
+    });
+
     const probes = await this.probeProviders(requestId);
     const attempts: StellarProviderAttempt[] = probes
       .filter((probe) => !probe.healthy)
@@ -526,18 +585,124 @@ export class StellarRpcDataLayer {
       ).size > 1 || attempts.length > 0;
     const retries = Math.max(0, options.retryLimit ?? this.retryLimit);
 
-    for (const [providerIndex, probe] of probes.entries()) {
-      if (!probe.healthy) continue;
+    const healthyProbes = probes.filter((probe) => probe.healthy);
 
+    if (healthyProbes.length === 0) {
+      const outage = this.selector.getOutageStatus();
+      throw new StellarDataLayerError(
+        "all_providers_failed",
+        outage.isOutage
+          ? `Network-wide outage detected for ${this.network.id}: ${outage.reason}`
+          : `All Stellar RPC providers failed for ${this.network.id}.`,
+        false,
+        attempts,
+      );
+    }
+
+    const sortedProbes = [...healthyProbes].sort((a, b) => {
+      const scoreA = this.scheduler.getState(a.providerUrl)?.score ?? 0;
+      const scoreB = this.scheduler.getState(b.providerUrl)?.score ?? 0;
+      return scoreB - scoreA;
+    });
+
+    const useHedging =
+      (options.enableHedging ?? this.enableHedging) && sortedProbes.length >= 2;
+    if (useHedging) {
+      const primary = sortedProbes[0]!;
+      const secondary = sortedProbes[1]!;
+      const hedgeDelayMs = options.hedgeDelayMs ?? this.hedgeDelayMs;
+
+      try {
+        const hedgedResult = await hedgedExecute(
+          primary.providerUrl,
+          secondary.providerUrl,
+          async (url) => {
+            const transport = this.transportFactory(url, requestId);
+            return operation(transport);
+          },
+          {
+            hedgeDelayMs,
+            budget,
+            maxAttemptTimeoutMs: this.timeoutMs,
+            now: this.now,
+          },
+        );
+
+        const winnerUrl = redactProviderUrl(hedgedResult.winnerUrl);
+        const winnerProbe =
+          winnerUrl === primary.providerUrl ? primary : secondary;
+        const fallbackUsed = winnerUrl !== this.providerUrls[0];
+        const reliability = boundedScore(0.98 - (fallbackUsed ? 0.05 : 0));
+        const confidence = boundedScore(
+          reliability - (providerDisagreement ? 0.08 : 0),
+        );
+
+        attempts.push({
+          providerUrl: winnerUrl,
+          stage: "operation",
+          attempt: 1,
+          ok: true,
+          latencyMs: hedgedResult.durationMs,
+          ledgerHeight: winnerProbe.ledgerHeight,
+        });
+
+        return {
+          value: hedgedResult.value,
+          meta: {
+            requestId,
+            network: this.network.id,
+            providerUrl: winnerUrl,
+            fallbackUsed,
+            checkedAt: winnerProbe.checkedAt,
+            freshnessMs: Math.max(
+              0,
+              this.now() - new Date(winnerProbe.checkedAt).getTime(),
+            ),
+            latencyMs: this.now() - requestStartedAt,
+            ledgerHeight: winnerProbe.ledgerHeight,
+            highestObservedLedger,
+            ledgerLag: winnerProbe.lag,
+            providerDisagreement,
+            attempts,
+            reliability,
+            confidence,
+            hedged: hedgedResult.hedgedDispatched,
+          },
+        };
+      } catch {
+      }
+    }
+
+    for (const probe of sortedProbes) {
       for (let attempt = 0; attempt <= retries; attempt += 1) {
+        if (budget.remainingMs(this.now()) <= 0) {
+          attempts.push({
+            providerUrl: probe.providerUrl,
+            stage: "operation",
+            attempt: attempt + 1,
+            ok: false,
+            latencyMs: this.now() - requestStartedAt,
+            ledgerHeight: probe.ledgerHeight,
+            errorCode: "timeout",
+            error: `Total request budget exhausted (${totalBudgetMs}ms).`,
+          });
+          break;
+        }
+
+        const attemptTimeoutMs = budget.allocateAttemptTimeout(this.timeoutMs);
         const startedAt = this.now();
         try {
           const value = await withTimeout(
             () => operation(probe.transport),
-            this.timeoutMs,
+            attemptTimeoutMs,
             `${probe.providerUrl} operation`,
           );
           const latencyMs = this.now() - startedAt;
+          this.scheduler.recordOutcome(probe.providerUrl, {
+            ok: true,
+            latencyMs,
+            ledgerHeight: probe.ledgerHeight,
+          });
           attempts.push({
             providerUrl: probe.providerUrl,
             stage: "operation",
@@ -547,7 +712,7 @@ export class StellarRpcDataLayer {
             ledgerHeight: probe.ledgerHeight,
           });
           const failureCount = attempts.filter((item) => !item.ok).length;
-          const fallbackUsed = providerIndex > 0;
+          const fallbackUsed = probe.providerUrl !== this.providerUrls[0];
           const reliability = boundedScore(
             0.98 - failureCount * 0.16 - (fallbackUsed ? 0.1 : 0),
           );
@@ -579,6 +744,12 @@ export class StellarRpcDataLayer {
           };
         } catch (error) {
           const classified = classifyError(error);
+          this.scheduler.recordOutcome(probe.providerUrl, {
+            ok: false,
+            latencyMs: this.now() - startedAt,
+            errorCode: classified.code,
+            error: errorMessage(error),
+          });
           attempts.push({
             providerUrl: probe.providerUrl,
             stage: "operation",
@@ -589,6 +760,7 @@ export class StellarRpcDataLayer {
             errorCode: classified.code,
             error: errorMessage(error),
           });
+          if (budget.remainingMs(this.now()) <= 0) break;
           if (!classified.retryable || attempt === retries) break;
           await this.sleep(this.retryDelayMs * (attempt + 1));
         }
