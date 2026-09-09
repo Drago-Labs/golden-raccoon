@@ -19,6 +19,14 @@ import type { IStorageAdapter, AgentRunInsert, HealthProbeResult } from "./types
 import type { RiskSnapshotRecord } from "@/server/snapshots/schema";
 import { alertDeliveryToRow, rowToAlertDelivery } from "./types";
 import { wrapStorageAdapter } from "@/server/observability/tracing/spans";
+import {
+  StorageError,
+  StorageUniqueViolationError,
+  StorageNotFoundError,
+  StorageValidationError,
+  StorageConnectionError,
+  normalizeStorageError,
+} from "../errors";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -71,7 +79,11 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
   readonly provider = "supabase_postgres" as const;
   readonly persistent = true;
 
-  private client = getSupabaseClient();
+  private client: ReturnType<typeof getSupabaseClient>;
+
+  constructor(client?: ReturnType<typeof getSupabaseClient>) {
+    this.client = client ?? getSupabaseClient();
+  }
 
   // ─── Agent runs ──────────────────────────────────────────────────
 
@@ -87,7 +99,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     }
 
     const { data, error } = await query;
-    if (error) throw new StorageError("listAgentRunRecords", error);
+    if (error) throw normalizeStorageError("listAgentRunRecords", error);
     return (data ?? []).map(rowToAgentRun);
   }
 
@@ -98,7 +110,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .eq("id", id)
       .maybeSingle();
 
-    if (error) throw new StorageError("getAgentRunRecord", error);
+    if (error) throw normalizeStorageError("getAgentRunRecord", error);
     return data ? rowToAgentRun(data) : null;
   }
 
@@ -110,7 +122,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .select()
       .single();
 
-    if (error) throw new StorageError("createAgentRunRecord", error);
+    if (error) throw normalizeStorageError("createAgentRunRecord", error);
     return rowToAgentRun(data);
 
     // TODO: In a full implementation, also insert agent_results rows
@@ -132,7 +144,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     }
 
     const { data, error } = await query;
-    if (error) throw new StorageError("listRecommendationRecords", error);
+    if (error) throw normalizeStorageError("listRecommendationRecords", error);
     return (data ?? []).map(rowToRecommendation);
   }
 
@@ -144,7 +156,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .select()
       .single();
 
-    if (error) throw new StorageError("createRecommendationRecord", error);
+    if (error) throw normalizeStorageError("createRecommendationRecord", error);
     return rowToRecommendation(data);
   }
 
@@ -162,7 +174,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     }
 
     const { data, error } = await query;
-    if (error) throw new StorageError("listTransactionRecords", error);
+    if (error) throw normalizeStorageError("listTransactionRecords", error);
     return (data ?? []).map(rowToTransaction);
   }
 
@@ -177,7 +189,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .eq("tx_hash", hash)
       .maybeSingle();
 
-    if (exactError) throw new StorageError("getTransactionRecord", exactError);
+    if (exactError) throw normalizeStorageError("getTransactionRecord", exactError);
     if (exactData) return rowToTransaction(exactData);
 
     // Fallback: case-insensitive lookup for EVM hashes that may be stored in a different case
@@ -187,7 +199,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .ilike("tx_hash", hash)
       .maybeSingle();
 
-    if (ciError) throw new StorageError("getTransactionRecord", ciError);
+    if (ciError) throw normalizeStorageError("getTransactionRecord", ciError);
     return ciData ? rowToTransaction(ciData) : null;
   }
 
@@ -203,7 +215,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
         .select()
         .single();
 
-      if (error) throw new StorageError("createTransactionRecord", error);
+      if (error) throw normalizeStorageError("createTransactionRecord", error);
       return rowToTransaction(data);
     }
 
@@ -213,19 +225,19 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .select()
       .single();
 
-    if (error) throw new StorageError("createTransactionRecord", error);
+    if (error) throw normalizeStorageError("createTransactionRecord", error);
     return rowToTransaction(data);
   }
 
   async listTransactionObservations(hash: string): Promise<TransactionObservation[]> {
     const { data, error } = await this.client.from("transaction_observations").select("*").eq("transaction_hash", hash).order("observed_at", { ascending: false });
-    if (error) throw new StorageError("listTransactionObservations", error);
+    if (error) throw normalizeStorageError("listTransactionObservations", error);
     return (data ?? []).map(rowToTransactionObservation);
   }
 
   async createTransactionObservation(observation: TransactionObservation): Promise<TransactionObservation> {
     const { data, error } = await this.client.from("transaction_observations").upsert(transactionObservationToRow(observation), { onConflict: "transaction_hash,evidence_key", ignoreDuplicates: true }).select().maybeSingle();
-    if (error) throw new StorageError("createTransactionObservation", error);
+    if (error) throw normalizeStorageError("createTransactionObservation", error);
     return data ? rowToTransactionObservation(data) : observation;
   }
 
@@ -243,7 +255,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     }
 
     const { data, error } = await query;
-    if (error) throw new StorageError("listApprovalRecords", error);
+    if (error) throw normalizeStorageError("listApprovalRecords", error);
     return (data ?? []).map(rowToApproval);
   }
 
@@ -254,7 +266,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .select()
       .single();
 
-    if (error) throw new StorageError("createApprovalRecord", error);
+    if (error) throw normalizeStorageError("createApprovalRecord", error);
     return rowToApproval(data);
   }
 
@@ -268,7 +280,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .eq("wallet_address", preserveChainIdentity(walletAddress, isStellar))
       .maybeSingle();
 
-    if (error) throw new StorageError("getUserRuleRecord", error);
+    if (error) throw normalizeStorageError("getUserRuleRecord", error);
     return data ? rowToUserRule(data) : null;
   }
 
@@ -282,7 +294,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .select()
       .single();
 
-    if (error) throw new StorageError("upsertUserRuleRecord", error);
+    if (error) throw normalizeStorageError("upsertUserRuleRecord", error);
     return rowToUserRule(data);
   }
 
@@ -294,7 +306,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .select("*")
       .order("created_at", { ascending: false });
 
-    if (error) throw new StorageError("listX402PaymentReceipts", error);
+    if (error) throw normalizeStorageError("listX402PaymentReceipts", error);
     return (data ?? []).map(rowToX402Receipt);
   }
 
@@ -305,7 +317,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .eq("payment_header_hash", paymentHeaderHash)
       .maybeSingle();
 
-    if (error) throw new StorageError("getX402PaymentReceiptByHeaderHash", error);
+    if (error) throw normalizeStorageError("getX402PaymentReceiptByHeaderHash", error);
     return data ? rowToX402Receipt(data) : null;
   }
 
@@ -326,7 +338,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .select()
       .single();
 
-    if (error) throw new StorageError("createX402PaymentReceipt", error);
+    if (error) throw normalizeStorageError("createX402PaymentReceipt", error);
     return rowToX402Receipt(data);
   }
 
@@ -337,7 +349,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       const { count, error } = await this.client
         .from(table)
         .select("*", { count: "exact", head: true });
-      if (error) throw new StorageError("getStorageCounts", error);
+      if (error) throw normalizeStorageError("getStorageCounts", error);
       counts[table] = count ?? 0;
     }
     return counts as StorageCounts;
@@ -347,13 +359,13 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
 
   async getRiskSnapshot(id: string): Promise<RiskSnapshotRecord | null> {
     const { data, error } = await this.client.from("risk_snapshots").select("*").eq("id", id).maybeSingle();
-    if (error) throw new StorageError("getRiskSnapshot", error);
+    if (error) throw normalizeStorageError("getRiskSnapshot", error);
     return data ? rowToRiskSnapshot(data) : null;
   }
 
   async createRiskSnapshot(record: RiskSnapshotRecord): Promise<RiskSnapshotRecord> {
     const { data, error } = await this.client.from("risk_snapshots").insert(riskSnapshotToRow(record)).select().single();
-    if (error) throw new StorageError("createRiskSnapshot", error);
+    if (error) throw normalizeStorageError("createRiskSnapshot", error);
     return rowToRiskSnapshot(data);
   }
 
@@ -365,7 +377,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .is("revoked_at", null)
       .select()
       .maybeSingle();
-    if (error) throw new StorageError("revokeRiskSnapshot", error);
+    if (error) throw normalizeStorageError("revokeRiskSnapshot", error);
     if (data) return rowToRiskSnapshot(data);
     return this.getRiskSnapshot(id);
   }
@@ -382,7 +394,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     }
 
     const { data, error } = await query;
-    if (error) throw new StorageError("listAlertDeliveries", error);
+    if (error) throw normalizeStorageError("listAlertDeliveries", error);
     return (data ?? []).map((row) => rowToAlertDelivery(row as Record<string, unknown>));
   }
 
@@ -398,7 +410,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .eq("idempotency_key", idempotencyKey)
       .maybeSingle();
 
-    if (error) throw new StorageError("getAlertDeliveryByIdempotencyKey", error);
+    if (error) throw normalizeStorageError("getAlertDeliveryByIdempotencyKey", error);
     return data ? rowToAlertDelivery(data as Record<string, unknown>) : null;
   }
 
@@ -413,7 +425,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
 
     const row = alertDeliveryToRow(record);
     const { data, error } = await this.client.from("alert_deliveries").insert(row).select().single();
-    if (error) throw new StorageError("createAlertDelivery", error);
+    if (error) throw normalizeStorageError("createAlertDelivery", error);
     return rowToAlertDelivery(data as Record<string, unknown>);
   }
 
@@ -430,7 +442,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .eq("wallet_address", preserveChainIdentity(walletAddress, s))
       .maybeSingle();
 
-    if (existing.error) throw new StorageError("updateAlertDelivery", existing.error);
+    if (existing.error) throw normalizeStorageError("updateAlertDelivery", existing.error);
     if (!existing.data) return null;
 
     const merged = rowToAlertDelivery({
@@ -446,7 +458,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .select()
       .maybeSingle();
 
-    if (error) throw new StorageError("updateAlertDelivery", error);
+    if (error) throw normalizeStorageError("updateAlertDelivery", error);
     return data ? rowToAlertDelivery(data as Record<string, unknown>) : null;
   }
 
@@ -467,7 +479,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .eq("network", scope.network || "legacy-evm")
       .maybeSingle();
 
-    if (error) throw new StorageError("getNotificationPreferences", error);
+    if (error) throw normalizeStorageError("getNotificationPreferences", error);
     if (!data) return null;
 
     const row = data as Record<string, unknown>;
@@ -504,7 +516,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .eq("chain_family", prefs.chainFamily)
       .eq("network", network)
       .maybeSingle();
-    if (existing.error) throw new StorageError("upsertNotificationPreferences", existing.error);
+    if (existing.error) throw normalizeStorageError("upsertNotificationPreferences", existing.error);
 
     const id = prefs.id ?? existing.data?.id ?? `nfpref_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const record = {
@@ -520,7 +532,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .from("notification_preferences")
       .upsert(record, { onConflict: "id" });
 
-    if (error) throw new StorageError("upsertNotificationPreferences", error);
+    if (error) throw normalizeStorageError("upsertNotificationPreferences", error);
 
     return {
       ...prefs,
@@ -823,16 +835,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
   }
 }
 
-export class StorageError extends Error {
-  constructor(
-    public readonly operation: string,
-    public readonly cause: unknown,
-  ) {
-    const msg = cause instanceof Error ? cause.message : String(cause);
-    super(`Supabase storage error [${operation}]: ${msg}`);
-    this.name = "StorageError";
-  }
-}
+export { StorageError, StorageUniqueViolationError };
 
 // ─── Row ↔ Record mappers ────────────────────────────────────────────────────
 
