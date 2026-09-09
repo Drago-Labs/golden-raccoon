@@ -1190,9 +1190,26 @@ export type AlertTriggerType =
   | "stellar_contract_ttl"
   | "rpc_degradation";
 
-export type AlertDeliveryChannel = "in_app" | "email" | "telegram" | "discord";
+export type AlertDeliveryChannel =
+  | "in_app"
+  | "email"
+  | "telegram"
+  | "discord"
+  | "webhook"
+  | (string & {});
 
 export type AlertDeliveryStatus = "pending" | "delivered" | "failed" | "skipped";
+
+export type DeliveryAttemptHistory = {
+  attemptNumber: number;
+  timestamp: string;
+  status: AlertDeliveryStatus;
+  errorDetail?: string;
+  providerMessageId?: string;
+  durationMs?: number;
+  isReplay?: boolean;
+  terminal?: boolean;
+};
 
 export type AlertStatus = "triggered" | "recovered" | "acknowledged";
 
@@ -1318,6 +1335,9 @@ export type AlertDelivery = {
   nextRetryAt?: string;
   lastAttemptAt?: string;
   terminal?: boolean;
+  replayCount?: number;
+  lastReplayedAt?: string;
+  attempts?: DeliveryAttemptHistory[];
 };
 
 // ──────────────────────────────────────────────

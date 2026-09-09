@@ -140,10 +140,10 @@ export function redactWalletAddressInEvidence(evidence: AlertObservation["eviden
  * Redact tokens, webhook URLs, chat IDs, emails, and wallet addresses from
  * delivery error details before they are logged or persisted.
  */
-export function sanitizeDeliveryErrorDetail(detail: string | undefined): string | undefined {
+export function sanitizeDeliveryErrorDetail(detail: unknown): string | undefined {
   if (!detail) return undefined;
 
-  let out = detail;
+  let out = typeof detail === "string" ? detail : (detail instanceof Error ? detail.message : String(detail));
 
   out = out.replace(/https?:\/\/[^\s)"']+/gi, "[url-redacted]");
   out = out.replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, "[email-redacted]");

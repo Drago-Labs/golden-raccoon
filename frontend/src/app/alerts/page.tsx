@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { AppShell } from "@/components/AppShell";
 import { AlertRuleForm } from "@/components/AlertRuleForm";
 import { AlertHistoryList } from "@/components/AlertHistoryList";
+import { DeadLetterPanel } from "@/components/DeadLetterPanel";
 import { NotificationPreferences } from "@/components/NotificationPreferences";
 import { ensureDefaultRulesForWallet } from "@/server/observability/alertIngestion";
 import { ensureStorageReady, listAlertRules } from "@/server/storage";
@@ -78,6 +79,7 @@ export default async function AlertsPage() {
             </article>
           </div>
           <div className="space-y-4">
+            <DeadLetterPanel />
             <AlertHistoryList />
           </div>
         </section>

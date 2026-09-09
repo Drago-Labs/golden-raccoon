@@ -1,57 +1,96 @@
-# Alert delivery adapters
+# Alert Delivery System
 
-Golden Raccoon delivers triggered and recovered alerts through four channels:
+Golden Raccoon delivers triggered and recovered alerts through pluggable delivery channels with jittered exponential retries, dead-letter queuing, and operator replay controls.
 
-| Channel | Behavior |
-| --- | --- |
-| `in_app` | Always `delivered`. Surfaced via `/api/alerts/alerts`. |
-| `email` | Signed generic webhook (`ALERT_EMAIL_WEBHOOK_URL` + `ALERT_EMAIL_WEBHOOK_SECRET`). |
-| `telegram` | Telegram Bot API `sendMessage`. |
-| `discord` | Discord incoming webhook (`wait=true`). |
+## Pluggable Channel Architecture
 
-Adapters never claim `delivered` without a validated provider response.
+Channels implement the `AlertChannel` interface (`src/server/observability/channels/types.ts`):
 
-## Configuration
+```ts
+export interface AlertChannel {
+  readonly id: AlertDeliveryChannel;
+  readonly name: string;
+  health(): Promise<ChannelHealth>;
+  shapePayload?(alert: Alert, evidence?: AlertObservation["evidence"]): AlertDelivery["sanitizedPayload"];
+  send(payload: AlertDelivery["sanitizedPayload"], options: ChannelSendOptions): Promise<ChannelSendResult>;
+}
+```
 
-Set server-only env vars (see `frontend/.env.example`):
+New channels register dynamically via `registerChannel(channel)` without modifying `alertEngine.ts`:
 
-- `ALERT_EMAIL_WEBHOOK_URL` / `ALERT_EMAIL_WEBHOOK_SECRET`
-- `ALERT_TELEGRAM_BOT_TOKEN` / `ALERT_TELEGRAM_CHAT_ID`
-- `ALERT_DISCORD_WEBHOOK_URL`
-- `ALERT_FORCE_FAIL_CHANNELS` — chaos hook (`email,telegram`) for fixtures/staging
-- `ALERT_DELIVERY_BACKOFF_MS=0` — disable retry sleeps in tests
+```ts
+import { registerChannel } from "@/server/observability/channels/registry";
+registerChannel(new CustomChannel());
+```
 
-Missing config yields `skipped`, not a false success.
+### Supported Channels
 
-## Email webhook signature
+| Channel | Identifier | Mechanism | Configuration |
+| --- | --- | --- | --- |
+| In-App | `in_app` | Local persistence and feed | Always available |
+| Email | `email` | Signed webhook | `ALERT_EMAIL_WEBHOOK_URL`, `ALERT_EMAIL_WEBHOOK_SECRET` |
+| Telegram | `telegram` | Telegram Bot API `sendMessage` | `ALERT_TELEGRAM_BOT_TOKEN`, `ALERT_TELEGRAM_CHAT_ID` |
+| Discord | `discord` | Discord Webhook with `wait=true` | `ALERT_DISCORD_WEBHOOK_URL` |
+| Webhook | `webhook` | Generic HMAC-SHA256 signed POST | `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_SECRET` |
 
-Each email webhook POST includes:
+## Webhook Signatures & Idempotency
 
-- `x-alert-timestamp` — ISO timestamp
-- `x-alert-signature` — `sha256=<hex>`
-- `x-idempotency-key` — stable fan-out key
+All outgoing webhook payloads (`email` and `webhook`) include:
 
-Signature material: `HMAC_SHA256(secret, timestamp + "." + body)`.
+- `x-alert-timestamp`: ISO 8601 timestamp
+- `x-alert-signature`: `sha256=<hex>` computed via `HMAC_SHA256(secret, timestamp + "." + body)`
+- `x-idempotency-key`: Deterministic or random deduplication key
 
-Receivers should verify with a constant-time compare and reject stale timestamps.
+Signatures are verified using constant-time comparison (`crypto.timingSafeEqual`) to prevent timing attacks.
 
-## Retry policy
+## Redaction & Sanitization Boundary
 
-- Timeout, `429`, and `5xx` are retryable (bounded, default 3 attempts).
-- Permanent `4xx` (except `429`), malformed success bodies, and cancellation are terminal.
-- Terminal recipient/config errors are never retried.
-- Wallet-scoped `POST /api/alerts/deliveries` with `{ deliveryId }` retries a non-terminal failed row.
+Sanitization occurs strictly prior to channel dispatch:
+- Payloads pass through `buildSanitizedAlertPayload` to mask wallet addresses (`0x1234...abcd`).
+- Error details pass through `sanitizeDeliveryErrorDetail` to strip secrets, bearer tokens, query parameters, webhooks, and private endpoints before persisting to storage or rendering in UI.
+- No channel can receive data that the sanitizer strips.
 
-## Privacy
+## Retry Policy with Jitter
 
-Outbound payloads use `buildSanitizedAlertPayload` (wallet hints only). Error details are redacted before storage/UI — tokens, webhook URLs, chat IDs, emails, and wallet addresses must never appear in logs or audit rows.
+Deliveries employ exponential backoff with full jitter:
 
-## Tests
+- Formula: `sleepMs = randomBetween(0, min(maxMs, baseMs * factor^attempt))`
+- Default parameters: `baseMs = 500ms`, `factor = 2`, `maxMs = 10000ms`, `jitterRatio = 0.5`.
+- Test override: `ALERT_DELIVERY_BACKOFF_MS=0` removes sleep latency in automated suites.
+- Transient errors (`429`, `5xx`, timeouts, connection drops) are retried up to 3 times.
+- Terminal errors (`400`, `401`, `403`, `404`, malformed payloads, user cancellation) abort immediately without retry.
+
+## Dead-Letter Queue (DLQ)
+
+When delivery attempts are exhausted or encounter a terminal failure:
+1. The delivery record is marked `status: "failed"` with `terminal: true`.
+2. The delivery is pushed to the in-memory dead-letter queue (`recordDeadLetter`).
+3. The queue maintains a bounded capacity (default 100 entries per wallet) with FIFO eviction.
+4. Each DLQ entry tracks the delivery ID, failure reason, timestamp, and full attempt history.
+
+### DLQ & Replay API Routes
+
+- `GET /api/alerts/deliveries/dead-letter`: List dead-lettered deliveries and current queue depth.
+- `POST /api/alerts/deliveries/dead-letter`: Replay all dead-lettered deliveries for the authenticated wallet.
+- `POST /api/alerts/deliveries/[id]/replay`: Replay an individual failed delivery.
+
+Replays:
+- Enforce idempotency: replaying an already-delivered alert returns `409 Conflict`.
+- Append attempt records with `isReplay: true`.
+- Automatically evict successful deliveries from the dead-letter queue.
+- Increment `replayCount` and update `lastReplayedAt`.
+
+## Operator Dashboard UI
+
+The alerts console (`/alerts`) includes:
+- **Dead-Letter Panel (`DeadLetterPanel.tsx`)**: Displays dead-letter queue depth, failed channel indicators, failure reasons, individual replay buttons, and bulk "Replay All" functionality.
+- **Delivery Attempt Timeline (`AlertHistoryList.tsx`)**: Expandable attempt breakdown for each delivery row showing status, duration, failure code, and replay badges.
+
+## Verification & Testing
 
 ```bash
 cd frontend
-npm run test:alert-delivery   # fake transports only
-npm run test:alerts           # engine + force-fail fixtures
+npm run test:alert-delivery   # 17 unit/integration test fixtures covering channels, backoff, DLQ, and replay
+npm run test:alerts           # Core alert engine integration and lifecycle checks
+npm run build                 # Clean production compilation across all 81 Next.js routes
 ```
-
-Fixtures inject `setAlertDeliveryTransport(...)` and must not call live providers.
