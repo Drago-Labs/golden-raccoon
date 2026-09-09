@@ -17,6 +17,7 @@ import type { IStorageAdapter, AgentRunInsert, HealthProbeResult, StoredErasureR
 import type { RiskSnapshotRecord } from "@/server/snapshots/schema";
 import { alertDeliveryToRow, rowToAlertDelivery } from "./types";
 import { wrapStorageAdapter } from "@/server/observability/tracing/spans";
+import { StorageUniqueViolationError } from "../errors";
 
 const memoryStore = globalThis as typeof globalThis & {
   __goldenRaccoonAgentRuns?: AgentRunRecord[];
@@ -102,6 +103,12 @@ export class MemoryStorageAdapter implements IStorageAdapter {
   }
 
   async createAgentRunRecord(record: AgentRunInsert): Promise<AgentRunRecord> {
+    if (getAgentRuns().some((r) => r.id === record.id)) {
+      throw new StorageUniqueViolationError("createAgentRunRecord", {
+        conflictKey: record.id,
+        targetTable: "agent_runs",
+      });
+    }
     const full: AgentRunRecord = {
       ...record,
       mode: record.mode ?? undefined,
@@ -123,6 +130,12 @@ export class MemoryStorageAdapter implements IStorageAdapter {
   }
 
   async createRecommendationRecord(record: RecommendationRecord): Promise<RecommendationRecord> {
+    if (getRecommendations().some((r) => r.id === record.id)) {
+      throw new StorageUniqueViolationError("createRecommendationRecord", {
+        conflictKey: record.id,
+        targetTable: "recommendations",
+      });
+    }
     getRecommendations().unshift(record);
     return record;
   }
@@ -141,14 +154,16 @@ export class MemoryStorageAdapter implements IStorageAdapter {
   }
 
   async createTransactionRecord(record: TransactionRecord): Promise<TransactionRecord> {
-    const existingIdx = getTransactions().findIndex(
+    const existing = getTransactions().find(
       (r) => r.hash.toLowerCase() === record.hash.toLowerCase(),
     );
-    if (existingIdx >= 0) {
-      getTransactions()[existingIdx] = record;
-    } else {
-      getTransactions().unshift(record);
+    if (existing) {
+      throw new StorageUniqueViolationError("createTransactionRecord", {
+        conflictKey: record.hash,
+        targetTable: "transactions",
+      });
     }
+    getTransactions().unshift(record);
     return record;
   }
 
@@ -175,6 +190,12 @@ export class MemoryStorageAdapter implements IStorageAdapter {
   }
 
   async createApprovalRecord(record: UserApprovalRecord): Promise<UserApprovalRecord> {
+    if (getApprovals().some((r) => r.id === record.id)) {
+      throw new StorageUniqueViolationError("createApprovalRecord", {
+        conflictKey: record.id,
+        targetTable: "approvals",
+      });
+    }
     getApprovals().unshift(record);
     return record;
   }
@@ -211,6 +232,12 @@ export class MemoryStorageAdapter implements IStorageAdapter {
   }
 
   async createX402PaymentReceipt(record: X402PaymentReceipt): Promise<X402PaymentReceipt> {
+    if (getX402PaymentReceipts().some((r) => r.paymentHeaderHash === record.paymentHeaderHash)) {
+      throw new StorageUniqueViolationError("createX402PaymentReceipt", {
+        conflictKey: record.paymentHeaderHash,
+        targetTable: "x402_payment_receipts",
+      });
+    }
     getX402PaymentReceipts().unshift(record);
     return record;
   }
@@ -224,7 +251,10 @@ export class MemoryStorageAdapter implements IStorageAdapter {
 
   async createRiskSnapshot(record: RiskSnapshotRecord): Promise<RiskSnapshotRecord> {
     if (getRiskSnapshots().some((item) => item.id === record.id)) {
-      throw new Error("Risk snapshot id already exists.");
+      throw new StorageUniqueViolationError("createRiskSnapshot", {
+        conflictKey: record.id,
+        targetTable: "risk_snapshots",
+      });
     }
     const stored = structuredClone(record);
     getRiskSnapshots().push(stored);
@@ -468,6 +498,24 @@ export class MemoryStorageAdapter implements IStorageAdapter {
   async getErasureReceipt(receiptId: string): Promise<StoredErasureReceipt | null> {
     memoryStore.__goldenRaccoonErasureReceipts ??= [];
     return memoryStore.__goldenRaccoonErasureReceipts.find((r) => r.receiptId === receiptId) ?? null;
+  }
+
+  /**
+   * Resets all in-memory arrays.
+   */
+  clear(): void {
+    memoryStore.__goldenRaccoonAgentRuns = [];
+    memoryStore.__goldenRaccoonRecommendations = [];
+    memoryStore.__goldenRaccoonTransactions = [];
+    memoryStore.__goldenRaccoonTransactionObservations = [];
+    memoryStore.__goldenRaccoonApprovals = [];
+    memoryStore.__goldenRaccoonUserRules = [];
+    memoryStore.__goldenRaccoonX402PaymentReceipts = [];
+    memoryStore.__goldenRaccoonWatchlistEntries = [];
+    memoryStore.__goldenRaccoonRiskSnapshots = [];
+    memoryStore.__goldenRaccoonAdapterAlertDeliveries = [];
+    memoryStore.__goldenRaccoonAdapterNotificationPreferences = [];
+    memoryStore.__goldenRaccoonErasureReceipts = [];
   }
 }
 

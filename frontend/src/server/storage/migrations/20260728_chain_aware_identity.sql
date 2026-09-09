@@ -193,10 +193,10 @@ alter table x402_payment_receipts alter column chain_family set not null;
 alter table user_rules alter column chain_family set not null;
 alter table user_rules alter column network set not null;
 
-alter table wallets drop constraint if exists wallets_address_key;
-alter table token_identities drop constraint if exists token_identities_identity_key_key;
-alter table transactions drop constraint if exists transactions_tx_hash_key;
-alter table user_rules drop constraint if exists user_rules_wallet_address_key;
+alter table wallets drop constraint if exists wallets_address_key cascade;
+alter table token_identities drop constraint if exists token_identities_identity_key_key cascade;
+alter table transactions drop constraint if exists transactions_tx_hash_key cascade;
+alter table user_rules drop constraint if exists user_rules_wallet_address_key cascade;
 
 create unique index if not exists wallets_chain_network_address_uidx
   on wallets(chain_family, network, address);

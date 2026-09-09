@@ -1,8 +1,10 @@
 /**
  * Storage schema contract shared by all adapters.
- * Used by the health endpoint and deploy readiness checks.
+ * Used by the health endpoint, deploy readiness checks, and migration runner.
  */
-export const storageSChemaContract: {
+export const storageSchemaContract = {
+  version: "1.0.0",
+  migrationPath: "frontend/src/server/storage/migrations/20260728_chain_aware_identity.sql",
   tables: [
     "wallets",
     "agent_runs",
@@ -15,6 +17,7 @@ export const storageSChemaContract: {
     "x402_settlement_ledger",
     "token_identities",
     "source_snapshots",
+    "migration_ledger",
   ],
   adapterApi: [
     "listAgentRunRecords",
@@ -36,4 +39,6 @@ export const storageSChemaContract: {
   sensitiveColumns: {
     wallets: ["address"],
   },
-};
+} as const;
+
+export const storageSChemaContract = storageSchemaContract;
