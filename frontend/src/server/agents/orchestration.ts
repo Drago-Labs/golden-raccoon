@@ -5,8 +5,29 @@ import { runNewsAgent } from "@/server/agents/news";
 import { runOnchainAgent } from "@/server/agents/onchain";
 import { runPortfolioAgent } from "@/server/agents/portfolio";
 import { runSocialAgent } from "@/server/agents/social";
-import { runAgentSafely } from "@/server/agents/shared";
-import { createAgentRunId, createRunStepMetadata, getRunPartialStatus } from "@/server/agents/orchestrationState";
+import {
+  buildSkippedByBreakerResult,
+  buildSkippedByDeadlineResult,
+  buildUnavailableAgentResult,
+  runAgentSafely,
+} from "@/server/agents/shared";
+import {
+  createAgentRunId,
+  createRunStepMetadata,
+  getRunDegradedStatus,
+  getRunPartialStatus,
+} from "@/server/agents/orchestrationState";
+import {
+  type AgentBudgetConfig,
+  type RunBudgetAccounting,
+  DeadlineController,
+  RunBudgetTracker,
+  resolveBudgetPolicy,
+} from "@/server/agents/budget";
+import {
+  CircuitBreakerOpenError,
+  getAgentCircuitBreaker,
+} from "@/server/agents/breaker";
 import { resolveTokenIdentity } from "@/server/identity/tokenIdentity";
 import { createAgentRunRecord, getUserRuleRecord } from "@/server/storage";
 import { createTranscriptRecorder, type AgentRunTranscript } from "@/server/evaluation/harness";
@@ -23,6 +44,8 @@ type AgentOrchestrationInput = {
     source?: string;
     metrics?: Record<string, unknown>;
   };
+  budget?: Partial<AgentBudgetConfig>;
+  clock?: () => number;
 };
 
 type AgentOrchestrationResult = {
@@ -34,6 +57,9 @@ type AgentOrchestrationResult = {
   runRecord?: AgentRunRecord;
   runId: string;
   partialStatus: ReturnType<typeof getRunPartialStatus>;
+  budgetAccounting: RunBudgetAccounting;
+  degraded: boolean;
+  missingAgents: string[];
   transcript?: AgentRunTranscript;
 };
 
@@ -72,47 +98,165 @@ function getCandidateHoldings(portfolio?: PortfolioSnapshot): AgentInputIdentity
     }));
 }
 
-async function runWithRunMetadata(runId: string, agent: AgentResult["agent"], task: () => Promise<AgentResult>, timeoutMs = 12_000) {
-  const timeout = new Promise<AgentResult>((_, reject) => {
-    setTimeout(() => reject(new Error(`${agent} timed out after ${timeoutMs}ms`)), timeoutMs);
-  });
-  const result = await runAgentSafely(agent, () => Promise.race([task(), timeout]));
+async function runWithRunMetadata(
+  runId: string,
+  agent: AgentResult["agent"],
+  task: () => Promise<AgentResult>,
+  deadline: DeadlineController,
+  tracker: RunBudgetTracker,
+  clock?: () => number,
+  timeoutMs = 12_000,
+): Promise<AgentResult> {
+  if (deadline.isExpired) {
+    const skipped = buildSkippedByDeadlineResult(agent, "Wall-clock deadline elapsed before agent execution started");
+    return {
+      ...skipped,
+      rawSignals: {
+        ...(skipped.rawSignals ?? {}),
+        orchestration: createRunStepMetadata(runId, agent),
+      },
+    };
+  }
 
-  return {
-    ...result,
-    rawSignals: {
-      ...(result.rawSignals ?? {}),
-      orchestration: createRunStepMetadata(runId, agent),
-    },
-  };
+  const breaker = getAgentCircuitBreaker(agent, { clock });
+  const breakerCheck = breaker.canExecute();
+  if (!breakerCheck.allowed) {
+    const skipped = buildSkippedByBreakerResult(agent, breakerCheck.reason ?? "Circuit breaker is open");
+    return {
+      ...skipped,
+      rawSignals: {
+        ...(skipped.rawSignals ?? {}),
+        orchestration: createRunStepMetadata(runId, agent),
+      },
+    };
+  }
+
+  const budgetCheck = tracker.canMakeCall(agent);
+  if (!budgetCheck.allowed) {
+    const skipped = buildSkippedByDeadlineResult(agent, budgetCheck.reason ?? "Monetary ceiling exceeded");
+    return {
+      ...skipped,
+      rawSignals: {
+        ...(skipped.rawSignals ?? {}),
+        orchestration: createRunStepMetadata(runId, agent),
+      },
+    };
+  }
+
+  const effectiveTimeout = Math.max(1, Math.min(deadline.remainingMs, timeoutMs));
+
+  try {
+    const result = await breaker.execute(async () => {
+      tracker.recordCall(agent);
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error(`${agent} timed out after ${effectiveTimeout}ms`));
+        }, effectiveTimeout);
+
+        deadline.signal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(new Error(`${agent} deadline aborted`));
+        }, { once: true });
+      });
+
+      return await Promise.race([task(), timeoutPromise]);
+    });
+
+    return {
+      ...result,
+      rawSignals: {
+        ...(result.rawSignals ?? {}),
+        orchestration: createRunStepMetadata(runId, agent),
+      },
+    };
+  } catch (error) {
+    if (error instanceof CircuitBreakerOpenError) {
+      const skipped = buildSkippedByBreakerResult(agent, error.message);
+      return {
+        ...skipped,
+        rawSignals: {
+          ...(skipped.rawSignals ?? {}),
+          orchestration: createRunStepMetadata(runId, agent),
+        },
+      };
+    }
+
+    if (deadline.isExpired || (error instanceof Error && (error.message.includes("timed out") || error.message.includes("deadline aborted")))) {
+      const skipped = buildSkippedByDeadlineResult(agent, error instanceof Error ? error.message : "Deadline expired");
+      return {
+        ...skipped,
+        rawSignals: {
+          ...(skipped.rawSignals ?? {}),
+          orchestration: createRunStepMetadata(runId, agent),
+        },
+      };
+    }
+
+    const failed = buildUnavailableAgentResult(agent, error instanceof Error ? error.message : "Agent failed unexpectedly.");
+    return {
+      ...failed,
+      rawSignals: {
+        ...(failed.rawSignals ?? {}),
+        orchestration: createRunStepMetadata(runId, agent),
+      },
+    };
+  }
 }
 
-async function runTokenSpecialists(identity: ReturnType<typeof resolveTokenIdentity>, runId: string) {
+async function runTokenSpecialists(
+  identity: ReturnType<typeof resolveTokenIdentity>,
+  runId: string,
+  deadline: DeadlineController,
+  tracker: RunBudgetTracker,
+  clock?: () => number,
+) {
   const [onchain, news, social] = await Promise.all([
-    runWithRunMetadata(runId, "onchain", () =>
-      runOnchainAgent({
-        chain: identity.chain,
-        contractAddress: identity.contractAddress,
-      }),
+    runWithRunMetadata(
+      runId,
+      "onchain",
+      () =>
+        runOnchainAgent({
+          chain: identity.chain,
+          contractAddress: identity.contractAddress,
+        }),
+      deadline,
+      tracker,
+      clock,
+      8_000,
     ),
-    runWithRunMetadata(runId, "news", () =>
-      runNewsAgent({
-        tokenName: identity.tokenName,
-        symbol: identity.symbol,
-        contractAddress: identity.contractAddress,
-        websiteUrl: identity.websiteUrl,
-        chain: identity.chain,
-      }),
+    runWithRunMetadata(
+      runId,
+      "news",
+      () =>
+        runNewsAgent({
+          tokenName: identity.tokenName,
+          symbol: identity.symbol,
+          contractAddress: identity.contractAddress,
+          websiteUrl: identity.websiteUrl,
+          chain: identity.chain,
+        }),
+      deadline,
+      tracker,
+      clock,
+      8_000,
     ),
-    runWithRunMetadata(runId, "social", () =>
-      runSocialAgent({
-        tokenName: identity.tokenName,
-        symbol: identity.symbol,
-        contractAddress: identity.contractAddress,
-        websiteUrl: identity.websiteUrl,
-        twitterUrl: identity.twitterUrl,
-        telegramUrl: identity.telegramUrl,
-      }),
+    runWithRunMetadata(
+      runId,
+      "social",
+      () =>
+        runSocialAgent({
+          tokenName: identity.tokenName,
+          symbol: identity.symbol,
+          contractAddress: identity.contractAddress,
+          websiteUrl: identity.websiteUrl,
+          twitterUrl: identity.twitterUrl,
+          telegramUrl: identity.telegramUrl,
+        }),
+      deadline,
+      tracker,
+      clock,
+      8_000,
     ),
   ]);
 
@@ -134,6 +278,10 @@ function getDependencyGraph(mode: AgentRunMode) {
 
 export async function runAgentOrchestration(input: AgentOrchestrationInput): Promise<AgentOrchestrationResult> {
   const runId = createAgentRunId();
+  const budgetPolicy = resolveBudgetPolicy(input.budget);
+  const deadline = new DeadlineController(budgetPolicy.deadlineMs, input.clock ?? Date.now);
+  const tracker = new RunBudgetTracker(runId, budgetPolicy);
+
   const recorder = createTranscriptRecorder({
     runId,
     chainFamily: input.identity?.chain?.startsWith("stellar") ? "stellar" : "evm",
@@ -146,7 +294,15 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
   const candidateInputs: AgentInputIdentity[] = [];
 
   if (input.mode === "portfolio_review" || input.mode === "holding_review" || input.mode === "execution_prepare") {
-    const portfolioResult = await runWithRunMetadata(runId, "portfolio", () => runPortfolioAgent(input.walletAddress), 8_000);
+    const portfolioResult = await runWithRunMetadata(
+      runId,
+      "portfolio",
+      () => runPortfolioAgent(input.walletAddress),
+      deadline,
+      tracker,
+      input.clock,
+      8_000,
+    );
     results.push(portfolioResult);
     identityInput = identityInput ?? getRiskiestHolding(input.portfolio);
     candidateInputs.push(...getCandidateHoldings(input.portfolio));
@@ -161,12 +317,13 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
     for (const candidate of candidateInputs) {
       const candidateIdentity = resolveTokenIdentity(candidate);
 
-      results.push(...(await runTokenSpecialists(candidateIdentity, runId)));
+      results.push(...(await runTokenSpecialists(candidateIdentity, runId, deadline, tracker, input.clock)));
     }
   } else if (identity && input.mode !== "execution_prepare") {
-    results.push(...(await runTokenSpecialists(identity, runId)));
+    results.push(...(await runTokenSpecialists(identity, runId, deadline, tracker, input.clock)));
   }
 
+  tracker.recordCall("decision");
   const decision = runDecisionAgent({
     results,
     context: {
@@ -195,21 +352,31 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
   });
 
   if (input.mode === "execution_prepare") {
-    const execution = await runWithRunMetadata(runId, "execution", () =>
-      runExecutionAgent({
-        action: decision.recommendedAction,
-        walletAddress: input.walletAddress,
-        fromToken: identity?.symbol,
-        riskScore: decision.riskScore,
-        network: identity?.chain,
-        rules: userRules,
-      }),
+    const execution = await runWithRunMetadata(
+      runId,
+      "execution",
+      () =>
+        runExecutionAgent({
+          action: decision.recommendedAction,
+          walletAddress: input.walletAddress,
+          fromToken: identity?.symbol,
+          riskScore: decision.riskScore,
+          network: identity?.chain,
+          rules: userRules,
+        }),
+      deadline,
+      tracker,
+      input.clock,
+      8_000,
     );
 
     results.push(execution);
   }
 
   const partialStatus = getRunPartialStatus(results);
+  const degradedStatus = getRunDegradedStatus(results);
+  const budgetAccounting = tracker.getAccounting();
+
   recorder.recordStage("observe", { mode: input.mode }, results.filter((result) => result.agent === "portfolio"));
   recorder.recordStage("analyze", { resultCount: results.length }, results.map((result) => ({ agent: result.agent, riskScore: result.riskScore, confidence: result.confidence })));
   recorder.recordStage("plan", { mode: input.mode }, decision.rawSignals?.executionPlan ?? null);
@@ -227,6 +394,8 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
           candidateCount: candidateInputs.length,
           runId,
           partialStatus,
+          degradedStatus,
+          budgetAccounting,
         },
         targetToken: identity
           ? {
@@ -237,6 +406,9 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
             }
           : undefined,
         results,
+        budgetAccounting,
+        degraded: degradedStatus.degraded,
+        missingAgents: degradedStatus.missingAgents,
       })
     : undefined;
 
@@ -248,6 +420,9 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
     results,
     decision,
     partialStatus,
+    budgetAccounting,
+    degraded: degradedStatus.degraded,
+    missingAgents: degradedStatus.missingAgents,
     runRecord,
     transcript,
   };

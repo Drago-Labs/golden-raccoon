@@ -65,6 +65,9 @@ export interface CreateAgentRunInput {
   targetToken?: AgentRunRecord["targetToken"];
   results: AgentResult[];
   userAction?: AgentRunRecord["userAction"];
+  budgetAccounting?: AgentRunRecord["budgetAccounting"];
+  degraded?: boolean;
+  missingAgents?: string[];
 }
 
 /** Pre-built agent run record ready for insertion. */
