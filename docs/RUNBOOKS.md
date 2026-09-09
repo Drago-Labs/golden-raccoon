@@ -296,6 +296,93 @@ See `docs/PROVIDER_RESILIENCE.md` for state-machine and scoring details.
 
 ---
 
+## RB-007: Emergency Circuit Breaker Activation
+
+**Severity:** Critical  
+**Disable switch:** `DISABLE_EXECUTION_PROVIDERS=true`, `RECOMMENDATION_ONLY_MODE=true`
+
+### Scenario
+An active security incident, smart contract exploit, or critical on-chain anomaly requires immediate halt of all execution transactions and on-chain contract interactions.
+
+### Detection
+- Anomaly alerts or exploit telemetry reported by security monitors.
+- Critical execution error spike on `/api/health`.
+- Manual emergency escalation by incident response team.
+
+### Diagnosis
+- Identify affected networks (EVM, Stellar, or both).
+- Inspect transaction history and mempool activity for suspicious transactions.
+- Check contract pause state:
+  ```bash
+  cast call <POLICY_ADDRESS> "paused()(bool)" --rpc-url <RPC_URL>
+  ```
+
+### Containment
+- Trigger emergency pause contract circuit breaker:
+  ```bash
+  cast send <POLICY_ADDRESS> "emergencyPause()" --rpc-url <RPC_URL> --private-key <ADMIN_KEY>
+  ```
+- For Stellar:
+  ```bash
+  stellar contract invoke --id <POLICY_ID> --source-account <ADMIN_KEY> --network <NETWORK> -- emergency_pause
+  ```
+- Set runtime switches: `DISABLE_EXECUTION_PROVIDERS=true`, `RECOMMENDATION_ONLY_MODE=true`.
+- Run emergency pause rehearsal script to verify:
+  ```bash
+  npm run rehearse:emergency-pause
+  ```
+
+### Recovery
+- Address root cause or patch affected contract.
+- Unpause policy contract following multi-sig governance approval.
+- Re-enable execution providers once verified.
+
+### Verification
+- Confirm `rehearse:emergency-pause` and `rehearse:rollback` pass cleanly.
+- Verify health checks and safe recommendation-only operations.
+
+---
+
+## RB-008: Machine-Checkable Release Gates Blocked
+
+**Severity:** High  
+**Disable switch:** N/A (Release gate blocks promotion automatically)
+
+### Scenario
+Deployment pipeline or release candidate fails machine-checkable readiness gates (`node scripts/release-gate.mjs`), blocking promotion to staging or production.
+
+### Detection
+- CI `release-gates` workflow fails with exit code 1.
+- `GET /api/operations/readiness` returns `"verdict": "blocked"`.
+- Operations dashboard displays `VERDICT: BLOCKED`.
+
+### Diagnosis
+- Execute release gate locally with verbose output:
+  ```bash
+  node scripts/release-gate.mjs --environment <target_env>
+  ```
+- Identify which critical gate failed (`rollback`, `emergencyPause`, `smoke`, `load`, `deploymentRecord`).
+- Inspect failure reasons and gate breakdowns in the terminal or `/operations` view.
+
+### Containment
+- Release candidate promotion is blocked automatically. Do not bypass gates.
+- If deployment record is incomplete, populate `docs/deployments/<chain>-<network>.md` and `.json`.
+- If load or smoke gates fail, inspect latency budgets against `docs/PERFORMANCE_BUDGETS.md`.
+
+### Recovery
+- Resolve underlying gate failures.
+- Regenerate and verify evidence artifact:
+  ```bash
+  node scripts/release-gate.mjs --generate-evidence --out docs/acceptance/release-gates-evidence.json
+  node scripts/release-gate.mjs --verify-evidence docs/acceptance/release-gates-evidence.json
+  ```
+
+### Verification
+- Ensure `node scripts/release-gate.mjs` exits 0 with `VERDICT: READY`.
+- Commit updated evidence artifact and push branch.
+
+---
+
 ### Recommendation-Only Mode
 Set `RECOMMENDATION_ONLY_MODE=true` to disable ALL execution providers while
 preserving full agent analysis, risk scoring, portfolio review, token scanning,

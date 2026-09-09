@@ -322,3 +322,37 @@ jobs:
           name: contract-artifact-provenance
           path: release-manifests/
           if-no-files-found: error
+
+  release-gates:
+    name: Machine-checkable release readiness gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Rehearse rollback switches
+        run: npm run rehearse:rollback
+
+      - name: Rehearse emergency pause
+        run: npm run rehearse:emergency-pause
+
+      - name: Evaluate release readiness gates
+        run: node scripts/release-gate.mjs --environment testnet
+
+      - name: Verify committed evidence artifact integrity
+        run: node scripts/release-gate.mjs --environment testnet --verify-evidence docs/acceptance/release-gates-evidence.json

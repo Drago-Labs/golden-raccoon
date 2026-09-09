@@ -9,6 +9,7 @@
 - [ ] Previous contract addresses documented
 - [ ] Database backup available (if applicable)
 - [ ] DNS TTL set to 300s or lower before deploy
+- [ ] Automated rehearsal verified via `npm run rehearse:rollback`
 
 ## Rollback triggers (any of the following)
 
@@ -31,9 +32,13 @@
 ```
 
 **Option B: Feature flag / kill switch**
-```
-# If feature-flagged: disable release flag
-# UI shows maintenance page via reverse proxy
+```bash
+# Set emergency environment switches:
+RECOMMENDATION_ONLY_MODE=true
+DISABLE_EXECUTION_PROVIDERS=true
+DISABLE_EVM_SUBMISSION=true
+DISABLE_STELLAR_SUBMISSION=true
+DISABLE_SUPABASE_WRITES=true
 ```
 
 ### 2. Revert infrastructure
@@ -53,10 +58,9 @@ git push origin main
 
 ### 3. Revert contracts (only if state-breaking)
 
-> ⚠️ Alert: Contracts on mainnet CANNOT be rolled back. This section covers emergency
-> measures, NOT true rollback.
+> Alert: Contracts on mainnet cannot be rolled back. This section covers emergency measures, not true rollback.
 
-**EVN contracts:**
+**EVM contracts:**
 - Use `emergencyPause()` on policy contract to halt policy checks
 - All vaults will reject deposits/withdrawals (fail-closed)
 
@@ -80,7 +84,7 @@ npx hardhat run scripts/deploy-policy.js --network mainnet
 
 # Point vaults to new policy address (not possible for non-upgradeable vaults)
 # Alternative: Deploy new vault and migrate assets
-# ⚠️ Migration requires asset transfer, which requires user cooperation
+# Migration requires asset transfer, which requires user cooperation
 ```
 
 ### 4. Communicate
@@ -109,8 +113,14 @@ If the contract itself had a vulnerability:
 3. [ ] Coordinate new deploy with asset migration plan
 4. [ ] Publish post-mortem
 
-## Testing the rollback procedure
+## Testing and Rehearsing the Rollback Procedure
 
-- Run the procedure quarterly on testnet
-- Time the rollback — must complete within 15 minutes
-- Document and address any step that takes > 5 minutes
+- Run automated rehearsal:
+  ```bash
+  npm run rehearse:rollback
+  # Or with structured JSON output:
+  node scripts/rehearse-rollback.mjs --json
+  ```
+- Run the manual drill quarterly on testnet.
+- Time the rollback — must complete within 15 minutes.
+- Document and address any step that takes > 5 minutes.

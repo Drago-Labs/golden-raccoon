@@ -384,9 +384,77 @@ export const runbookX402SettlementFailure: Runbook = {
   ],
 };
 
-// ── Registry ───────────────────────────────────────────────────────
+export const runbookEmergencyPause: Runbook = {
+  id: "RB-007",
+  title: "Emergency Circuit Breaker Activation",
+  scenario:
+    "Critical contract anomaly, exploit attempt, or severe on-chain insolvency requiring immediate cessation of contract interactions.",
+  severity: "critical",
+  disableSwitch: {
+    env: "DISABLE_EXECUTION_PROVIDERS",
+    value: "true",
+    effect: "Cease all execution immediately and force recommendation-only mode.",
+  },
+  steps: [
+    {
+      phase: "detection",
+      action: "Identify active exploit or abnormal state transition",
+      detail: "Monitor on-chain alerts, anomaly triggers, or transaction failure spikes.",
+      command: "node scripts/monitor-production.mjs",
+    },
+    {
+      phase: "containment",
+      action: "Execute emergency pause contract invocation",
+      detail: "Invoke emergencyPause on EVM and Soroban policy contracts using administrative keys.",
+      command: "node scripts/rehearse-emergency-pause.mjs",
+    },
+    {
+      phase: "containment",
+      action: "Enable execution disable switches",
+      detail: "Set DISABLE_EXECUTION_PROVIDERS=true and RECOMMENDATION_ONLY_MODE=true in application environment.",
+    },
+    {
+      phase: "verification",
+      action: "Confirm contracts are paused and executions fail closed",
+      detail: "Verify contract paused state and verify all state-modifying requests fail safely.",
+      command: "node scripts/smoke-api.mjs --json",
+    },
+  ],
+};
 
-/** All runbooks indexed by id for programmatic lookup. */
+export const runbookReadinessGatesBlocked: Runbook = {
+  id: "RB-008",
+  title: "Machine-Checkable Release Gates Blocked",
+  scenario:
+    "Automated pre-release readiness gates failed or evidence digest verification failed on deployment candidate.",
+  severity: "high",
+  steps: [
+    {
+      phase: "detection",
+      action: "Inspect blocked release gate report",
+      detail: "Query /api/operations/readiness or execute release-gate script to review failed gates.",
+      command: "node scripts/release-gate.mjs --json",
+    },
+    {
+      phase: "containment",
+      action: "Resolve failing gate check requirements",
+      detail: "Remediate missing deployment records, broken rollback rehearsal, or unrecorded performance budgets.",
+    },
+    {
+      phase: "recovery",
+      action: "Regenerate signed evidence artifact",
+      detail: "Execute release gate evidence generation bound to the target commit.",
+      command: "node scripts/release-gate.mjs --generate-evidence",
+    },
+    {
+      phase: "verification",
+      action: "Verify evidence artifact integrity",
+      detail: "Run evidence verification against target commit SHA.",
+      command: "node scripts/release-gate.mjs --verify-evidence docs/acceptance/release-gates-evidence.json",
+    },
+  ],
+};
+
 export const runbooks: Record<string, Runbook> = {
   "RB-001": runbookQuoteSimulationOutage,
   "RB-002": runbookStellarRpcLag,
@@ -394,6 +462,8 @@ export const runbooks: Record<string, Runbook> = {
   "RB-004": runbookStuckTransactions,
   "RB-005": runbookSupabaseFailure,
   "RB-006": runbookX402SettlementFailure,
+  "RB-007": runbookEmergencyPause,
+  "RB-008": runbookReadinessGatesBlocked,
 };
 
 export function listRunbooks(): Runbook[] {

@@ -14,7 +14,7 @@
 ## Who can trigger
 
 - Any maintainer can trigger emergency pause
-- No approval needed — **err on the side of pausing**
+- No approval needed — err on the side of pausing
 - Follow-up: Notify second maintainer within 5 minutes
 
 ## Quick-reference commands
@@ -49,11 +49,13 @@ stellar contract invoke \
 
 ### Frontend / API
 
-Feature-flags (if implemented):
+Feature-flags / runtime switches:
 ```bash
-curl -X POST https://app.goldenraccoon.xyz/admin/feature-flag \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -d '{"flag": "app_enabled", "value": false}'
+# Force recommendation-only mode and disable execution providers
+RECOMMENDATION_ONLY_MODE=true
+DISABLE_EXECUTION_PROVIDERS=true
+DISABLE_EVM_SUBMISSION=true
+DISABLE_STELLAR_SUBMISSION=true
 ```
 
 ## What happens when paused
@@ -74,7 +76,7 @@ curl -X POST https://app.goldenraccoon.xyz/admin/feature-flag \
 1. [ ] Confirm pause was effective (check contract state)
 2. [ ] Notify second maintainer
 3. [ ] Determine severity and plan
-4. [ ] Start incident documentation
+4. [ ] Start incident documentation (follow Runbook RB-007)
 
 ### Short-term (first 24 hours)
 1. [ ] Deploy fix or rollback
@@ -107,11 +109,17 @@ stellar contract invoke \
   unpause
 ```
 
-## Preparation (before mainnet)
+## Preparation & Automated Rehearsal
 
-- [ ] Admin private key stored in secure vault (e.g., 1Password, AWS Secrets Manager, hardware wallet)
-- [ ] Admin key accessible by at least 2 maintainers (different locations)
-- [ ] Cast CLI available on on-call workstation(s)
-- [ ] Stellar CLI (`stellar`) installed and configured
-- [ ] Emergency pause runbook printed (this document)
-- [ ] Emergency contacts list updated and accessible offline
+- Automated rehearsal verification:
+  ```bash
+  npm run rehearse:emergency-pause
+  # Or with structured JSON output:
+  node scripts/rehearse-emergency-pause.mjs --json
+  ```
+- Admin private key stored in secure vault (e.g., 1Password, AWS Secrets Manager, hardware wallet)
+- Admin key accessible by at least 2 maintainers (different locations)
+- Cast CLI available on on-call workstation(s)
+- Stellar CLI (`stellar`) installed and configured
+- Emergency pause runbook printed (this document and RB-007)
+- Emergency contacts list updated and accessible offline

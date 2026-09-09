@@ -42,7 +42,10 @@
     "retention:purge:dry": "DRY_RUN=true node scripts/retention-purge.mjs",
     "test:erasure-residue": "npm --prefix frontend run test:erasure-residue",
     "test:privacy": "npm --prefix frontend run test:privacy",
-    "test:e2e": "npm --prefix frontend run test:e2e"
+    "test:e2e": "npm --prefix frontend run test:e2e",
+    "release:gate": "node scripts/release-gate.mjs",
+    "rehearse:rollback": "node scripts/rehearse-rollback.mjs",
+    "rehearse:emergency-pause": "node scripts/rehearse-emergency-pause.mjs"
   },
   "dependencies": {
     "next": "16.3.2",

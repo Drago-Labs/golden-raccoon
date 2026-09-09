@@ -60,6 +60,7 @@ duration and output tail.
 | A5 | Production build | `npm run build` | Exit 0. |
 | A6 | Soroban contract tests | `cargo test --manifest-path soroban/Cargo.toml` | Exit 0. |
 | A7 | EVM contract compile | `npx hardhat compile` in `backend/contracts` | Exit 0. |
+| A8 | Machine-checkable release readiness gates | `node scripts/release-gate.mjs --environment testnet` | Exit 0. All critical gates pass and evidence digest verifies cleanly. |
 
 ### Agent DoD covered by A3
 

@@ -129,6 +129,11 @@ function automatedCases({ skipBuild }) {
       title: "EVM contract compile",
       run: () => capture("npx", ["hardhat", "compile"], { cwd: join(root, "backend/contracts") }),
     },
+    {
+      id: "A8",
+      title: "Machine-checkable release readiness gates",
+      run: () => capture("node", ["scripts/release-gate.mjs", "--environment", "testnet"]),
+    },
   ];
 }
 

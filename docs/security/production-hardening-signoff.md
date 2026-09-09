@@ -62,6 +62,8 @@
 | Load test (simulation, 200 req @ 10 concurrency) | `[ ]` | |
 | Load test (execution, 50 req @ 5 concurrency) | `[ ]` | |
 | Low-value smoke test | `[ ]` | |
+| Machine-checkable release readiness gates | `[ ]` | node scripts/release-gate.mjs --environment production |
+| Release gate evidence artifact verified | `[ ]` | node scripts/release-gate.mjs --verify-evidence docs/acceptance/release-gates-evidence.json |
 
 ## Runbook Verification
 
@@ -70,6 +72,8 @@
 | Deploy procedure tested on testnet | `[ ]` | |
 | Rollback procedure tested on testnet | `[ ]` | < 15 minutes |
 | Emergency pause tested on testnet | `[ ]` | < 2 minutes |
+| Rollback rehearsal script passed | `[ ]` | npm run rehearse:rollback |
+| Emergency pause rehearsal script passed | `[ ]` | npm run rehearse:emergency-pause |
 | Hash freeze manifest generated | `[ ]` | `npm run provenance:freeze -- --write --release` |
 | Contract artifact provenance verified | `[ ]` | `npm run provenance:verify -- --strict` |
 | Monitoring dashboards verified | `[ ]` | |
