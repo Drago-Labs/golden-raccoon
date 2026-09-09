@@ -1,6 +1,10 @@
-import { AlertTriangle, CheckCircle2, ClipboardCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ClipboardCheck, ShieldAlert, ShieldCheck } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
-import { knownLimitations, releaseReadinessChecks } from "@/server/operations/releaseReadiness";
+import {
+  knownLimitations,
+  releaseReadinessChecks,
+  getMachineCheckableReadiness,
+} from "@/server/operations/releaseReadiness";
 import { evaluatePubnetReadiness, summarizeReadiness } from "@/server/stellar/pubnetGate";
 import { getFeatureFlagHealth } from "@/server/env/validation";
 import { OperationsSloPanel } from "@/components/OperationsSloPanel";
@@ -10,6 +14,11 @@ export default async function OperationsPage() {
   const pubnetGate = summarizeReadiness(await evaluatePubnetReadiness());
   const featureFlags = getFeatureFlagHealth();
   const providerHealth = getConfiguredProviderHealth();
+  const releaseVerdict = await getMachineCheckableReadiness(
+    process.env.APP_MODE || "production",
+    process.env.GIT_COMMIT || "head"
+  );
+
   return (
     <AppShell>
       <section className="grid gap-8 lg:grid-cols-[0.95fr_1.05fr]">
@@ -28,6 +37,7 @@ export default async function OperationsPage() {
           <div className="mt-7 rounded-lg border border-white/10 bg-white/6 p-5">
             <div className="text-sm font-semibold text-white">Required gates</div>
             <div className="mt-4 grid gap-3 text-sm text-white/64">
+              <code className="rounded-md bg-black/35 px-3 py-2">node scripts/release-gate.mjs</code>
               <code className="rounded-md bg-black/35 px-3 py-2">npm run deploy:check</code>
               <code className="rounded-md bg-black/35 px-3 py-2">npm run test:agents --prefix frontend</code>
               <code className="rounded-md bg-black/35 px-3 py-2">{"curl -i \"$SMOKE_BASE_URL/api/x402/deep-scan?query=GOAT&chain=base\""}</code>
@@ -57,6 +67,88 @@ export default async function OperationsPage() {
             </article>
           ))}
         </div>
+      </section>
+
+      <section className="mt-10 rounded-lg border border-white/10 bg-white/6 p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {releaseVerdict.verdict === "ready" ? (
+              <ShieldCheck className="h-5 w-5 text-emerald-400" />
+            ) : (
+              <ShieldAlert className="h-5 w-5 text-rose-400" />
+            )}
+            <h2 className="text-sm font-semibold text-white">Machine-Checkable Release Gates</h2>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-white/60">
+              Commit: <code className="text-white/80">{releaseVerdict.commitSha.slice(0, 8)}</code>
+            </span>
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                releaseVerdict.verdict === "ready"
+                  ? "bg-emerald-400/15 text-emerald-300 border border-emerald-400/30"
+                  : "bg-rose-400/15 text-rose-300 border border-rose-400/30"
+              }`}
+            >
+              VERDICT: {releaseVerdict.verdict.toUpperCase()}
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-md bg-black/20 p-3 text-center">
+            <span className="text-xs text-white/50">Total Gates</span>
+            <div className="text-lg font-semibold text-white">{releaseVerdict.summary.total}</div>
+          </div>
+          <div className="rounded-md bg-black/20 p-3 text-center">
+            <span className="text-xs text-emerald-400/70">Passed</span>
+            <div className="text-lg font-semibold text-emerald-400">{releaseVerdict.summary.passed}</div>
+          </div>
+          <div className="rounded-md bg-black/20 p-3 text-center">
+            <span className="text-xs text-rose-400/70">Critical Failures</span>
+            <div className="text-lg font-semibold text-rose-400">{releaseVerdict.summary.criticalFailures}</div>
+          </div>
+          <div className="rounded-md bg-black/20 p-3 text-center">
+            <span className="text-xs text-amber-400/70">Warnings</span>
+            <div className="text-lg font-semibold text-amber-400">{releaseVerdict.summary.warnings}</div>
+          </div>
+        </div>
+
+        <ul className="mt-4 space-y-3">
+          {releaseVerdict.gates.map((gate) => (
+            <li key={gate.id} className="rounded-md border border-white/10 bg-black/20 p-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-white">{gate.name}</h3>
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                      gate.severity === "critical"
+                        ? "bg-rose-500/20 text-rose-300"
+                        : "bg-amber-500/20 text-amber-300"
+                    }`}
+                  >
+                    {gate.severity}
+                  </span>
+                </div>
+                <span
+                  className={
+                    gate.status === "pass"
+                      ? "text-xs font-semibold text-emerald-300"
+                      : gate.status === "skip"
+                      ? "text-xs font-semibold text-white/50"
+                      : "text-xs font-semibold text-rose-300"
+                  }
+                >
+                  {gate.status.toUpperCase()}
+                </span>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-white/70">{gate.detail}</p>
+              {gate.failureReason && (
+                <p className="mt-1 text-xs text-rose-300">Failure: {gate.failureReason}</p>
+              )}
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className="mt-10 rounded-lg border border-white/10 bg-white/6 p-5">

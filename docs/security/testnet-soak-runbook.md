@@ -81,6 +81,8 @@ node scripts/load-test-simulation.mjs 1 10 http://localhost:3000 > soak-final-ch
 - [ ] No crash, OOM, or unrecoverable error
 - [ ] All testnet transactions confirmed within expected time
 - [ ] Alerting fired correctly for intentional failure injection (if done)
+- [ ] Machine-checkable release readiness gates pass: `node scripts/release-gate.mjs --environment testnet`
+- [ ] Evidence artifact generated and verified: `node scripts/release-gate.mjs --verify-evidence docs/acceptance/release-gates-evidence.json`
 
 ## Failure Modes
 

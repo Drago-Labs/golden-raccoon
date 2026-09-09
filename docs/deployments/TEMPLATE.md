@@ -133,3 +133,20 @@ Live status is on `/operations` and in `GET /api/health` under
 A gated deployment refuses pubnet actions with a typed reason
 (`PubnetGatedError`). Testnet behaviour is unchanged throughout.
 
+## Release Readiness Gates & Evidence Verification
+
+Every deployment must evaluate and verify machine-checkable release readiness gates:
+
+| Field | Value |
+| --- | --- |
+| Gate Verdict | `ready` |
+| Evidence Artifact | `docs/acceptance/release-gates-evidence.json` |
+| Evidence Digest (SHA-256) | |
+| Commit SHA Bound | |
+| Evaluated At (UTC) | |
+
+Verification checklist:
+- [ ] `node scripts/release-gate.mjs --environment <network>` returned exit 0 (`ready`).
+- [ ] Evidence artifact digest verified via `node scripts/release-gate.mjs --verify-evidence <path>`.
+- [ ] Rollback and emergency pause rehearsal scripts executed cleanly.
+

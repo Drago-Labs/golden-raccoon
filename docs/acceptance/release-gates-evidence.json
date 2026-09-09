@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "1.0.0",
+  "commitSha": "9696528b6dbf592f3851f810870c35bbe1cf0cef",
+  "environment": "testnet",
+  "generatedAt": "2026-09-09T07:31:06.018Z",
+  "verdict": {
+    "verdict": "ready",
+    "commitSha": "9696528b6dbf592f3851f810870c35bbe1cf0cef",
+    "environment": "testnet",
+    "evaluatedAt": "2026-09-09T07:31:05.990Z",
+    "summary": {
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "criticalFailures": 0,
+      "warnings": 0
+    },
+    "gates": [
+      {
+        "id": "rollback",
+        "name": "Rollback capability & rehearsal",
+        "severity": "critical",
+        "status": "pass",
+        "detail": "Rollback automation, switches, and runbook procedures verified",
+        "durationMs": 0
+      },
+      {
+        "id": "emergencyPause",
+        "name": "Emergency pause rehearsal & circuit breakers",
+        "severity": "critical",
+        "status": "pass",
+        "detail": "Emergency pause rehearsal script, procedures, and contract circuit breakers verified",
+        "durationMs": 0
+      },
+      {
+        "id": "smoke",
+        "name": "Critical route smoke coverage",
+        "severity": "critical",
+        "status": "pass",
+        "detail": "Critical routes and structured smoke testing automation verified",
+        "durationMs": 0
+      },
+      {
+        "id": "load",
+        "name": "Load behaviour & performance budgets",
+        "severity": "critical",
+        "status": "pass",
+        "detail": "Load testing scripts, structured output, and recorded baselines verified",
+        "durationMs": 0
+      },
+      {
+        "id": "deploymentRecord",
+        "name": "Deployment record validation",
+        "severity": "critical",
+        "status": "pass",
+        "detail": "Deployment record verified for environment 'testnet'",
+        "durationMs": 5
+      },
+      {
+        "id": "budgets",
+        "name": "SLO error budget compliance",
+        "severity": "warning",
+        "status": "pass",
+        "detail": "SLO definitions, error budget thresholds, and monitoring modules verified",
+        "durationMs": 0
+      }
+    ],
+    "reasons": []
+  },
+  "digest": "dd3d7d1bc1c9d6ab0e20a33b077903d8331328363d60f3e36be4d528b11d9ea1"
+}

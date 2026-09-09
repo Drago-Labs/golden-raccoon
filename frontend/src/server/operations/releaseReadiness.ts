@@ -1,7 +1,15 @@
+import { getAllGates } from "./gates/registry";
+import { evaluateReadinessGates } from "./gates/verdict";
+import { VerdictReport } from "./gates/types";
+
 export const releaseReadinessChecks = [
   {
     title: "Production env gate",
     detail: "Production deploys require Supabase, provider, app URL, onchain, x402 payment, and social/search configuration before build.",
+  },
+  {
+    title: "Machine-checkable readiness gates",
+    detail: "Rollback switches, emergency pause mechanisms, critical route smoke coverage, load performance budgets, and deployment records are verified automatically.",
   },
   {
     title: "Supabase migrations",
@@ -33,7 +41,7 @@ export const releaseReadinessChecks = [
   },
   {
     title: "V2 Execution observability",
-    detail: "Correlation IDs link decision→quote→execution. Structured audit events, provider health checks, and runbooks (RB-001 through RB-006) are operational. Disable switches (DISABLE_EXECUTION_PROVIDERS, RECOMMENDATION_ONLY_MODE, etc.) preserve recommendation-only mode.",
+    detail: "Correlation IDs link decision→quote→execution. Structured audit events, provider health checks, and runbooks (RB-001 through RB-008) are operational. Disable switches (DISABLE_EXECUTION_PROVIDERS, RECOMMENDATION_ONLY_MODE, etc.) preserve recommendation-only mode.",
   },
 ];
 
@@ -49,12 +57,6 @@ export const knownLimitations = [
   "Production health must report no mock fallback usage.",
 ];
 
-/**
- * Execution provider disable/rollback switches (Issue #18).
- * When any of these are set, the system falls back to recommendation-only
- * mode — all agent analysis and risk scoring continues, but execution
- * provider paths are skipped.
- */
 export const executionDisableSwitches = [
   { env: "DISABLE_EXECUTION_PROVIDERS", effect: "Disables ALL execution providers. Full recommendation-only mode." },
   { env: "RECOMMENDATION_ONLY_MODE", effect: "Full recommendation-only mode. Equivalent to DISABLE_EXECUTION_PROVIDERS." },
@@ -81,15 +83,46 @@ export function getArtifactProvenanceHealth(): { status: ArtifactProvenanceStatu
   return { status: "unchecked" };
 }
 
+/**
+ * Returns static gate definitions for operational display.
+ */
+export function getRegisteredGates() {
+  return getAllGates().map((g) => ({
+    id: g.id,
+    name: g.name,
+    description: g.description,
+    severity: g.severity,
+  }));
+}
+
+/**
+ * Evaluates machine-checkable readiness gates asynchronously.
+ */
+export async function getMachineCheckableReadiness(
+  environment = "production",
+  commit = "head"
+): Promise<VerdictReport> {
+  const rootDir = process.cwd().endsWith("frontend") ? ".." : ".";
+  return evaluateReadinessGates({
+    commit,
+    environment,
+    rootDir,
+  });
+}
+
+/**
+ * Returns consolidated release readiness health metadata.
+ */
 export function getReleaseReadinessHealth() {
   return {
-    gate: "npm run deploy:check",
+    gate: "node scripts/release-gate.mjs",
     productionSmoke: "SMOKE_BASE_URL=https://your-production-domain.example npm run smoke",
     postReleaseMonitor: "MONITOR_BASE_URL=https://your-production-domain.example npm run monitor:production",
     firstMonitoringWindowHours: 24,
     checks: releaseReadinessChecks,
     knownLimitations,
     executionDisableSwitches,
+    registeredGates: getRegisteredGates(),
     artifactProvenance: getArtifactProvenanceHealth(),
   };
 }
