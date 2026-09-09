@@ -1,4 +1,15 @@
-import type { AgentBlockingReason, AgentFinding, AgentMissingData, AgentRecommendedAction, AgentResult, AgentSource, RiskLevel, SourceDataQuality } from "@/server/types";
+import type {
+  AgentBlockingReason,
+  AgentFinding,
+  AgentMissingData,
+  AgentOutcome,
+  AgentOutcomeType,
+  AgentRecommendedAction,
+  AgentResult,
+  AgentSource,
+  RiskLevel,
+  SourceDataQuality,
+} from "@/server/types";
 import { validateAgentResult } from "@/server/agents/schema";
 import { assertNoMockSourcesInLive } from "@/server/env/runtimeMode";
 import { withAgentSpan } from "@/server/observability/tracing/spans";
@@ -16,6 +27,9 @@ type BuildAgentResultInput = {
   blockingReasonDetails?: AgentBlockingReason[];
   missingData?: AgentMissingData[];
   rawSignals?: Record<string, unknown>;
+  outcome?: AgentOutcomeType;
+  outcomeReason?: string;
+  executionOutcome?: AgentOutcome;
 };
 
 export const riskLevelThresholds = {
@@ -258,6 +272,12 @@ export function buildAgentResult(input: BuildAgentResultInput): AgentResult {
   const riskLevel = scoreToRiskLevel(riskScore);
   const dataQuality = getSourceDataQuality(sources);
 
+  const resolvedOutcome: AgentOutcomeType = input.outcome ?? (
+    dataQuality.mode === "unavailable"
+      ? "degraded"
+      : "succeeded"
+  );
+
   const result: AgentResult = {
     agent: input.agent,
     status: getStatus(dataQuality, findings, riskLevel, input.recommendedAction),
@@ -278,6 +298,12 @@ export function buildAgentResult(input: BuildAgentResultInput): AgentResult {
       ...(input.rawSignals ?? {}),
       scoreBreakdown: (input.rawSignals?.scoreBreakdown as unknown) ?? getScoreBreakdown(findings),
       riskLevelThresholds,
+    },
+    outcome: resolvedOutcome,
+    outcomeReason: input.outcomeReason,
+    executionOutcome: {
+      status: resolvedOutcome,
+      reason: input.outcomeReason,
     },
     createdAt: new Date().toISOString(),
   };
@@ -320,9 +346,86 @@ export function buildUnavailableAgentResult(
     ],
     confidence: 0.18,
     recommendedAction,
+    outcome: "degraded",
+    outcomeReason: detail,
+  });
+}
+
+export function buildSkippedByBreakerResult(
+  agent: AgentResult["agent"],
+  reason: string,
+): AgentResult {
+  return buildAgentResult({
+    agent,
+    score: 50,
+    verdict: `${agent} skipped by circuit breaker`,
+    summary: `${agent} execution skipped due to open circuit breaker: ${reason}`,
+    findings: [],
+    sources: [
+      {
+        label: `${agent} circuit breaker`,
+        status: "unavailable",
+        detail: reason,
+      },
+    ],
+    confidence: 0,
+    recommendedAction: "manual_review",
+    outcome: "skipped-by-breaker",
+    outcomeReason: reason,
+    missingData: [
+      {
+        field: `${agent}_signals`,
+        reason,
+        impact: "high",
+        canRetry: true,
+      },
+    ],
+    rawSignals: {
+      skipped: true,
+      skippedBy: "breaker",
+      reason,
+    },
+  });
+}
+
+export function buildSkippedByDeadlineResult(
+  agent: AgentResult["agent"],
+  reason = "Wall-clock deadline elapsed before execution completed",
+): AgentResult {
+  return buildAgentResult({
+    agent,
+    score: 50,
+    verdict: `${agent} skipped by deadline`,
+    summary: `${agent} execution skipped due to elapsed deadline: ${reason}`,
+    findings: [],
+    sources: [
+      {
+        label: `${agent} deadline`,
+        status: "unavailable",
+        detail: reason,
+      },
+    ],
+    confidence: 0,
+    recommendedAction: "manual_review",
+    outcome: "skipped-by-deadline",
+    outcomeReason: reason,
+    missingData: [
+      {
+        field: `${agent}_signals`,
+        reason,
+        impact: "high",
+        canRetry: true,
+      },
+    ],
+    rawSignals: {
+      skipped: true,
+      skippedBy: "deadline",
+      reason,
+    },
   });
 }
 
 export async function runAgentSafely<T extends AgentResult["agent"]>(agent: T, task: () => Promise<AgentResult>): Promise<AgentResult> {
   return withAgentSpan(agent, {}, async () => { try { return await task(); } catch (error) { return buildUnavailableAgentResult(agent, error instanceof Error ? error.message : "Agent failed unexpectedly."); } });
 }
+

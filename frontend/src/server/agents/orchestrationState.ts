@@ -39,3 +39,22 @@ export function getRunPartialStatus(results: AgentResult[]) {
     detail: failedAgents.length > 0 ? `Partial result: ${failedAgents.join(", ")} did not complete with connected data.` : "All agent steps completed.",
   };
 }
+
+export function getRunDegradedStatus(results: AgentResult[]) {
+  const degradedAgents = results
+    .filter((r) => r.outcome === "degraded" || r.outcome === "skipped-by-breaker" || r.outcome === "skipped-by-deadline" || r.status === "partial" || r.status === "unavailable" || r.status === "error")
+    .map((r) => r.agent);
+  const skippedAgents = results
+    .filter((r) => r.outcome === "skipped-by-breaker" || r.outcome === "skipped-by-deadline")
+    .map((r) => r.agent);
+
+  return {
+    degraded: degradedAgents.length > 0,
+    missingAgents: degradedAgents,
+    skippedAgents,
+    detail: degradedAgents.length > 0
+      ? `Run completed with degraded signals from: ${degradedAgents.join(", ")}.`
+      : "All agents succeeded with healthy signals.",
+  };
+}
+

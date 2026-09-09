@@ -224,7 +224,7 @@ function getContextAwareWeights(results: AgentResult[], context: ReturnType<type
 function getWeightedScore(results: AgentResult[], context: ReturnType<typeof inferContext>) {
   const weights = getContextAwareWeights(results, context);
   const details: WeightedScoreDetail[] = results
-    .filter((result) => result.agent !== "decision")
+    .filter((result) => result.agent !== "decision" && result.outcome !== "skipped-by-breaker" && result.outcome !== "skipped-by-deadline")
     .map((result) => {
       const weight = weights[result.agent] ?? 0;
 
@@ -1006,6 +1006,11 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
   const coverage = getSourceCoverage(results);
   const weightedScore = getWeightedScore(results, context);
   const score = applyCoveragePenalty(weightedScore.score, results, context);
+  const skippedResults = results.filter((r) => r.outcome === "skipped-by-breaker" || r.outcome === "skipped-by-deadline");
+  const failedResults = results.filter((r) => r.outcome === "degraded" || r.status === "unavailable");
+  const isDegraded = skippedResults.length > 0 || failedResults.length > 0;
+  const missingOrDegradedAgents = [...new Set([...skippedResults.map((r) => r.agent), ...failedResults.map((r) => r.agent)])];
+
   const blockers = [
     ...collectCriticalBlockers(results, coverage, input.executionReadiness),
     ...invalidMessages.map((message) => ({
@@ -1017,7 +1022,8 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
   ];
   const conflicts = resolveConflicts(results, context, score);
   const confidenceFormula = getDecisionConfidenceFormula(results, coverage, conflicts);
-  const confidence = confidenceFormula.finalConfidence || getDecisionConfidence(results, coverage);
+  const degradedPenalty = isDegraded ? Math.min(0.25, missingOrDegradedAgents.length * 0.08) : 0;
+  const confidence = Math.max(0.12, (confidenceFormula.finalConfidence || getDecisionConfidence(results, coverage)) - degradedPenalty);
   const missingData = getMissingData(results, coverage, invalidMessages);
   const recommendedAction = decideAction({
     score,
@@ -1093,20 +1099,30 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
     explanation,
   });
 
+  const baseSummary =
+    results.length > 0
+      ? `Decision Agent combined ${results.map((result) => result.agent).join(", ")} signals into a ${finalAction.replaceAll("_", " ")} recommendation.`
+      : "Decision Agent needs specialist agent results before producing a recommendation.";
+  const summary = isDegraded
+    ? `${baseSummary} [Degraded: signals missing from ${missingOrDegradedAgents.join(", ")}]`
+    : baseSummary;
+  const verdict = isDegraded
+    ? `${verdictForAction(finalAction)} (degraded: missing ${missingOrDegradedAgents.join(", ")})`
+    : verdictForAction(finalAction);
+
   return buildAgentResult({
     agent: "decision",
     score,
-    verdict: verdictForAction(finalAction),
-    summary:
-      results.length > 0
-        ? `Decision Agent combined ${results.map((result) => result.agent).join(", ")} signals into a ${finalAction.replaceAll("_", " ")} recommendation.`
-        : "Decision Agent needs specialist agent results before producing a recommendation.",
+    verdict,
+    summary,
     findings,
     sources: getDecisionSources(results, invalidMessages.length),
     confidence,
     recommendedAction: finalAction,
     blockingReasons: allBlockers.map((blocker) => `${blocker.label}: ${blocker.detail}`),
     missingData,
+    outcome: isDegraded ? "degraded" : "succeeded",
+    outcomeReason: isDegraded ? `Degraded due to missing/skipped agents: ${missingOrDegradedAgents.join(", ")}` : undefined,
     rawSignals: {
       context,
       weightedScore,
@@ -1116,6 +1132,9 @@ export function runDecisionAgent(input: DecisionInput): AgentResult {
       conflicts,
       confidenceFormula,
       strategyEnforcement,
+      isDegraded,
+      missingAgents: missingOrDegradedAgents,
+      skippedAgents: skippedResults.map((r) => r.agent),
       deterministicCore: getDecisionCoreAudit({
         action: finalAction,
         score,

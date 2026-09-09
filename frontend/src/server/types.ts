@@ -79,6 +79,17 @@ export type AgentRecommendedAction =
   | "create_trustline"
   | "no_action";
 
+export type AgentOutcomeType =
+  | "succeeded"
+  | "degraded"
+  | "skipped-by-breaker"
+  | "skipped-by-deadline";
+
+export type AgentOutcome = {
+  status: AgentOutcomeType;
+  reason?: string;
+};
+
 export type AgentResult = {
   agent: "portfolio" | "news" | "social" | "onchain" | "decision" | "execution";
   status: AgentStatus;
@@ -96,6 +107,9 @@ export type AgentResult = {
   blockingReasonDetails?: AgentBlockingReason[];
   missingData: AgentMissingData[];
   rawSignals?: Record<string, unknown>;
+  outcome?: AgentOutcomeType;
+  outcomeReason?: string;
+  executionOutcome?: AgentOutcome;
   createdAt: string;
 };
 
@@ -997,6 +1011,21 @@ export type AgentRunRecord = {
     mock: number;
   }>;
   userAction?: "pending" | "approved" | "rejected" | "adjusted" | "executed";
+  budgetAccounting?: {
+    runId: string;
+    totalSpendUsd: number;
+    totalCalls: number;
+    agents: Record<string, { spendUsd: number; calls: number }>;
+    policy: {
+      deadlineMs: number;
+      maxCostUsd: number;
+      maxCalls: number;
+    };
+    exceeded: boolean;
+    exceededReason?: string;
+  };
+  degraded?: boolean;
+  missingAgents?: string[];
   createdAt: string;
 };
 

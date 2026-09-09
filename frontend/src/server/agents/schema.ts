@@ -90,6 +90,18 @@ export const sourceDataQualitySchema = z.object({
   detail: z.string(),
 });
 
+export const agentOutcomeTypeSchema = z.enum([
+  "succeeded",
+  "degraded",
+  "skipped-by-breaker",
+  "skipped-by-deadline",
+]);
+
+export const agentOutcomeSchema = z.object({
+  status: agentOutcomeTypeSchema,
+  reason: z.string().optional(),
+});
+
 export const agentResultSchema = z.object({
   agent: z.enum(["portfolio", "news", "social", "onchain", "decision", "execution"]),
   status: agentStatusSchema,
@@ -107,6 +119,9 @@ export const agentResultSchema = z.object({
   blockingReasonDetails: z.array(agentBlockingReasonSchema).optional(),
   missingData: z.array(agentMissingDataSchema),
   rawSignals: z.record(z.string(), z.unknown()).optional(),
+  outcome: agentOutcomeTypeSchema.optional(),
+  outcomeReason: z.string().optional(),
+  executionOutcome: agentOutcomeSchema.optional(),
   createdAt: z.string(),
 });
 

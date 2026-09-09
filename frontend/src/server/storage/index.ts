@@ -236,6 +236,9 @@ type CreateAgentRunInput = {
   targetToken?: AgentRunRecord["targetToken"];
   results: AgentResult[];
   userAction?: AgentRunRecord["userAction"];
+  budgetAccounting?: AgentRunRecord["budgetAccounting"];
+  degraded?: boolean;
+  missingAgents?: string[];
 };
 
 export const storageSchemaContract = {
@@ -812,6 +815,9 @@ export function createAgentRunRecord(input: CreateAgentRunInput): AgentRunRecord
       ...(input.inputSnapshot ?? {}),
       resultSnapshots,
     },
+    budgetAccounting: input.budgetAccounting,
+    degraded: input.degraded,
+    missingAgents: input.missingAgents,
     userAction: input.userAction ?? "pending",
     createdAt: new Date().toISOString(),
   };

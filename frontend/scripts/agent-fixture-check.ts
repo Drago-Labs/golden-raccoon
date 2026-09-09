@@ -84,6 +84,17 @@ function submitApiRequest(body: Record<string, unknown>) {
   });
 }
 
+function prepareApiRequest(body: Record<string, unknown>) {
+  const walletAddress = String(body.walletAddress ?? "");
+  return new Request("http://localhost/api/execute/prepare", {
+    method: "POST",
+    headers: {
+      Cookie: `${WALLET_SESSION_COOKIE}=${encodeWalletCookie(walletAddress)}`,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 function cleanSecurity(overrides: Record<string, unknown> = {}) {
   return {
     is_honeypot: "0",
@@ -1464,23 +1475,20 @@ async function runTransactionLifecycleChecks() {
   assert(listTransactionLifecycleEvents(prepared.transaction.hash).some((event) => event.event === "prepared"), "Prepared transactions must append a prepared lifecycle event.");
 
   const prepareResponse = await prepareExecution(
-    new Request("http://localhost/api/execute/prepare", {
-      method: "POST",
-      body: JSON.stringify({
-        walletAddress: "0xabc",
-        chainFamily: "evm",
-        network: "GOAT Network",
-        decisionId: "decision_prepare_route",
-        asset: "MEME",
-        estimatedValueUsd: 50,
-        simulationStatus: "passed",
-        fromToken: "MEME",
-        toToken: "USDC",
-        percent: 10,
-        riskScore: 40,
-        idemKey: "idem_prepare_route",
-        idempotencyKey: "idem_prepare_route",
-      }),
+    prepareApiRequest({
+      walletAddress: "0xabc",
+      chainFamily: "evm",
+      network: "GOAT Network",
+      decisionId: "decision_prepare_route",
+      asset: "MEME",
+      estimatedValueUsd: 50,
+      simulationStatus: "passed",
+      fromToken: "MEME",
+      toToken: "USDC",
+      percent: 10,
+      riskScore: 40,
+      idemKey: "idem_prepare_route",
+      idempotencyKey: "idem_prepare_route",
     }),
   );
   assert(prepareResponse.status === 200, "Prepare API must accept a valid input.");
@@ -1491,22 +1499,19 @@ async function runTransactionLifecycleChecks() {
   assert(typeof prepareJson.lifecycle?.idempotencyKey === "string", "Prepare API response must include the idempotency key.");
 
   const duplicatePrepareResponse = await prepareExecution(
-    new Request("http://localhost/api/execute/prepare", {
-      method: "POST",
-      body: JSON.stringify({
-        walletAddress: "0xabc",
-        chainFamily: "evm",
-        network: "GOAT Network",
-        decisionId: "decision_prepare_route",
-        asset: "MEME",
-        estimatedValueUsd: 50,
-        simulationStatus: "passed",
-        fromToken: "MEME",
-        toToken: "USDC",
-        percent: 10,
-        riskScore: 40,
-        idempotencyKey: "idem_prepare_route",
-      }),
+    prepareApiRequest({
+      walletAddress: "0xabc",
+      chainFamily: "evm",
+      network: "GOAT Network",
+      decisionId: "decision_prepare_route",
+      asset: "MEME",
+      estimatedValueUsd: 50,
+      simulationStatus: "passed",
+      fromToken: "MEME",
+      toToken: "USDC",
+      percent: 10,
+      riskScore: 40,
+      idempotencyKey: "idem_prepare_route",
     }),
   );
   const duplicatePrepareJson = await duplicatePrepareResponse.json();
