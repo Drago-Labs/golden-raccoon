@@ -45,9 +45,11 @@ export async function executeWithFallback<T>(
     if (remainingMs <= 0) break;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
     try {
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
+          timedOut = true;
           reject(new Error("provider_timeout: total failover budget exhausted"));
           controller.abort();
         }, remainingMs);
@@ -68,6 +70,7 @@ export async function executeWithFallback<T>(
       return { value, providerUrl: redactProviderUrl(url), providerIndex: index, fallbackUsed: index > 0, requestId: policy.requestId, attempts };
     } catch (cause) {
       attempts.push({ url: redactProviderUrl(url), ok: false, error: cause instanceof Error ? cause.message : "Unknown provider error" });
+      if (timedOut) break;
     } finally {
       clearTimeout(timer);
       controller.abort();
