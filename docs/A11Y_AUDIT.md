@@ -201,3 +201,7 @@ It does not replace the manual pass: walk the scan-to-history journey at 320px,
 confirm no page-level horizontal scroll, and check that modals trap focus and
 lock background scroll.
 
+
+## Deferred dashboard panels
+
+Analysis, approval and Stellar publication panels retain their existing mount conditions and use a reserved-height, polite status placeholder while their code loads. Loading does not initiate a payment or transaction. Static accessibility checks pass; keyboard and layout-shift checks under throttled networking remain pending.
