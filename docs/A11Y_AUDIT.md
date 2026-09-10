@@ -201,3 +201,7 @@ It does not replace the manual pass: walk the scan-to-history journey at 320px,
 confirm no page-level horizontal scroll, and check that modals trap focus and
 lock background scroll.
 
+
+## Route recovery boundaries
+
+Recovery screens use an alert region, descriptive headings, visible keyboard focus, and wrapping actions. Payment/submission errors link to history without offering a retry. No raw error message or digest is rendered. Static rendering and accessibility checks cover these changes; browser keyboard, screen-reader and 200% zoom verification remains pending.
