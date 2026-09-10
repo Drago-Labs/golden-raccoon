@@ -1,3 +1,4 @@
+import { parseWatchlistCsv } from "@/server/discovery/watchlistCsv";
 import { NextResponse, NextRequest } from "next/server";
 import { resolveWalletSession } from "@/server/security/walletSession";
 import { getWatchlistIdentityKey } from "@/server/identity/tokenIdentity";
@@ -26,30 +27,19 @@ export async function POST(request: NextRequest) {
   const contentType = request.headers.get("content-type") || "";
   
   try {
+    const bytes = await request.arrayBuffer();
+    if (bytes.byteLength > MAX_FILE_SIZE) {
+      return NextResponse.json({ error: "File too large" }, { status: 413 });
+    }
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     if (contentType.includes("application/json")) {
-      const data = await request.json();
+      const data = JSON.parse(text);
       if (!data || !Array.isArray(data.entries)) {
         return NextResponse.json({ error: "Invalid JSON format. Expected { entries: [] }" }, { status: 400 });
       }
       entries = data.entries;
-    } else if (contentType.includes("multipart/form-data") || contentType.includes("text/csv")) {
-       // Simple CSV parsing for this issue
-       const text = await request.text();
-       if (text.length > MAX_FILE_SIZE) {
-         return NextResponse.json({ error: "File too large" }, { status: 413 });
-       }
-       const lines = text.split("\n").filter(l => l.trim().length > 0);
-       if (lines.length > 0) {
-          const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ''));
-          for (let i = 1; i < lines.length; i++) {
-             const cols = lines[i].split(",").map(c => c.trim().replace(/^"|"$/g, '').replace(/^'/, ''));
-             const row: any = {};
-             headers.forEach((h, idx) => {
-               row[h] = cols[idx] || undefined;
-             });
-             entries.push(row);
-          }
-       }
+    } else if (contentType.includes("text/csv")) {
+      entries = parseWatchlistCsv(text, MAX_ROWS) as unknown as WatchlistExportRow[];
     } else {
       return NextResponse.json({ error: "Unsupported content type" }, { status: 415 });
     }
