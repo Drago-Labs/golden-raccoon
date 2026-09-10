@@ -8,7 +8,7 @@ import type {
 import type { DiscoveryProvider, ProviderRegistration } from "@/server/discovery/provider";
 import { defaultPollingConfigs, getChainsForProvider } from "@/server/discovery/provider";
 import logger from "@/server/observability/logger/logger";
-import { getCursor, isCursorReady, isCursorStale } from "@/server/discovery/cursor";
+import { getCursor } from "@/server/discovery/cursor";
 import { storeObservations, pruneObservations } from "@/server/discovery/store";
 import { createDexScreenerProvider } from "@/server/discovery/providers/dexscreener";
 import { createStellarMarketProvider } from "@/server/discovery/providers/stellar";
@@ -87,28 +87,30 @@ export function registerProviders(config: DiscoveryServiceConfig = {}): Provider
   return registrations;
 }
 
+import { isPollDue, createPollCoalescer } from "./pollingGuard";
+const coalescePoll = createPollCoalescer<PollResult>();
+
 // ─── Poll a single provider ──────────────────────────────────────────────────
 
 export async function pollProvider(
   registration: ProviderRegistration,
 ): Promise<PollResult> {
+  return coalescePoll(`${registration.provider.kind}::${registration.provider.chainId}`, () => pollProviderOnce(registration));
+}
+
+async function pollProviderOnce(registration: ProviderRegistration): Promise<PollResult> {
   const { provider, config } = registration;
   const cursor = getCursor(provider.kind, provider.chainId);
 
-  // Check freshness - if cursor is fresh enough, skip this poll
-  if (cursor && !isCursorStale(cursor, config.freshness.maxCursorAgeMs) && isCursorReady(cursor)) {
-    // Check if poll interval has elapsed
-    const ageMs = Date.now() - new Date(cursor.updatedAt).getTime();
-    if (ageMs < config.freshness.pollIntervalMs) {
-      return {
-        chainId: provider.chainId,
-        providerKind: provider.kind,
-        observations: [],
-        cursor,
-        ok: true,
-        elapsedMs: 0,
-      };
-    }
+  if (cursor && !isPollDue(cursor, config)) {
+    return {
+      chainId: provider.chainId,
+      providerKind: provider.kind,
+      observations: [],
+      cursor,
+      ok: true,
+      elapsedMs: 0,
+    };
   }
 
   const result = await provider.poll(cursor, config);
