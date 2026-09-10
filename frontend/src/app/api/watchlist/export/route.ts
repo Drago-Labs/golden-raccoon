@@ -1,3 +1,4 @@
+import { WATCHLIST_CSV_HEADERS, escapeWatchlistCsv } from "@/server/discovery/watchlistCsv";
 import { NextResponse, NextRequest } from "next/server";
 import { listWatchlist } from "@/server/discovery/watchlist";
 import { resolveWalletSession } from "@/server/security/walletSession";
@@ -38,21 +39,8 @@ export async function GET(request: NextRequest) {
 
   if (format === "csv") {
     // Generate CSV
-    const headers = ["version", "chain", "network", "assetType", "contractAddress", "pairAddress", "symbol", "tokenName", "assetKey", "issuer", "source", "note", "createdAt"];
-    
-    // neutralize CSV formula injection
-    const escapeCsv = (val: any) => {
-      if (val === null || val === undefined) return "";
-      let str = String(val);
-      if (str.startsWith('=') || str.startsWith('+') || str.startsWith('-') || str.startsWith('@') || str.startsWith('\t') || str.startsWith('\r')) {
-        str = "'" + str;
-      }
-      return `"${str.replace(/"/g, '""')}"`;
-    };
-
-    const csvRows = exportedRows.map(row => {
-      return headers.map(header => escapeCsv((row as any)[header])).join(",");
-    });
+    const headers = WATCHLIST_CSV_HEADERS;
+    const csvRows = exportedRows.map(row => headers.map(header => escapeWatchlistCsv(row[header])).join(","));
     const csvString = [headers.join(","), ...csvRows].join("\n");
 
     return new NextResponse(csvString, {
