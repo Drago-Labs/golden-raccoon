@@ -1,21 +1,29 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import type { FormEvent } from "react";
 import { AlertTriangle, ArrowRight, BrainCircuit, Check, ChevronDown, CircleHelp, Loader2, Search, Wallet, X } from "lucide-react";
 import type { AgentResult, PortfolioSnapshot, TokenHolding, TokenScanResult } from "@/server/types";
-import { AgentResultPanel } from "@/components/AgentResultPanel";
 import { NoDataState } from "@/components/NoDataState";
 import { RiskScoreCard } from "@/components/RiskScoreCard";
 import { WalletPortfolioCard } from "@/components/WalletPortfolioCard";
 import { WalletConnectButton } from "@/components/WalletConnectButton";
 import { getScanNetwork, normalizeScanNetworkId, scanNetworks } from "@/lib/scanNetworks";
 import { useWalletSession } from "@/hooks/useWalletSession";
-import { ApprovalFlowClient } from "@/components/ApprovalFlowClient";
-import { StellarRiskPublishButton } from "@/components/StellarRiskPublishButton";
 import { LiveRegion } from "@/components/a11y/LiveRegion";
 import { captureOfflinePortfolio, captureOfflineScan } from "@/lib/offlineStore";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+
+// These panels only mount after analysis or an explicit transaction action.
+// Keep their dependencies out of the dashboard's initial synchronous graph.
+function PanelLoading() {
+  return <div role="status" aria-live="polite" className="min-h-24 rounded-lg border border-white/10 p-4">Loading panel…</div>;
+}
+
+const AgentResultPanel = dynamic(() => import("@/components/AgentResultPanel").then(module => module.AgentResultPanel), { loading: PanelLoading });
+const ApprovalFlowClient = dynamic(() => import("@/components/ApprovalFlowClient").then(module => module.ApprovalFlowClient), { loading: PanelLoading });
+const StellarRiskPublishButton = dynamic(() => import("@/components/StellarRiskPublishButton").then(module => module.StellarRiskPublishButton), { loading: PanelLoading });
 
 const scanCheckLabels = ["Deployed", "Honeypot", "Sell tax", "Ownership", "Holders", "Liquidity", "LP lock", "Market"];
 

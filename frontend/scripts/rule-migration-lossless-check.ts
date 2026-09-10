@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import { migrateLegacyRule, RuleMigrationError } from "../src/server/rules/strategyProfile";
+const now = new Date("2026-01-01T00:00:00Z");
+const legacy = { walletAddress: "0x1234", blockedTokens: ["0x" + "a".repeat(40)], allowedChains: ["ethereum"] };
+const original = JSON.stringify(legacy);
+assert.throws(() => migrateLegacyRule(legacy, now), RuleMigrationError);
+assert.equal(JSON.stringify(legacy), original);
+assert.throws(() => migrateLegacyRule({ walletAddress: "0x1234", allowedChains: ["unknown-chain"] }, now), RuleMigrationError);
+const migrated = migrateLegacyRule({ walletAddress: "0x1234", blockedTokens: ["evm:ethereum:0x" + "a".repeat(40)], allowedChains: ["GOAT Network"], maxRiskScore: 23, maxTradePercent: 0 }, now);
+assert.deepEqual(migrated.allowedChains, ["goat"]);
+assert.deepEqual(migrated.blockedTokens, ["evm:ethereum:0x" + "a".repeat(40)]);
+assert.equal(migrated.maxRiskScore, 23);
+assert.equal(migrated.maxTradePercent, 0);
+assert.deepEqual(migrateLegacyRule(migrated, new Date("2026-02-01T00:00:00Z")), migrated);
+console.log("Lossless rule migration checks passed");

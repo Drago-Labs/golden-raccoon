@@ -205,3 +205,11 @@ lock background scroll.
 ## History locale selection
 
 History has an explicitly labelled keyboard-native language selector, visible focus and a matching `lang` attribute on its localized content. Display formatting preserves original identifiers and timestamps. Static accessibility checks pass; manual screen-reader and zoom verification remains pending.
+
+## Deferred dashboard panels
+
+Analysis, approval and Stellar publication panels retain their existing mount conditions and use a reserved-height, polite status placeholder while their code loads. Loading does not initiate a payment or transaction. Static accessibility checks pass; keyboard and layout-shift checks under throttled networking remain pending.
+
+## Route recovery boundaries
+
+Recovery screens use an alert region, descriptive headings, visible keyboard focus, and wrapping actions. Payment/submission errors link to history without offering a retry. No raw error message or digest is rendered. Static rendering and accessibility checks cover these changes; browser keyboard, screen-reader and 200% zoom verification remains pending.

@@ -1,12 +1,16 @@
 import type { PortfolioSnapshot, PortfolioStressResult, PortfolioStressDelta, TokenHolding } from "../types";
-import type { PortfolioStressScenario, StressChange } from "./scenarios";
+import type { PortfolioStressScenario } from "./scenarios";
 import { getKnownTokenClass } from "./tokenRegistry";
 
 function matchesTarget(holding: TokenHolding, target: string): boolean {
   if (target === "all") return true;
+  if (target === "non_stablecoins") return getKnownTokenClass(holding.symbol) !== "stablecoin";
   if (target === "stablecoins") return getKnownTokenClass(holding.symbol) === "stablecoin";
   if (target === "memecoins") return getKnownTokenClass(holding.symbol) === "meme";
-  if (target === "stellar_native") return holding.assetKind === "native" || holding.symbol === "XLM";
+  if (target === "stellar_native") {
+    const chain = holding.chainId ?? holding.chainName ?? "";
+    return holding.assetKind === "native" && (chain.toLowerCase().startsWith("stellar") || (!chain && holding.tokenAddress === "stellar:native"));
+  }
   return holding.symbol === target || holding.tokenAddress === target;
 }
 
@@ -64,6 +68,10 @@ export function applyStressScenario(
     };
   });
   
+  for (const holding of stressedHoldings) {
+    holding.allocationPercent = stressedValueUsd > 0 ? holding.valueUsd / stressedValueUsd * 100 : 0;
+  }
+
   const valueDeltaUsd = stressedValueUsd - originalValueUsd;
   const percentageDelta = originalValueUsd !== 0 ? (valueDeltaUsd / originalValueUsd) * 100 : 0;
   

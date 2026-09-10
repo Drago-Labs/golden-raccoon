@@ -1,3 +1,4 @@
+import { createRunDeadline, withinAgentDeadline, AgentDeadlineError } from "./deadline";
 import type { AgentInputIdentity, AgentResult, AgentRunRecord, PortfolioSnapshot } from "@/server/types";
 import { runDecisionAgent } from "@/server/agents/decision";
 import { runExecutionAgent } from "@/server/agents/execution";
@@ -72,30 +73,31 @@ function getCandidateHoldings(portfolio?: PortfolioSnapshot): AgentInputIdentity
     }));
 }
 
-async function runWithRunMetadata(runId: string, agent: AgentResult["agent"], task: () => Promise<AgentResult>, timeoutMs = 12_000) {
-  const timeout = new Promise<AgentResult>((_, reject) => {
-    setTimeout(() => reject(new Error(`${agent} timed out after ${timeoutMs}ms`)), timeoutMs);
+async function runWithRunMetadata(runId: string, deadline: number, agent: AgentResult["agent"], task: () => Promise<AgentResult>, timeoutMs = 12_000) {
+  let deadlineExceeded = false;
+  const result = await runAgentSafely(agent, async () => {
+    try { return await withinAgentDeadline(deadline, timeoutMs, task); }
+    catch (error) { deadlineExceeded = error instanceof AgentDeadlineError; throw error; }
   });
-  const result = await runAgentSafely(agent, () => Promise.race([task(), timeout]));
 
   return {
     ...result,
     rawSignals: {
       ...(result.rawSignals ?? {}),
-      orchestration: createRunStepMetadata(runId, agent),
+      orchestration: { ...createRunStepMetadata(runId, agent), outcome: deadlineExceeded ? "skipped-by-deadline" : "completed" },
     },
   };
 }
 
-async function runTokenSpecialists(identity: ReturnType<typeof resolveTokenIdentity>, runId: string) {
+async function runTokenSpecialists(identity: ReturnType<typeof resolveTokenIdentity>, runId: string, deadline: number) {
   const [onchain, news, social] = await Promise.all([
-    runWithRunMetadata(runId, "onchain", () =>
+    runWithRunMetadata(runId, deadline, "onchain", () =>
       runOnchainAgent({
         chain: identity.chain,
         contractAddress: identity.contractAddress,
       }),
     ),
-    runWithRunMetadata(runId, "news", () =>
+    runWithRunMetadata(runId, deadline, "news", () =>
       runNewsAgent({
         tokenName: identity.tokenName,
         symbol: identity.symbol,
@@ -104,7 +106,7 @@ async function runTokenSpecialists(identity: ReturnType<typeof resolveTokenIdent
         chain: identity.chain,
       }),
     ),
-    runWithRunMetadata(runId, "social", () =>
+    runWithRunMetadata(runId, deadline, "social", () =>
       runSocialAgent({
         tokenName: identity.tokenName,
         symbol: identity.symbol,
@@ -134,6 +136,7 @@ function getDependencyGraph(mode: AgentRunMode) {
 
 export async function runAgentOrchestration(input: AgentOrchestrationInput): Promise<AgentOrchestrationResult> {
   const runId = createAgentRunId();
+  const deadline = createRunDeadline();
   const recorder = createTranscriptRecorder({
     runId,
     chainFamily: input.identity?.chain?.startsWith("stellar") ? "stellar" : "evm",
@@ -146,7 +149,7 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
   const candidateInputs: AgentInputIdentity[] = [];
 
   if (input.mode === "portfolio_review" || input.mode === "holding_review" || input.mode === "execution_prepare") {
-    const portfolioResult = await runWithRunMetadata(runId, "portfolio", () => runPortfolioAgent(input.walletAddress), 8_000);
+    const portfolioResult = await runWithRunMetadata(runId, deadline, "portfolio", () => runPortfolioAgent(input.walletAddress), 8_000);
     results.push(portfolioResult);
     identityInput = identityInput ?? getRiskiestHolding(input.portfolio);
     candidateInputs.push(...getCandidateHoldings(input.portfolio));
@@ -161,14 +164,16 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
     for (const candidate of candidateInputs) {
       const candidateIdentity = resolveTokenIdentity(candidate);
 
-      results.push(...(await runTokenSpecialists(candidateIdentity, runId)));
+      results.push(...(await runTokenSpecialists(candidateIdentity, runId, deadline)));
     }
   } else if (identity && input.mode !== "execution_prepare") {
-    results.push(...(await runTokenSpecialists(identity, runId)));
+    results.push(...(await runTokenSpecialists(identity, runId, deadline)));
   }
 
+  const isDeadlineSkipped = (result: AgentResult) =>
+    (result.rawSignals?.orchestration as { outcome?: string } | undefined)?.outcome === "skipped-by-deadline";
   const decision = runDecisionAgent({
-    results,
+    results: results.filter(result => !isDeadlineSkipped(result)),
     context: {
       mode: input.mode,
       walletAddress: input.walletAddress,
@@ -186,6 +191,13 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
     },
     userRules,
   });
+  if (results.some(isDeadlineSkipped)) {
+    decision.confidence = Math.min(decision.confidence, 0.18);
+    decision.recommendedAction = "manual_review";
+    decision.status = "blocked";
+    decision.blockingReasons = [...(decision.blockingReasons ?? []), "Run deadline left required agent evidence unavailable."];
+    if (decision.dataQuality) decision.dataQuality = { ...decision.dataQuality, mode: "partial", detail: "Run deadline left required agent evidence unavailable." };
+  }
   results.push({
     ...decision,
     rawSignals: {
@@ -195,7 +207,7 @@ export async function runAgentOrchestration(input: AgentOrchestrationInput): Pro
   });
 
   if (input.mode === "execution_prepare") {
-    const execution = await runWithRunMetadata(runId, "execution", () =>
+    const execution = await runWithRunMetadata(runId, deadline, "execution", () =>
       runExecutionAgent({
         action: decision.recommendedAction,
         walletAddress: input.walletAddress,

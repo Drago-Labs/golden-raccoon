@@ -348,25 +348,31 @@ export function migrateLegacyRule(record: Partial<UserRule> & { walletAddress: s
     maxSlippageBps: record.maxSlippageBps ?? fallback.maxSlippageBps,
   };
 
-  // Legacy blocked entries that predate canonical keys are kept only if they
-  // still parse; an unparseable legacy row is dropped rather than stored in a
-  // form nothing can match against.
+  // Reject ambiguous data instead of silently removing an existing restriction.
   const blocked = parseBlockedAssetList(legacyBlocked);
+  const allowedChains = (record.allowedChains ?? STRATEGY_PRESETS.balanced.allowedChains).map(resolveChainId);
+  if (blocked.errors.length > 0 || allowedChains.some(chain => chain === null)) {
+    throw new RuleMigrationError(blocked.errors.length, allowedChains.filter(chain => chain === null).length);
+  }
 
   return finalizeRule({
     walletAddress: record.walletAddress,
     profileId: resolveProfileId(record.profileId ?? "custom", limits),
     presetVersion: record.presetVersion ?? STRATEGY_PRESET_VERSION,
     ...limits,
-    allowedChains: dedupe(
-      (record.allowedChains ?? STRATEGY_PRESETS.balanced.allowedChains)
-        .map(resolveChainId)
-        .filter((chain): chain is string => chain !== null),
-    ),
+    allowedChains: dedupe(allowedChains.filter((chain): chain is string => chain !== null)),
     blockedAssets: blocked.keys,
     blockedCategories: record.blockedCategories ?? [...STRATEGY_PRESETS.balanced.blockedCategories],
     allowedActions: record.allowedActions ?? [...STRATEGY_PRESETS.balanced.allowedActions],
     createdAt: record.createdAt ?? timestamp,
     updatedAt: record.updatedAt ?? timestamp,
   });
+}
+
+/** The original stored record must be retained for explicit user repair. */
+export class RuleMigrationError extends Error {
+  constructor(readonly invalidAssetCount: number, readonly invalidChainCount: number) {
+    super("Saved strategy cannot be migrated without dropping restrictions; review the original blocked assets and allowed chains.");
+    this.name = "RuleMigrationError";
+  }
 }
