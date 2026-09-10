@@ -9,10 +9,11 @@ const FORBIDDEN_KEY_PATTERNS: RegExp[] = [
 ];
 
 const VALUE_SECRET_PATTERNS: RegExp[] = [
-  /\bsk-[A-Za-z0-9_-]{8,}\b/g,
-  /\b0x[0-9a-fA-F]{8,}\b/g,
-  /\bapi[_-]?key\s*=\s*\S+/gi,
+  /\bsk-[A-Za-z0-9_-]{8,}\b/,
+  /\b0x[0-9a-fA-F]{8,}\b/,
+  /\bapi[_-]?key\s*=\s*\S+/i,
   /\bBEGIN (PRIVATE|EC|RSA) KEY\b/,
+  /\b[GS][A-Z2-7]{55}\b/,
 ];
 
 const TRUNCATED_FIELDS = new Set(["detail", "label", "message", "summary"]);
@@ -84,16 +85,16 @@ export function buildSanitizedAlertPayload(
   options: { walletAddressHint?: string } = {},
 ): AlertDelivery["sanitizedPayload"] {
   const sanitizedEvidence = observation ? sanitize("evidence", observation) : {};
-  const summary = alert.message;
+  const summary = sanitize("summary", alert.message) as string | undefined;
   const evidenceLinks: string[] = [];
   const sourceLabels = Array.isArray((sanitizedEvidence as { sourceLabels?: unknown }).sourceLabels)
     ? ((sanitizedEvidence as { sourceLabels?: unknown }).sourceLabels as unknown[]).filter((entry): entry is string => typeof entry === "string")
     : [];
 
-  if (observation?.sourceSnapshotHash) {
+  if (observation?.sourceSnapshotHash && shouldKeep("sourceSnapshotHash", observation.sourceSnapshotHash)) {
     evidenceLinks.push(`source-snapshot:${observation.sourceSnapshotHash}`);
   }
-  if (observation?.runId) {
+  if (observation?.runId && shouldKeep("runId", observation.runId)) {
     evidenceLinks.push(`agent-run:${observation.runId}`);
   }
 
@@ -102,10 +103,10 @@ export function buildSanitizedAlertPayload(
   return {
     triggerType,
     severity: alert.severity,
-    summary: trimString("summary", summary),
+    summary: summary ?? "Alert details redacted.",
     beforeValue: alert.beforeValue,
     afterValue: alert.afterValue,
-    observationKey: alert.observationKey,
+    observationKey: (sanitize("observationKey", alert.observationKey) as string | undefined) ?? "[redacted]",
     evidenceLinks,
     ...(sourceLabels.length > 0 ? { sourceLabels } : {}),
     ...(options.walletAddressHint ? { walletHint: shortWalletHint(options.walletAddressHint) } : {}),
@@ -132,7 +133,7 @@ export function redactWalletAddressInEvidence(evidence: AlertObservation["eviden
 
   return {
     ...sanitized,
-    sourceLabels: Array.isArray(evidence.sourceLabels) ? evidence.sourceLabels.slice(0, 5) : [],
+    sourceLabels: Array.isArray(sanitized.sourceLabels) ? sanitized.sourceLabels.slice(0, 5) : [],
   };
 }
 
