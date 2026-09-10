@@ -201,3 +201,7 @@ It does not replace the manual pass: walk the scan-to-history journey at 320px,
 confirm no page-level horizontal scroll, and check that modals trap focus and
 lock background scroll.
 
+
+## History locale selection
+
+History has an explicitly labelled keyboard-native language selector, visible focus and a matching `lang` attribute on its localized content. Display formatting preserves original identifiers and timestamps. Static accessibility checks pass; manual screen-reader and zoom verification remains pending.
