@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { AlertTriangle, CheckCircle2, Clock3, Database, FileWarning, ShieldCheck } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { RiskSnapshotActions } from "@/components/RiskSnapshotActions";
@@ -25,6 +26,8 @@ function failureTitle(code: string) {
 export default async function RiskSnapshotPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const result = await readRiskSnapshot(id);
+
+  if (!result.ok && result.code === "not_found") notFound();
 
   if (!result.ok) {
     return (

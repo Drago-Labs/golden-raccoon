@@ -20,17 +20,12 @@ export const STRESS_SCENARIOS: PortfolioStressScenario[] = [
     id: "market_crash_20",
     name: "20% Market Crash",
     description: "Broad market decline of 20% across all assets except stablecoins.",
-    version: 1,
+    version: 2,
     changes: [
       {
         type: "price_multiplier",
-        target: "all",
+        target: "non_stablecoins",
         multiplier: 0.8,
-      },
-      {
-        type: "fixed_price",
-        target: "stablecoins",
-        fixedUsd: 1.0,
       }
     ],
   },
