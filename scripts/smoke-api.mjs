@@ -1,4 +1,5 @@
 const baseUrl = process.env.SMOKE_BASE_URL || "http://127.0.0.1:3000";
+const isJson = process.argv.includes("--json");
 
 const postJson = (body) => ({
   method: "POST",
@@ -94,33 +95,95 @@ const checks = [
   },
 ];
 
+const structuredResults = {
+  timestamp: new Date().toISOString(),
+  baseUrl,
+  environment: process.env.APP_MODE || "production",
+  baselineTargetPassRate: 1.0,
+  results: [],
+  summary: { total: checks.length, passed: 0, failed: 0, skipped: 0 },
+};
+
 for (const check of checks) {
   if (check.skip) {
-    console.log(`smoke-api: ${check.name} skipped`);
+    if (!isJson) console.log(`smoke-api: ${check.name} skipped`);
+    structuredResults.results.push({ name: check.name, status: "skipped" });
+    structuredResults.summary.skipped++;
     continue;
   }
 
-  const response = await fetch(`${baseUrl}${check.path}`, check.init);
+  const checkStart = Date.now();
+  let response;
+  try {
+    response = await fetch(`${baseUrl}${check.path}`, check.init);
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    structuredResults.results.push({
+      name: check.name,
+      status: "failed",
+      durationMs: Date.now() - checkStart,
+      error: errorMsg,
+    });
+    structuredResults.summary.failed++;
+    if (isJson) {
+      console.log(JSON.stringify(structuredResults, null, 2));
+    }
+    throw new Error(`${check.name} connection failed: ${errorMsg}`);
+  }
 
+  const durationMs = Date.now() - checkStart;
   if (check.expectedStatus && response.status !== check.expectedStatus) {
+    structuredResults.results.push({
+      name: check.name,
+      status: "failed",
+      durationMs,
+      error: `HTTP ${response.status}, expected ${check.expectedStatus}`,
+    });
+    structuredResults.summary.failed++;
+    if (isJson) console.log(JSON.stringify(structuredResults, null, 2));
     throw new Error(`${check.name} failed with HTTP ${response.status}, expected ${check.expectedStatus}`);
   }
 
   if (!check.expectedStatus && !response.ok) {
+    structuredResults.results.push({
+      name: check.name,
+      status: "failed",
+      durationMs,
+      error: `HTTP ${response.status}`,
+    });
+    structuredResults.summary.failed++;
+    if (isJson) console.log(JSON.stringify(structuredResults, null, 2));
     throw new Error(`${check.name} failed with HTTP ${response.status}`);
   }
 
   const body = await response.json().catch(() => ({}));
 
   if (!check.validate(body, response)) {
+    structuredResults.results.push({
+      name: check.name,
+      status: "failed",
+      durationMs,
+      error: "returned unexpected payload",
+    });
+    structuredResults.summary.failed++;
+    if (isJson) console.log(JSON.stringify(structuredResults, null, 2));
     throw new Error(`${check.name} returned unexpected payload`);
   }
 
-  console.log("=> Waiting for API to become ready...");
+  structuredResults.results.push({
+    name: check.name,
+    status: "passed",
+    durationMs,
+  });
+  structuredResults.summary.passed++;
 
-  if (process.env.APP_MODE === 'production') {
-    console.log("Smoke test running in production mode");
-  } else {
-    console.log("Smoke test running in dev mode, expecting seeded environment.");
+  if (!isJson) {
+    console.log(`smoke-api: ${check.name} passed (${durationMs}ms)`);
   }
+}
+
+if (isJson) {
+  console.log(JSON.stringify(structuredResults, null, 2));
+} else {
+  console.log("=> Smoke tests complete. All active endpoints passed.");
 }

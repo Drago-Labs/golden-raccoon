@@ -41,6 +41,10 @@ const requiredFiles = [
   "frontend/src/components/FeatureGateNotice.tsx",
   "frontend/scripts/feature-flag-check.ts",
   "docs/FEATURE_FLAGS.md",
+  "docs/RELEASE_GATES.md",
+  "scripts/release-gate.mjs",
+  "scripts/rehearse-rollback.mjs",
+  "scripts/rehearse-emergency-pause.mjs",
 ];
 const requiredReleaseMarkers = [
   "V1 Definition of Done",
