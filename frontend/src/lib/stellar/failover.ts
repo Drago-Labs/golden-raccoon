@@ -6,6 +6,8 @@ export type ProviderAttempt = {
 
 export type StellarFailoverPolicy<T> = {
   requestId?: string;
+  /** Total wall-clock budget across all attempts, default 12 seconds. */
+  totalTimeoutMs?: number;
   expectedNetwork?: string;
   expectedPassphrase?: string;
   maxFreshnessMs?: number;
@@ -27,15 +29,33 @@ export function redactProviderUrl(value: string) {
 
 export async function executeWithFallback<T>(
   urls: readonly string[],
-  operation: (url: string, index: number, requestId?: string) => Promise<T>,
+  operation: (url: string, index: number, requestId?: string, signal?: AbortSignal) => Promise<T>,
   policy: StellarFailoverPolicy<T> = {},
 ) {
   if (urls.length === 0) throw new Error("At least one provider URL is required.");
+  const totalTimeoutMs = policy.totalTimeoutMs ?? 12_000;
+  if (!Number.isFinite(totalTimeoutMs) || totalTimeoutMs <= 0 || totalTimeoutMs > 2_147_483_647) {
+    throw new RangeError("totalTimeoutMs must be a positive finite timer duration.");
+  }
+  const deadline = performance.now() + totalTimeoutMs;
   const attempts: ProviderAttempt[] = [];
 
   for (const [index, url] of urls.entries()) {
+    const remainingMs = deadline - performance.now();
+    if (remainingMs <= 0) break;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
     try {
-      const value = await operation(url, index, policy.requestId);
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(new Error("provider_timeout: total failover budget exhausted"));
+          controller.abort();
+        }, remainingMs);
+      });
+      const value = await Promise.race([operation(url, index, policy.requestId, controller.signal), timeout]);
+      if (performance.now() >= deadline) throw new Error("provider_timeout: total failover budget exhausted");
       const identity = policy.inspect?.(value) ?? {};
       if (policy.expectedNetwork && identity.network !== policy.expectedNetwork) {
         throw new Error(`network_mismatch: expected ${policy.expectedNetwork}`);
@@ -43,13 +63,17 @@ export async function executeWithFallback<T>(
       if (policy.expectedPassphrase && identity.passphrase !== policy.expectedPassphrase) {
         throw new Error("network_mismatch: provider passphrase does not match requested network");
       }
-      if (policy.maxFreshnessMs !== undefined && (identity.freshnessMs ?? Number.POSITIVE_INFINITY) > policy.maxFreshnessMs) {
+      if (policy.maxFreshnessMs !== undefined && (!Number.isFinite(identity.freshnessMs) || identity.freshnessMs! < 0 || identity.freshnessMs! > policy.maxFreshnessMs)) {
         throw new Error(`provider_lag: response exceeds ${policy.maxFreshnessMs}ms freshness budget`);
       }
       attempts.push({ url: redactProviderUrl(url), ok: true });
       return { value, providerUrl: redactProviderUrl(url), providerIndex: index, fallbackUsed: index > 0, requestId: policy.requestId, attempts };
     } catch (cause) {
       attempts.push({ url: redactProviderUrl(url), ok: false, error: cause instanceof Error ? cause.message : "Unknown provider error" });
+      if (timedOut) break;
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
     }
   }
 
