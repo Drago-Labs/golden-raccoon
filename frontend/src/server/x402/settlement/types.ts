@@ -7,6 +7,7 @@ export type SettlementStatus =
   | "served"
   | "failed"
   | "expired"
+  | "owed"
   | "refunded";
 
 export type SettlementRequest = {
@@ -22,7 +23,7 @@ export type SettlementRequest = {
   payer?: string;
   transactionHash?: string;
   expiresAt: string;
-  /** Hash/reference only. Raw request payloads are never persisted. */
+  priceQuoted?: string;
   payloadRef?: string;
 };
 
@@ -34,6 +35,11 @@ export type SettlementRecord = Omit<SettlementRequest, "payer"> & {
   status: SettlementStatus;
   createdAt: string;
   updatedAt: string;
+  priceQuoted?: string;
+  owed?: boolean;
+  workId?: string;
+  receiptId?: string;
+  resultHash?: string;
   failureReason?: string;
   reconciliation?: {
     checkedAt: string;

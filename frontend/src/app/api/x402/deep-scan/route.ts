@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withX402 } from "@x402/next";
 import { z } from "zod";
+import { jsonError } from "@/server/api/errors";
 import { runTokenScan } from "@/server/scan/tokenScan";
 import { checkRateLimit } from "@/server/security/rateLimit";
 import { createX402PaymentReceipt } from "@/server/storage";
 import { getX402RouteConfig, getX402RuntimeConfig } from "@/server/x402/config";
 import { assertFreshX402Payment } from "@/server/x402/guards";
 import { createX402ResourceServer } from "@/server/x402/server";
+import { evmSettlementContract } from "@/server/x402/settlement/contract";
+import type { SettlementRequest } from "@/server/x402/settlement/types";
 
 export const runtime = "nodejs";
 
@@ -34,16 +37,43 @@ async function deepScanHandler(request: NextRequest): Promise<NextResponse<unkno
     return jsonError({ code: "validation_error", message: "Invalid input", status: 400, details: parsed.error.flatten() });
   }
 
-  const guard = assertFreshX402Payment({ request, requestBody: parsed.data, config });
+  const guard = await assertFreshX402Payment({ request, requestBody: parsed.data, config });
 
   if (!guard.ok) {
     return jsonError({ code: guard.error as any, message: guard.detail, status: guard.status, legacy: { receiptId: guard.receiptId } });
   }
 
-  // Persist a chain-aware receipt. Payment details come from the x402
-  // middleware headers (verified by facilitator) — never from unverified
-  // client claims.
-  const receipt = createX402PaymentReceipt({
+  const settlementRequest: SettlementRequest = {
+    idempotencyKey: guard.requestId,
+    requestId: guard.requestId,
+    protectedResource: config.protectedResource,
+    requestBodyHash: guard.requestBodyHash,
+    chainFamily: "evm",
+    network: guard.paymentDetails.network,
+    asset: guard.paymentDetails.asset,
+    amount: guard.paymentDetails.amount,
+    payTo: guard.paymentDetails.recipient,
+    payer: guard.paymentDetails.payer,
+    transactionHash: guard.paymentDetails.transactionHash,
+    expiresAt: guard.paymentDetails.settlementTimestamp
+      ? new Date(new Date(guard.paymentDetails.settlementTimestamp).getTime() + config.paymentExpirySeconds * 1000).toISOString()
+      : new Date(Date.now() + config.paymentExpirySeconds * 1000).toISOString(),
+    priceQuoted: guard.paymentDetails.amount,
+  };
+
+  const { record: initialRecord } = await evmSettlementContract.begin(settlementRequest, guard.quoteId);
+
+  try {
+    await evmSettlementContract.consumeProof(guard.paymentSignature, initialRecord.id);
+  } catch {
+    return jsonError({
+      code: "duplicate_payment",
+      message: "Payment proof has already been consumed.",
+      status: 409,
+    });
+  }
+
+  createX402PaymentReceipt({
     requestId: guard.requestId,
     paymentHeaderHash: guard.paymentHeaderHash,
     walletAddress: parsed.data.walletAddress,
@@ -64,8 +94,23 @@ async function deepScanHandler(request: NextRequest): Promise<NextResponse<unkno
       : undefined,
   });
 
-  // Premium agents only run after payment verification succeeds.
-  const scan = await runTokenScan(parsed.data.query, parsed.data.chain, parsed.data.walletAddress);
+  let scan: unknown;
+  try {
+    scan = await runTokenScan(parsed.data.query, parsed.data.chain, parsed.data.walletAddress);
+  } catch (err) {
+    await evmSettlementContract.recordWorkFailure(
+      guard.requestId,
+      err instanceof Error ? err.message : "Token scan execution failed",
+    );
+    throw err;
+  }
+
+  const { record: completedRecord, receipt: verifiableReceipt } = await evmSettlementContract.deliverWork(
+    guard.requestId,
+    config.protectedResource,
+    scan,
+    guard.paymentDetails.payer,
+  );
 
   return NextResponse.json({
     premium: {
@@ -73,10 +118,12 @@ async function deepScanHandler(request: NextRequest): Promise<NextResponse<unkno
       tier: "deep_scan",
       provider: "x402",
       protectedResource: config.protectedResource,
-      receiptId: receipt.id,
+      receiptId: verifiableReceipt.id,
       chainFamily: config.chainFamily,
       note: "x402 payment was verified before premium analysis ran. Settlement is handled by the x402 resource server after this successful response.",
     },
+    receipt: verifiableReceipt,
+    settlement: completedRecord,
     scan,
   });
 }

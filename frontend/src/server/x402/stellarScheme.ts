@@ -5,18 +5,9 @@ import {
   getX402RuntimeConfig,
 } from "@/server/x402/config";
 
-/**
- * Stellar SEP-41 USDC decimal places. The canonical Stellar USDC (Centre-issued)
- * uses 7 decimals, matching the on-chain contract storage.
- */
 const STELLAR_USDC_DECIMALS = 7;
-
 const STELLAR_USDC_ASSET_SYMBOL = "USDC";
 
-/**
- * Map a CAIP-2 Stellar network to its known SEP-41 USDC contract ID.
- * Falls back to the runtime config so overrides via env vars are respected.
- */
 function getUsdcContractForNetwork(network: Network): string | undefined {
   const config = getX402RuntimeConfig();
 
@@ -31,22 +22,13 @@ function getUsdcContractForNetwork(network: Network): string | undefined {
 }
 
 /**
- * Server-side Stellar x402 scheme implementing the `SchemeNetworkServer`
- * interface so Stellar networks appear in the 402 `accepts` list and the
- * resource server can parse prices into Stellar USDC atomic units.
- *
- * Registration gating:
- * - `stellar:testnet` is registered only when `X402_STELLAR_ENABLED=1`.
- * - `stellar:pubnet` is **fail-closed** unless `X402_STELLAR_PUBNET_ENABLED=1`
- *   AND a valid payTo is provided. Without explicit pubnet opt-in the scheme
- *   is never registered, so the server will never advertise pubnet as an
- *   accepted payment network.
+ * Server-side Stellar x402 scheme implementing SchemeNetworkServer.
  */
 export class StellarExactScheme implements SchemeNetworkServer {
   readonly scheme = "exact";
 
   /**
-   * Returns the decimal precision of Stellar USDC (7).
+   * Returns the decimal precision of Stellar USDC.
    */
   getAssetDecimals(_asset: string, _network: Network): number {
     void _asset;
@@ -55,15 +37,9 @@ export class StellarExactScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Convert a user-facing price into a Stellar USDC `AssetAmount`.
-   *
-   * Supported price formats:
-   * - `AssetAmount` pass-through (asset/amount already resolved)
-   * - Dollar string: `"$0.99"`, `"$1.50"`
-   * - Plain number or numeric string: `0.99`, `"1.50"`
+   * Converts a user-facing price representation into a Stellar USDC AssetAmount.
    */
   async parsePrice(price: Price, network: Network): Promise<AssetAmount> {
-    // Already resolved
     if (typeof price === "object" && price !== null && "asset" in price && "amount" in price) {
       return price as AssetAmount;
     }
@@ -88,8 +64,7 @@ export class StellarExactScheme implements SchemeNetworkServer {
   }
 
   /**
-   * Enrich payment requirements with Stellar-specific metadata so clients
-   * can construct valid Stellar payment payloads.
+   * Enriches payment requirements with Stellar-specific contract metadata.
    */
   async enhancePaymentRequirements(
     paymentRequirements: PaymentRequirements,
@@ -111,10 +86,6 @@ export class StellarExactScheme implements SchemeNetworkServer {
     };
   }
 
-  /**
-   * Parse `Money` (string | number) to a decimal number.
-   * Handles dollar-format strings like `"$1.50"`.
-   */
   private parseMoneyToDecimal(money: Money): number {
     if (typeof money === "number") {
       return money;
