@@ -3,6 +3,7 @@ import type { StellarSwapQuote } from "@/server/types";
 import { getStellarNetwork } from "@/lib/stellar/config";
 import { createStellarDataServer } from "@/server/stellar/client";
 import { parseStellarAssetInput, type StellarAssetIdentity } from "@/server/stellar/assetIdentity";
+import { attachBindingToStellarQuote } from "@/server/providers/quote/binding";
 
 export type StellarSwapInput = {
   chain: string;
@@ -401,7 +402,7 @@ export async function getStellarSwapQuote(input: StellarSwapInput): Promise<Stel
     const expectedOutputUsd = expectedOutput; // approximate, would need price feed
 
     return {
-      quote: {
+      quote: attachBindingToStellarQuote({
         provider: "stellar_aggregator",
         routeType: "classic_path_payment",
         route,
@@ -419,7 +420,7 @@ export async function getStellarSwapQuote(input: StellarSwapInput): Promise<Stel
         fetchedAt,
         expiresAt,
         detail: `Classic path payment route found via ${network.id} orderbook with rate ${pathResult.rate.toFixed(4)}.`,
-      },
+      }, input.walletAddress),
     };
   }
 
@@ -444,7 +445,7 @@ export async function getStellarSwapQuote(input: StellarSwapInput): Promise<Stel
   }
 
   return {
-    quote: {
+    quote: attachBindingToStellarQuote({
       provider: "soroswap",
       routeType: "soroban_swap",
       route,
@@ -469,7 +470,7 @@ export async function getStellarSwapQuote(input: StellarSwapInput): Promise<Stel
       fetchedAt,
       expiresAt,
       detail: `Soroban swap simulated via ${sorobanOp.contractId} on ${network.id}.`,
-    },
+    }, input.walletAddress),
   };
 }
 

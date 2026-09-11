@@ -103,6 +103,17 @@ export function TransactionPreview({ preview }: { preview: Preview }) {
           Route: {preview.quote.route.join(" -> ")} · Price impact {preview.quote.priceImpactBps} bps. {preview.quote.detail}
         </div>
       ) : null}
+      {(preview.quote?.binding || preview.stellarQuote?.binding) ? (
+        <div className="mt-3 flex items-center justify-between rounded-2xl border border-sky-400/20 bg-sky-950/20 px-4 py-2.5 text-xs text-sky-200">
+          <div className="flex items-center gap-2">
+            <span className="inline-block h-2 w-2 rounded-full bg-sky-400" />
+            <span>Cryptographic Quote Binding</span>
+          </div>
+          <span className="font-mono text-[10px] text-sky-400/70">
+            Hash: {(preview.quote?.quoteHash ?? preview.stellarQuote?.quoteHash ?? "").slice(0, 12)}...
+          </span>
+        </div>
+      ) : null}
       {preview.audit ? (
         <div className="mt-3 rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white/48">
           Server cannot sign transactions. {preview.audit.approvalRequired ? "User wallet approval required before broadcast." : "No user wallet approval is required for this non-executable action."}

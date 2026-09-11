@@ -35,6 +35,20 @@ const bodySchema = z.object({
     assetKey: z.string().optional(),
   })).optional(),
   idempotencyKey: z.string().min(1).max(160).optional(),
+  quoteHash: z.string().optional(),
+  toAsset: z.string().optional(),
+  inputAmount: z.string().optional(),
+  quoteBinding: z.object({
+    quoteHash: z.string(),
+    signature: z.string(),
+    expiresAt: z.number(),
+    chain: z.string(),
+    walletAddress: z.string(),
+    fromAsset: z.string(),
+    toAsset: z.string(),
+    inputAmount: z.string(),
+    minReceiveAmount: z.string(),
+  }).optional(),
 });
 
 export async function POST(request: Request) {
@@ -87,6 +101,19 @@ export async function POST(request: Request) {
     return jsonError({ code: "source_wallet_mismatch", message: "EVM source account must equal the connected wallet.", status: 403 });
   }
 
+  const idempotencyKey =
+    request.headers.get("Idempotency-Key") ??
+    request.headers.get("x-idempotency-key") ??
+    parsed.data.idempotencyKey;
+
+  if (!idempotencyKey) {
+    return jsonError({
+      code: "idempotency_key_required",
+      message: "Idempotency key is strictly required on /api/execute/submit via Idempotency-Key header or idempotencyKey body field.",
+      status: 400,
+    });
+  }
+
   try {
     const report = await submitTransaction({
       chainFamily: parsed.data.chainFamily,
@@ -102,22 +129,34 @@ export async function POST(request: Request) {
       expectedEffects: parsed.data.expectedEffects,
       userApproved: true,
       signedPayload: parsed.data.signedPayload,
-      idempotencyKey: parsed.data.idempotencyKey,
-    });
+      idempotencyKey,
+      quoteBinding: parsed.data.quoteBinding,
+      quoteHash: parsed.data.quoteHash ?? parsed.data.quoteBinding?.quoteHash,
+      toAsset: parsed.data.toAsset,
+      inputAmount: parsed.data.inputAmount,
+    } as any);
 
     return withCacheHeaders(NextResponse.json({
       success: true,
       outcome: report.outcome,
+      replayed: report.result.replayed ?? (report.outcome === "ignored_duplicate"),
       ...report.result,
       transaction: report.transaction,
     }), "execution");
   } catch (error) {
     const code = (error as { code?: string }).code ?? "submit_failed";
-    const status = code === "approval_required" ? 403
-      : code === "hash_chain_family_mismatch" || code === "network_chain_family_mismatch" ? 400
+    const status = (error as { statusCode?: number }).statusCode
+      ?? (code === "idempotency_payload_mismatch" ? 409
+      : code === "approval_required" ? 403
+      : code === "hash_chain_family_mismatch" || code === "network_chain_family_mismatch" || code === "quote_binding_mismatch" || code === "quote_expired" || code === "idempotency_key_required" ? 400
       : code === "transaction_not_found" ? 404
-      : 502;
-    return jsonError({ code: code as any, message: error instanceof Error ? error.message : "Could not submit transaction.", status, legacy: (error && typeof error === "object" && "detail" in error ? { extra: (error as { detail?: unknown }).detail } : {}) });
+      : 502);
+    return jsonError({
+      code: code as any,
+      message: error instanceof Error ? error.message : "Could not submit transaction.",
+      status,
+      legacy: (error && typeof error === "object" && "detail" in error ? { extra: (error as { detail?: unknown }).detail } : {}),
+    });
   }
   });
 }

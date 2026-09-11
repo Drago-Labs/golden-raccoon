@@ -240,9 +240,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "source_wallet_mismatch", detail: "EVM source account must equal the connected wallet." }, { status: 403 });
     }
     if (existing.lifecycleStatus === "confirmed") {
-      return NextResponse.json({ error: "duplicate_tx_hash", detail: "This transaction hash is already confirmed." }, { status: 409 });
+      return withCacheHeaders(NextResponse.json({
+        ...parsed.data,
+        success: true,
+        replayed: true,
+        status: "confirmed",
+        autoExecuted: false,
+        transaction: {
+          ...existing,
+          explorerUrl: existing.explorerUrl ?? attachExplorerUrl({ hash: existing.hash, network: existing.network, chainFamily: existing.chainFamily }),
+        },
+        confirmedAt: existing.terminalAt ?? existing.updatedAt,
+        pendingVerification: false,
+      }), "execution");
     }
   } else {
+    const idempotencyKey =
+      request.headers.get("Idempotency-Key") ??
+      request.headers.get("x-idempotency-key") ??
+      parsed.data.idempotencyKey;
+
     createTransactionRecord({
       hash: parsed.data.txHash,
       type: "approval",
@@ -317,6 +334,7 @@ export async function POST(request: Request) {
 
   return withCacheHeaders(NextResponse.json({
     ...parsed.data,
+    replayed: false,
     status: transaction.lifecycleStatus === "confirmed" ? "confirmed" : "submitted",
     autoExecuted: false,
     approval,

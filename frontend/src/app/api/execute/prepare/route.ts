@@ -11,9 +11,10 @@ import { getPortfolioSnapshot } from "@/server/portfolio/getPortfolio";
 import { assertApprovalOnly } from "@/server/security/policy";
 import { evaluateCapability, subjectFromRequest } from "@/server/security/authz";
 import { checkRateLimit } from "@/server/security/rateLimit";
-import { getUserRuleRecord } from "@/server/storage";
+import { getUserRuleRecord, getStorage } from "@/server/storage";
 import { assertPrepareAllowedByRecovery, getIncidentMode } from "@/server/recovery";
 import { prepareTransaction } from "@/server/transactions/lifecycleManager";
+import { computePayloadFingerprint } from "@/server/transactions/idempotency";
 import { getStellarNetwork } from "@/lib/stellar/config";
 import type { TransactionRecord, TransactionExpectedEffect, TransactionPreview } from "@/server/types";
 import { withRouteSpan } from "@/server/observability/tracing/spans";
@@ -102,6 +103,18 @@ const bodySchema = z.object({
     method: z.string().optional(),
     assetKey: z.string().optional(),
   })).optional(),
+  quoteBinding: z.object({
+    quoteHash: z.string(),
+    signature: z.string(),
+    expiresAt: z.number(),
+    chain: z.string(),
+    walletAddress: z.string(),
+    fromAsset: z.string(),
+    toAsset: z.string(),
+    inputAmount: z.string(),
+    minReceiveAmount: z.string(),
+  }).optional(),
+  quoteHash: z.string().optional(),
   // rawPayload explicitly removed: the server independently rebuilds the signed
   // payload from its own trusted quote, simulation, and portfolio context.
   // Client-supplied calldata/XDR is NEVER accepted for security.
@@ -353,13 +366,30 @@ export async function POST(request: Request) {
     }
   }
 
+  const rawIdempotencyKey =
+    request.headers.get("Idempotency-Key") ??
+    request.headers.get("x-idempotency-key") ??
+    parsed.data.idempotencyKey;
+
   const idempotencyKey = buildIdempotencyKey({
     walletAddress,
     network,
     decisionId: parsed.data.decisionId,
     asset: parsed.data.fromToken ?? preview.fromToken ?? "wallet",
-    providedKey: parsed.data.idempotencyKey,
+    providedKey: rawIdempotencyKey,
   });
+
+  const currentFingerprint = computePayloadFingerprint(parsed.data);
+  const existingRecord = getStorage().getByIdempotencyKey(walletAddress, idempotencyKey);
+  if (existingRecord) {
+    if (existingRecord.fingerprint && existingRecord.fingerprint !== currentFingerprint) {
+      return jsonError({
+        code: "idempotency_payload_mismatch",
+        message: "Idempotency payload fingerprint mismatch on prepare replay.",
+        status: 409,
+      });
+    }
+  }
 
   // ── Build trusted executable payload ────────────────────────────────────
   // The server independently reconstructs EVM calldata or Stellar XDR from its
@@ -389,24 +419,34 @@ export async function POST(request: Request) {
     policyStatus: preview.policyStatus,
     idempotencyKey,
     rawPayload,
+    quoteBinding: parsed.data.quoteBinding,
+    quoteHash: parsed.data.quoteHash ?? parsed.data.quoteBinding?.quoteHash,
   };
 
-  const prepared = prepareTransaction(prepareInput);
+  try {
+    const prepared = prepareTransaction(prepareInput);
 
-  return withCacheHeaders(NextResponse.json({
-    ...preview,
-    lifecycle: {
-      ...preview.lifecycle,
-      status: "prepared",
-      idempotencyKey,
-      preparedAt: prepared.transaction.createdAt,
-      transactionHashPlaceholder: prepared.transaction.hash,
-    },
-    prepare: {
-      created: prepared.created,
-      idempotent: prepared.idempotent,
-      transaction: prepared.transaction,
-    },
-  }), "execution");
+    return withCacheHeaders(NextResponse.json({
+      ...preview,
+      replayed: prepared.idempotent,
+      lifecycle: {
+        ...preview.lifecycle,
+        status: "prepared",
+        idempotencyKey,
+        preparedAt: prepared.transaction.createdAt,
+        transactionHashPlaceholder: prepared.transaction.hash,
+      },
+      prepare: {
+        created: prepared.created,
+        idempotent: prepared.idempotent,
+        replayed: prepared.idempotent,
+        transaction: prepared.transaction,
+      },
+    }), "execution");
+  } catch (error: any) {
+    const code = error?.code ?? "prepare_failed";
+    const status = error?.statusCode ?? (code === "idempotency_payload_mismatch" ? 409 : code === "quote_binding_mismatch" || code === "quote_expired" ? 400 : 500);
+    return jsonError({ code: code as any, message: error instanceof Error ? error.message : "Failed to prepare transaction.", status });
+  }
   });
 }

@@ -29,11 +29,20 @@ import {
 import { aggregateQuotes, type AggregateQuoteOptions } from "@/server/providers/quote/routing";
 import type { QuoteRouteResult, QuoteVenue } from "@/server/providers/quote/routing/types";
 
+import {
+  attachBindingToQuoteResult,
+  computeQuoteHash,
+  signQuoteHash,
+  createQuoteBinding,
+  verifyQuoteBinding,
+} from "@/server/providers/quote/binding";
+
 // ─── Main factory ────────────────────────────────────────────────────
 
 /**
  * Fetch a quote for the given request, automatically routing to the
  * correct chain adapter (Stellar Horizon or DexScreener for EVM).
+ * Attaches a cryptographic QuoteBinding so submissions can be bound to it.
  */
 export async function getQuote(
   request: QuoteRequest,
@@ -41,11 +50,17 @@ export async function getQuote(
 ): Promise<QuoteResult> {
   const chainFamily = getChainFamily(request.chain);
 
+  let result: QuoteResult;
   if (chainFamily === "stellar") {
-    return getStellarQuote({ ...request, chainFamily: "stellar" }, config);
+    result = await getStellarQuote({ ...request, chainFamily: "stellar" }, config);
+  } else {
+    result = await getEvmQuote({ ...request, chainFamily: "evm" }, config);
   }
 
-  return getEvmQuote({ ...request, chainFamily: "evm" }, config);
+  return attachBindingToQuoteResult(result, {
+    chain: request.chain,
+    walletAddress: request.walletAddress,
+  });
 }
 
 // ─── Convenience: quote + verify in one call ────────────────────────
@@ -83,6 +98,14 @@ export { getStellarQuote } from "@/server/providers/quote/stellar";
 export { getEvmQuote } from "@/server/providers/quote/evm";
 export { verifyQuote } from "@/server/providers/quote/verify";
 export { aggregateQuotes, revalidateSelectedQuote } from "@/server/providers/quote/routing";
+export {
+  computeQuoteHash,
+  signQuoteHash,
+  createQuoteBinding,
+  attachBindingToQuoteResult,
+  attachBindingToStellarQuote,
+  verifyQuoteBinding,
+} from "@/server/providers/quote/binding";
 export type { QuoteRouteResult, QuoteRouteSelection, QuoteRouteFailure, QuoteVenue, QuoteExecutionProof, QuoteExclusion } from "@/server/providers/quote/routing/types";
 
 export type {
@@ -97,6 +120,7 @@ export type {
   QuoteProviderConfig,
   QuoteError,
   QuoteErrorCode,
+  QuoteBinding,
 } from "@/server/providers/quote/types";
 
 // ─── Provider health check ──────────────────────────────────────────

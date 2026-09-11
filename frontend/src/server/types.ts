@@ -358,6 +358,20 @@ export type StellarSwapQuote = {
   status: "fresh" | "stale" | "simulated" | "unavailable";
   fetchedAt: string;
   expiresAt: string;
+  quoteHash?: string;
+  quoteSignature?: string;
+  binding?: {
+    quoteHash: string;
+    signature: string;
+    chain: string;
+    walletAddress?: string;
+    fromAsset: string;
+    toAsset: string;
+    inputAmount: string;
+    minReceiveAmount?: string;
+    expiresAt: string;
+    createdAt: string;
+  };
   detail: string;
 };
 
@@ -911,6 +925,10 @@ export type TransactionRecord = {
   policyStatus?: TransactionPreview["policyStatus"];
   expectedEffects?: TransactionExpectedEffect[];
   idempotencyKey?: string;
+  fingerprint?: string;
+  quoteHash?: string;
+  replayed?: boolean;
+  reconciled?: boolean;
   /** Pre-built EVM calldata (0x-prefixed hex) carried from prepare to approve */
   calldata?: string;
   explorerUrl?: string;
@@ -942,6 +960,8 @@ export type SubmitTransactionInput = {
   decisionId?: string;
   decisionAction?: AgentRecommendedAction;
   asset: string;
+  toAsset?: string;
+  inputAmount?: string;
   valueUsd?: number;
   simulationStatus?: NonNullable<TransactionPreview["simulation"]>["status"];
   policyStatus?: TransactionPreview["policyStatus"];
@@ -949,6 +969,19 @@ export type SubmitTransactionInput = {
   userApproved: true;
   signedPayload: string;
   idempotencyKey?: string;
+  quoteHash?: string;
+  quoteBinding?: {
+    quoteHash: string;
+    signature: string;
+    chain: string;
+    walletAddress?: string;
+    fromAsset: string;
+    toAsset: string;
+    inputAmount: string;
+    minReceiveAmount?: string;
+    expiresAt: string;
+    createdAt: string;
+  };
 };
 
 export type SubmitTransactionResult = {
@@ -959,6 +992,10 @@ export type SubmitTransactionResult = {
   status: TransactionLifecycleStatus;
   explorerUrl?: string;
   idempotent: boolean;
+  replayed?: boolean;
+  fingerprint?: string;
+  quoteHash?: string;
+  reconciled?: boolean;
   reuseReason?: "idempotency_key" | "duplicate_hash";
   lifecycle: TransactionLifecycleEvent[];
 };
