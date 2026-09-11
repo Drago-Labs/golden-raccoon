@@ -11,6 +11,18 @@ type DeliveryAuditRow = {
   channel: AlertDeliveryChannel;
   status: AlertDeliveryStatus;
   attemptCount: number;
+  replayCount?: number;
+  lastReplayedAt?: string;
+  attempts?: Array<{
+    attemptNumber: number;
+    timestamp: string;
+    status: AlertDeliveryStatus;
+    providerMessageId?: string;
+    errorDetail?: string;
+    durationMs?: number;
+    isReplay?: boolean;
+    terminal?: boolean;
+  }>;
   terminal?: boolean;
   errorDetail?: string;
   nextRetryAt?: string;
@@ -154,6 +166,28 @@ export function AlertHistoryList({ initialData }: { initialData?: AlertResponse 
     }));
   }
 
+  async function replayDelivery(deliveryId: string, alertId: string) {
+    setRetryBusyId(deliveryId);
+    setError(null);
+    const response = await fetch(`/api/alerts/deliveries/${encodeURIComponent(deliveryId)}/replay`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    setRetryBusyId(null);
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => ({}))) as { error?: string };
+      setError(detail.error ?? "Could not replay delivery.");
+      return;
+    }
+    const updated = (await response.json()) as DeliveryAuditRow;
+    setDeliveryRows((current) => ({
+      ...current,
+      [alertId]: (current[alertId] ?? []).map((row) => (row.id === deliveryId ? { ...row, ...updated } : row)),
+    }));
+  }
+
   if (!isConnected) {
     return (
       <section className="glass-panel rounded-lg border border-white/10 p-5 text-sm text-white/58">
@@ -242,6 +276,7 @@ export function AlertHistoryList({ initialData }: { initialData?: AlertResponse 
                   deliveries={deliveryRows[alert.id]}
                   retryBusyId={retryBusyId}
                   onRetry={(deliveryId) => void retryDelivery(deliveryId, alert.id)}
+                  onReplay={(deliveryId) => void replayDelivery(deliveryId, alert.id)}
                 />
               ) : null}
             </article>
@@ -266,11 +301,13 @@ export function AlertDetail({
   deliveries,
   retryBusyId,
   onRetry,
+  onReplay,
 }: {
   alert: EnrichedAlert;
   deliveries?: DeliveryAuditRow[];
   retryBusyId?: string | null;
   onRetry?: (deliveryId: string) => void;
+  onReplay?: (deliveryId: string) => void;
 }) {
   const chain = alert.evidenceData.deteriorationObservationIds ?? [];
 
@@ -332,6 +369,7 @@ export function AlertDetail({
           deliveries={deliveries}
           retryBusyId={retryBusyId}
           onRetry={onRetry}
+          onReplay={onReplay}
         />
       ) : null}
     </div>
@@ -410,10 +448,12 @@ function DeliveryAuditList({
   deliveries,
   retryBusyId,
   onRetry,
+  onReplay,
 }: {
   deliveries: DeliveryAuditRow[];
   retryBusyId?: string | null;
   onRetry?: (deliveryId: string) => void;
+  onReplay?: (deliveryId: string) => void;
 }) {
   return (
     <div>
@@ -426,31 +466,91 @@ function DeliveryAuditList({
             delivery.channel !== "in_app" &&
             Boolean(onRetry);
 
+          const canReplay =
+            delivery.status === "failed" &&
+            delivery.channel !== "in_app" &&
+            Boolean(onReplay);
+
           return (
             <li
               key={delivery.id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2"
+              className="rounded-xl border border-white/10 bg-black/20 p-3"
             >
-              <div className="min-w-0">
-                <div className="text-xs font-medium text-white/82">
-                  {delivery.channel} · {deliveryStatusLabel[delivery.status]}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-white/82">
+                      {delivery.channel} · {deliveryStatusLabel[delivery.status]}
+                    </span>
+                    {delivery.replayCount && delivery.replayCount > 0 ? (
+                      <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-[9px] text-amber-200">
+                        replayed {delivery.replayCount}x
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-0.5 text-[10px] text-white/46">
+                    attempts {delivery.attemptCount}
+                    {delivery.terminal ? " · terminal" : ""}
+                    {delivery.errorDetail ? ` · ${delivery.errorDetail}` : ""}
+                  </div>
                 </div>
-                <div className="mt-0.5 text-[10px] text-white/46">
-                  attempts {delivery.attemptCount}
-                  {delivery.terminal ? " · terminal" : ""}
-                  {delivery.errorDetail ? ` · ${delivery.errorDetail}` : ""}
+                <div className="flex items-center gap-2">
+                  {canRetry ? (
+                    <button
+                      type="button"
+                      disabled={retryBusyId === delivery.id}
+                      onClick={() => onRetry?.(delivery.id)}
+                      className="inline-flex h-7 items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2.5 text-[11px] text-white/72 transition hover:text-white"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Retry
+                    </button>
+                  ) : null}
+                  {canReplay && !canRetry ? (
+                    <button
+                      type="button"
+                      disabled={retryBusyId === delivery.id}
+                      onClick={() => onReplay?.(delivery.id)}
+                      className="inline-flex h-7 items-center gap-1 rounded-full border border-red-400/30 bg-red-400/10 px-2.5 text-[11px] text-red-200 transition hover:bg-red-400/20"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Replay
+                    </button>
+                  ) : null}
                 </div>
               </div>
-              {canRetry ? (
-                <button
-                  type="button"
-                  disabled={retryBusyId === delivery.id}
-                  onClick={() => onRetry?.(delivery.id)}
-                  className="inline-flex h-7 items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2.5 text-[11px] text-white/72 transition hover:text-white"
-                >
-                  <RotateCcw className="h-3 w-3" />
-                  Retry
-                </button>
+
+              {delivery.attempts && delivery.attempts.length > 0 ? (
+                <div className="mt-2 border-t border-white/5 pt-2">
+                  <div className="text-[9px] uppercase tracking-wider text-white/40">Attempts</div>
+                  <div className="mt-1 space-y-1">
+                    {delivery.attempts.map((attempt) => (
+                      <div
+                        key={attempt.attemptNumber}
+                        className="flex items-center justify-between text-[10px] text-white/60"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span>#{attempt.attemptNumber}</span>
+                          {attempt.isReplay ? (
+                            <span className="text-[9px] text-amber-300">[replay]</span>
+                          ) : null}
+                          <span className={attempt.status === "delivered" ? "text-emerald-300" : "text-red-300"}>
+                            {attempt.status}
+                          </span>
+                          {attempt.errorDetail ? (
+                            <span className="truncate max-w-[220px] text-white/40" title={attempt.errorDetail}>
+                              {attempt.errorDetail}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="flex items-center gap-2 text-[9px] text-white/40">
+                          {attempt.durationMs !== undefined ? <span>{attempt.durationMs}ms</span> : null}
+                          <span>{new Date(attempt.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               ) : null}
             </li>
           );

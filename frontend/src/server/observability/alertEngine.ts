@@ -14,7 +14,10 @@ import {
   listNotificationPreferences,
   updateAlert,
 } from "@/server/storage";
-import { buildSanitizedAlertPayload } from "@/server/observability/alertSanitize";
+import {
+  buildSanitizedAlertPayload,
+  sanitizeDeliveryErrorDetail,
+} from "@/server/observability/alertSanitize";
 import {
   buildDeliveryIdempotencyKey,
   deliverAlertToChannel,
@@ -455,18 +458,37 @@ export async function fanOutDeliveries(
     return [];
   }
 
-  const out: AlertDelivery[] = [];
-
-  for (const channel of plan.deliverNow) {
+  // Fan out concurrently with per-channel isolation
+  const deliveryTasks = plan.deliverNow.map(async (channel) => {
     const idempotencyKey = buildDeliveryIdempotencyKey(alert.id, channel, event);
     const existing = findDeliveryByIdempotencyKey(alert.id, alert.walletAddress, idempotencyKey);
     if (existing) {
-      out.push(existing);
-      continue;
+      return existing;
     }
 
     const result = await deliverAlertToChannel(channel, sanitized, alert, { idempotencyKey });
-    out.push(persistDeliveryResult(alert, channel, sanitized, result, idempotencyKey));
+    return persistDeliveryResult(alert, channel, sanitized, result, idempotencyKey);
+  });
+
+  const settled = await Promise.allSettled(deliveryTasks);
+  const out: AlertDelivery[] = [];
+
+  for (let i = 0; i < settled.length; i++) {
+    const outcome = settled[i];
+    if (outcome.status === "fulfilled") {
+      out.push(outcome.value);
+    } else {
+      const channel = plan.deliverNow[i];
+      const idempotencyKey = buildDeliveryIdempotencyKey(alert.id, channel, event);
+      const failedResult = {
+        status: "failed" as const,
+        channel,
+        errorDetail: sanitizeDeliveryErrorDetail(outcome.reason),
+        attemptCount: 1,
+        terminal: false,
+      };
+      out.push(persistDeliveryResult(alert, channel, sanitized, failedResult, idempotencyKey));
+    }
   }
 
   return out;

@@ -22,7 +22,23 @@ import {
   findDeliveryByIdempotencyKey,
   persistDeliveryResult,
   retryAlertDelivery,
+  replayAlertDelivery,
+  replayDeadLetterQueue,
 } from "../src/server/observability/alertDeliveries";
+import {
+  registerChannel,
+  unregisterChannel,
+  getChannel,
+  listChannels,
+} from "../src/server/observability/channels";
+import { verifyWebhookSignature } from "../src/server/observability/channels/webhook";
+import { calculateBackoff } from "../src/server/observability/delivery/retry";
+import {
+  recordDeadLetter,
+  getDeadLetterDepth,
+  listDeadLetters,
+  clearDeadLetters,
+} from "../src/server/observability/delivery/deadLetter";
 import {
   HttpTransportError,
   resetAlertDeliveryTransport,
@@ -454,6 +470,248 @@ async function testPersistAndSanitizePayload() {
   updateAlertDelivery(row.id, WALLET, { attemptCount: row.attemptCount });
 }
 
+async function testPluggableChannelRegistrationZeroEngineEdits() {
+  const customChannelName = "custom_pager" as any;
+  let customSent = false;
+  let receivedPayload: unknown = null;
+
+  registerChannel({
+    id: customChannelName,
+    name: "Custom Pager",
+    shapePayload: (raw) => ({ ...samplePayload(), formattedForPager: true }),
+    send: async (payload) => {
+      customSent = true;
+      receivedPayload = payload;
+      return { status: "delivered", providerMessageId: "pager_msg_123" };
+    },
+    health: async () => ({ status: "healthy" }),
+  });
+
+  assert(listChannels().some((c) => c.id === customChannelName), "Custom channel must be listed in registry.");
+  const customChannel = getChannel(customChannelName);
+  assert(customChannel !== undefined, "Custom channel must be retrievable.");
+
+  const alert = makeAlert();
+  const shaped = customChannel.shapePayload(alert);
+  assert((shaped as any)?.formattedForPager === true, "shapePayload must format alert payload.");
+
+  const res = await deliverAlertToChannel(customChannelName, shaped, alert, { withRetry: false });
+  assert(res.status === "delivered", "Custom channel delivery must succeed.");
+  assert(customSent, "Custom send handler must be executed.");
+  assert((receivedPayload as any)?.formattedForPager === true, "Custom send handler must receive shaped payload.");
+
+  unregisterChannel(customChannelName);
+  assert(getChannel(customChannelName) === undefined, "Unregistered channel must not be present in registry.");
+}
+
+async function testConcurrentFanoutIsolation() {
+  const fastChannel = "fast_ch" as any;
+  const slowChannel = "slow_ch" as any;
+  let fastFinishedAt = 0;
+  let slowFinishedAt = 0;
+
+  registerChannel({
+    id: fastChannel,
+    name: "Fast Channel",
+    shapePayload: (raw) => raw,
+    send: async () => {
+      fastFinishedAt = Date.now();
+      return { status: "delivered" };
+    },
+  });
+
+  registerChannel({
+    id: slowChannel,
+    name: "Slow Channel",
+    shapePayload: (raw) => raw,
+    send: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      slowFinishedAt = Date.now();
+      return { status: "failed", errorDetail: "slow failure", terminal: true };
+    },
+  });
+
+  const alert = makeAlert();
+  const [fastRes, slowRes] = await Promise.all([
+    deliverAlertToChannel(fastChannel, samplePayload(), alert, { withRetry: false }),
+    deliverAlertToChannel(slowChannel, samplePayload(), alert, { withRetry: false }),
+  ]);
+
+  assert(fastRes.status === "delivered", "Fast channel must deliver successfully.");
+  assert(slowRes.status === "failed", "Slow channel failure must be recorded.");
+  assert(fastFinishedAt > 0 && slowFinishedAt > 0, "Both channels must complete.");
+  assert(fastFinishedAt <= slowFinishedAt, "Fast channel must not wait on slow channel.");
+
+  unregisterChannel(fastChannel);
+  unregisterChannel(slowChannel);
+}
+
+async function testExponentialBackoffWithJitter() {
+  await withEnv({ ALERT_DELIVERY_BACKOFF_MS: undefined }, async () => {
+    const baseMs = 50;
+    const b1 = calculateBackoff(1, { baseMs, jitterRatio: 0.25 });
+    const b2 = calculateBackoff(2, { baseMs, jitterRatio: 0.25 });
+    const b3 = calculateBackoff(3, { baseMs, jitterRatio: 0.25 });
+
+    assert(b1 >= 50 && b1 <= 50 * 1.25, `b1 ${b1} must be within [50, 62.5]`);
+    assert(b2 >= 100 && b2 <= 100 * 1.25, `b2 ${b2} must be within [100, 125]`);
+    assert(b3 >= 200 && b3 <= 200 * 1.25, `b3 ${b3} must be within [200, 250]`);
+  });
+}
+
+async function testDeadLetterQueueAndIndividualReplay() {
+  clearDeadLetters();
+  const alert = makeAlert();
+  const delivery = createAlertDelivery({
+    alertId: alert.id,
+    walletAddress: WALLET,
+    channel: "discord",
+    status: "failed",
+    attemptCount: 3,
+    terminal: true,
+    errorDetail: "webhook rejected after retries",
+    sanitizedPayload: samplePayload(),
+    idempotencyKey: "idem_dlq_test_1",
+    attempts: [
+      { attemptNumber: 1, timestamp: new Date().toISOString(), status: "failed", errorDetail: "conn err" },
+      { attemptNumber: 2, timestamp: new Date().toISOString(), status: "failed", errorDetail: "conn err" },
+      { attemptNumber: 3, timestamp: new Date().toISOString(), status: "failed", errorDetail: "conn err" },
+    ],
+  });
+
+  recordDeadLetter(
+    delivery,
+    "Exhausted 3 retry attempts: webhook rejected after retries",
+    delivery.attempts,
+  );
+
+  assert(getDeadLetterDepth(WALLET) === 1, "DLQ depth must be 1.");
+  const entries = listDeadLetters(WALLET);
+  assert(entries.length === 1 && entries[0].deliveryId === delivery.id, "DLQ must list recorded entry.");
+
+  await withEnv(
+    {
+      ALERT_DISCORD_WEBHOOK_URL: "https://discord.example.test/api/webhooks/1/token",
+      ALERT_DELIVERY_BACKOFF_MS: "0",
+    },
+    async () => {
+      installScriptedTransport(async () => ({ status: 204, headers: {}, bodyText: "" }));
+
+      const replayResult = await replayAlertDelivery(delivery.id, WALLET);
+      assert(replayResult.ok, "Replay must succeed.");
+      const replayed = replayResult.delivery;
+      assert(replayed.status === "delivered", "Replayed delivery must succeed.");
+      assert(replayed.replayCount === 1, "replayCount must be incremented.");
+      assert(replayed.lastReplayedAt !== undefined, "lastReplayedAt must be set.");
+      assert(
+        replayed.attempts?.some((a) => a.isReplay === true && a.status === "delivered"),
+        "Attempts must include distinct replay record.",
+      );
+      assert(getDeadLetterDepth(WALLET) === 0, "Successful replay must remove item from DLQ.");
+    },
+  );
+}
+
+async function testBulkReplayDeadLetterQueue() {
+  clearDeadLetters();
+  const alert = makeAlert();
+
+  const d1 = createAlertDelivery({
+    alertId: alert.id,
+    walletAddress: WALLET,
+    channel: "discord",
+    status: "failed",
+    attemptCount: 3,
+    terminal: true,
+    errorDetail: "fail1",
+    sanitizedPayload: samplePayload(),
+    idempotencyKey: "idem_bulk_1",
+  });
+  const d2 = createAlertDelivery({
+    alertId: alert.id,
+    walletAddress: WALLET,
+    channel: "discord",
+    status: "failed",
+    attemptCount: 3,
+    terminal: true,
+    errorDetail: "fail2",
+    sanitizedPayload: samplePayload(),
+    idempotencyKey: "idem_bulk_2",
+  });
+
+  recordDeadLetter(d1, "fail1");
+  recordDeadLetter(d2, "fail2");
+
+  assert(getDeadLetterDepth(WALLET) === 2, "DLQ depth must be 2 before bulk replay.");
+
+  await withEnv(
+    {
+      ALERT_DISCORD_WEBHOOK_URL: "https://discord.example.test/api/webhooks/1/token",
+      ALERT_DELIVERY_BACKOFF_MS: "0",
+    },
+    async () => {
+      installScriptedTransport(async () => ({ status: 204, headers: {}, bodyText: "" }));
+
+      const result = await replayDeadLetterQueue(WALLET);
+      assert(result.replayedCount === 2, "Bulk replay must process both entries.");
+      assert(result.succeeded === 2, "Both deliveries must succeed.");
+      assert(getDeadLetterDepth(WALLET) === 0, "DLQ depth must be 0 after successful bulk replay.");
+    },
+  );
+}
+
+async function testIdempotentDuplicateProtection() {
+  const alert = makeAlert();
+  const delivery = createAlertDelivery({
+    alertId: alert.id,
+    walletAddress: WALLET,
+    channel: "in_app",
+    status: "delivered",
+    attemptCount: 1,
+    sanitizedPayload: samplePayload(),
+    idempotencyKey: "idem_already_delivered",
+  });
+
+  const replayResult = await replayAlertDelivery(delivery.id, WALLET);
+  assert(!replayResult.ok && replayResult.status === 409, "Replay on delivered alert must return 409 conflict.");
+}
+
+async function testGenericWebhookHmacVerification() {
+  const alert = makeAlert();
+  const payload = samplePayload();
+  let receivedHeaders: Record<string, string | undefined> = {};
+  let receivedBody = "";
+
+  await withEnv(
+    {
+      ALERT_WEBHOOK_URL: "https://webhook.example.test/alerts",
+      ALERT_WEBHOOK_SECRET: "my-webhook-secret-key",
+      ALERT_DELIVERY_BACKOFF_MS: "0",
+    },
+    async () => {
+      installScriptedTransport(async (req) => {
+        receivedHeaders = req.headers;
+        receivedBody = req.body ?? "";
+        return { status: 200, headers: {}, bodyText: '{"ok":true}' };
+      });
+
+      const res = await deliverAlertToChannel("webhook", payload, alert, { withRetry: false });
+      assert(res.status === "delivered", "Webhook delivery must succeed.");
+      assert(Boolean(receivedHeaders["x-alert-signature"]), "Webhook must send x-alert-signature.");
+      assert(Boolean(receivedHeaders["x-alert-timestamp"]), "Webhook must send x-alert-timestamp.");
+      assert(Boolean(receivedHeaders["x-idempotency-key"]), "Webhook must send x-idempotency-key.");
+
+      const isValid = verifyWebhookSignature(
+        receivedBody,
+        receivedHeaders["x-alert-signature"] as string,
+        receivedHeaders["x-alert-timestamp"] as string,
+        "my-webhook-secret-key",
+      );
+      assert(isValid, "x-alert-signature must be cryptographically valid with correct secret.");
+    },
+  );
+}
+
 async function main() {
   process.env.ALERT_DELIVERY_BACKOFF_MS = "0";
 
@@ -468,6 +726,13 @@ async function main() {
     ["force-fail + in_app", testForceFailAndInApp],
     ["skipped without config", testSkippedWithoutConfig],
     ["persist + sanitize", testPersistAndSanitizePayload],
+    ["pluggable channel registry (zero engine edit)", testPluggableChannelRegistrationZeroEngineEdits],
+    ["concurrent fan-out channel isolation", testConcurrentFanoutIsolation],
+    ["exponential backoff with jitter", testExponentialBackoffWithJitter],
+    ["dead-letter queue + individual replay", testDeadLetterQueueAndIndividualReplay],
+    ["bulk replay dead-letter queue", testBulkReplayDeadLetterQueue],
+    ["idempotent duplicate protection", testIdempotentDuplicateProtection],
+    ["generic webhook HMAC verification", testGenericWebhookHmacVerification],
   ] as const;
 
   for (const [name, run] of tests) {

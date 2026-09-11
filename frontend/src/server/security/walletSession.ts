@@ -466,8 +466,8 @@ export async function verifyWalletChallenge(input: {
     const memoValue =
       typeof memo.value === "string"
         ? memo.value
-        : Buffer.isBuffer(memo.value)
-          ? memo.value.toString("utf-8")
+        : memo.value instanceof Uint8Array || Buffer.isBuffer(memo.value)
+          ? Buffer.from(memo.value).toString("utf-8")
           : "";
     if (memoValue !== input.challenge.nonce) return { ok: false, error: "stellar_memo_mismatch" };
 
@@ -496,7 +496,11 @@ export async function verifyWalletChallenge(input: {
     const decorations = tx.signatures;
     const valid = decorations.some((sig) => {
       try {
-        return keyPair.verify(txHash, sig.signature());
+        const rawSig =
+          typeof (sig as any).signature === "function"
+            ? (sig as any).signature()
+            : (sig as any).signature?.value ?? (sig as any).signature;
+        return keyPair.verify(txHash, rawSig);
       } catch {
         return false;
       }
