@@ -1,6 +1,7 @@
 import type { PortfolioSnapshot } from "@/server/types";
 import { formatUsd, shortAddress } from "@/lib/format";
-import { BadgeCheck } from "lucide-react";
+import { BadgeCheck, Network } from "lucide-react";
+import Link from "next/link";
 import { PortfolioStressPanel } from "./PortfolioStressPanel";
 
 type LogoFallback = {
@@ -197,6 +198,16 @@ export function WalletPortfolioCard({
           </div>
           <div className={isDown ? "mt-3 text-red-300" : "mt-3 text-emerald-300"}>
             {signedChangeUsd ? `${signedChangeUsd} (${signedChangePercent})` : signedChangePercent} 24h
+          </div>
+          <div className="mt-2.5">
+            <Link
+              href={`/insights/exposure-map?walletAddress=${encodeURIComponent(walletAddress ?? portfolio.walletAddress ?? "")}&chain=${encodeURIComponent(portfolio.holdings[0]?.chainId ?? "")}`}
+              className="inline-flex items-center gap-1.5 rounded-full border border-purple-500/30 bg-purple-500/10 px-3 py-1 text-xs font-medium text-purple-300 transition hover:bg-purple-500/20"
+              aria-label="View Portfolio Exposure Map"
+            >
+              <Network className="h-3.5 w-3.5" />
+              <span>Exposure Map</span>
+            </Link>
           </div>
         </div>
       </div>
