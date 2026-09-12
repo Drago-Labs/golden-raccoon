@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { TokenHolding } from "@/server/types";
 import { formatPercent, formatUsd } from "@/lib/format";
 import { DataTable } from "@/components/layout/DataTable";
@@ -9,6 +10,12 @@ export function TokenTable({ holdings }: { holdings: TokenHolding[] }) {
         <div>
           <h2 className="text-xl font-semibold">Token exposure</h2>
         </div>
+        <Link
+          href="/insights/liquidity-depth"
+          className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-brand hover:bg-white/10 transition"
+        >
+          Liquidity Depth Analysis &rarr;
+        </Link>
       </div>
       <DataTable caption="Token exposure by holding" minWidth={680}>
           <thead className="text-xs uppercase tracking-[0.16em] text-white/36">
@@ -18,6 +25,7 @@ export function TokenTable({ holdings }: { holdings: TokenHolding[] }) {
               <th className="pb-3 font-medium">Value</th>
               <th className="pb-3 font-medium">Exposure</th>
               <th className="pb-3 font-medium">Risk</th>
+              <th className="pb-3 font-medium text-right">Analysis</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/8">
@@ -34,6 +42,14 @@ export function TokenTable({ holdings }: { holdings: TokenHolding[] }) {
                   <span className="rounded-full border border-white/10 bg-white/7 px-3 py-1 text-xs">
                     {holding.riskScore}/100
                   </span>
+                </td>
+                <td className="py-4 text-right">
+                  <Link
+                    href={`/insights/liquidity-depth?base=${encodeURIComponent(holding.symbol)}`}
+                    className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-brand hover:bg-white/10 transition"
+                  >
+                    Depth
+                  </Link>
                 </td>
               </tr>
             ))}
