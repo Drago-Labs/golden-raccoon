@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { AgentResult } from "@/server/types";
 import { NoDataState } from "@/components/NoDataState";
 
@@ -179,6 +180,13 @@ export function AgentResultPanel({ result }: { result: AgentResult }) {
             ))}
           </div>
         </div>
+      ) : null}
+      {result.agent === "news" ? (
+        <p className="mt-4 text-xs text-white/54">
+          <Link href="/insights/news-lineage" className="underline underline-offset-2 hover:text-white">
+            Inspect story lineage and independent corroboration
+          </Link>
+        </p>
       ) : null}
     </section>
   );
