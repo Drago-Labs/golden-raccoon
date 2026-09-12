@@ -29,7 +29,14 @@ export type ApiErrorCode =
   | "payment_proof_rejected"
   | "duplicate_payment"
   | "expected_effects_mismatch"
-  | "incident_mode";
+  | "incident_mode"
+  | "session_superseded"
+  | "session_revoked"
+  | "session_expired"
+  | "device_binding_mismatch"
+  | "nonce_already_used"
+  | "nonce_address_mismatch"
+  | "nonce_expired";
 
 export type RecoveryAction =
   | "retry"

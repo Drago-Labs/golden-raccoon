@@ -1,10 +1,26 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSignMessage } from "wagmi";
 import { useWalletSessionContext } from "@/providers/WalletSessionProvider";
 
 type Family = "evm" | "stellar";
+
+export type ClientSessionLifecycleState =
+  | "idle"
+  | "authenticating"
+  | "authenticated"
+  | "superseded"
+  | "revoked"
+  | "expired"
+  | "error";
+
+export interface ClientSessionInfo {
+  sessionId?: string;
+  generation?: number;
+  deviceHint?: string;
+  expiresAt?: string;
+}
 
 type ChallengePayload = {
   nonce: string;
@@ -29,19 +45,94 @@ export function useWalletSession() {
         : "Test SDF Network ; September 2015"
       : session.chainId?.toString() ?? "";
 
+  const [lifecycleState, setLifecycleState] = useState<ClientSessionLifecycleState>("idle");
+  const [sessionInfo, setSessionInfo] = useState<ClientSessionInfo | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+
   const queueStream = useRef<Promise<unknown>>(Promise.resolve());
   const inflightFor = useRef<string | null>(null);
   const lastSynced = useRef<string | null>(null);
+
+  const handleSessionError = useCallback((code?: string, detail?: string) => {
+    setSessionError(detail ?? code ?? "unknown_error");
+    if (code === "session_revoked") {
+      setLifecycleState("revoked");
+    } else if (code === "session_superseded") {
+      setLifecycleState("superseded");
+    } else if (code === "session_expired") {
+      setLifecycleState("expired");
+    } else if (code === "device_binding_mismatch") {
+      setLifecycleState("error");
+    } else {
+      setLifecycleState("error");
+    }
+  }, []);
+
+  const rotate = useCallback(async (): Promise<boolean> => {
+    try {
+      const response = await fetch("/api/wallet-session/rotate", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        handleSessionError(errorData.code ?? errorData.error, errorData.message ?? errorData.detail);
+        return false;
+      }
+
+      const data = await response.json();
+      setSessionInfo((prev) => ({
+        ...prev,
+        sessionId: data.sessionId,
+        generation: data.generation,
+        expiresAt: data.expiresAt,
+      }));
+      setLifecycleState("authenticated");
+      setSessionError(null);
+      return true;
+    } catch (err: unknown) {
+      handleSessionError("network_error", err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  }, [handleSessionError]);
+
+  const revoke = useCallback(async (): Promise<boolean> => {
+    try {
+      const response = await fetch("/api/wallet-session", {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      setSessionInfo(null);
+      setLifecycleState("revoked");
+      lastSynced.current = null;
+      return response.ok;
+    } catch {
+      setLifecycleState("revoked");
+      return false;
+    }
+  }, []);
+
+  const reconnect = useCallback(async () => {
+    lastSynced.current = null;
+    inflightFor.current = null;
+    setLifecycleState("authenticating");
+    setSessionError(null);
+  }, []);
 
   useEffect(() => {
     if (!address || !family) {
       lastSynced.current = null;
       inflightFor.current = null;
+      setLifecycleState("idle");
+      setSessionInfo(null);
       return;
     }
     if (lastSynced.current === address) return;
     if (inflightFor.current === address) return;
     inflightFor.current = address;
+    setLifecycleState("authenticating");
     const queued = queueStream.current;
     const claimedAtStart = address;
 
@@ -52,7 +143,7 @@ export function useWalletSession() {
             () => undefined,
           );
         }
-        await runChallenge(
+        const claimResult = await runChallenge(
           claimedAtStart,
           family,
           network,
@@ -60,8 +151,27 @@ export function useWalletSession() {
           session.stellar.signTransaction,
         );
         lastSynced.current = claimedAtStart;
+        setSessionInfo({
+          sessionId: claimResult.sessionId,
+          generation: claimResult.generation,
+          deviceHint: claimResult.deviceHint,
+          expiresAt: claimResult.expiresAt,
+        });
+        setLifecycleState("authenticated");
+        setSessionError(null);
       })
       .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        setSessionError(message);
+        if (message.includes("session_revoked")) {
+          setLifecycleState("revoked");
+        } else if (message.includes("session_superseded")) {
+          setLifecycleState("superseded");
+        } else if (message.includes("session_expired")) {
+          setLifecycleState("expired");
+        } else {
+          setLifecycleState("error");
+        }
         if (process.env.NODE_ENV !== "production") {
           console.warn("wallet session challenge failed", err);
         }
@@ -75,6 +185,13 @@ export function useWalletSession() {
 
   return {
     ...session,
+    lifecycleState,
+    sessionInfo,
+    sessionError,
+    rotate,
+    revoke,
+    reconnect,
+    handleSessionError,
     walletCapabilities: session.family === "stellar" ? session.stellar.capabilities : null,
     networkStatus: session.family === "stellar" ? session.stellar.networkStatus : null,
     sessionNotice: session.family === "stellar" ? session.stellar.sessionNotice : null,
@@ -127,4 +244,13 @@ async function runChallenge(
     const detail = await claimResponse.text().catch(() => "");
     throw new Error(`claim_rejected:${claimResponse.status}:${detail}`);
   }
+
+  const claimData = (await claimResponse.json().catch(() => ({}))) as {
+    sessionId?: string;
+    generation?: number;
+    deviceHint?: string;
+    expiresAt?: string;
+  };
+
+  return claimData;
 }

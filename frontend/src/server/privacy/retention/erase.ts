@@ -16,6 +16,7 @@
 import { createErasureReceipt, type ErasureTableEntry } from "./receipt";
 import type { ErasureReceipt } from "./receipt";
 import { clearPortfolioCacheForWallet } from "@/server/stellar/portfolio";
+import { revokeAllSessionsForWallet, eraseSessionsForWallet } from "@/server/security/session";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -157,7 +158,7 @@ export function eraseWalletDataFromMemory(input: EraseWalletInput): {
           walletMatches(tx.walletAddress, canonicalWallet) &&
           networkMatches(tx.network, network, tx.chainFamily, chainFamily)
         ) {
-          tx.walletAddress = null;
+          tx.walletAddress = "";
           tx.sourceAccount = undefined;
           rowsAffected++;
         }
@@ -176,14 +177,23 @@ export function eraseWalletDataFromMemory(input: EraseWalletInput): {
           walletMatches(rec.walletAddress, canonicalWallet) ||
           walletMatches(rec.payer, canonicalWallet);
         if (walletHit && networkMatches(rec.network, network, rec.chainFamily, chainFamily)) {
-          rec.walletAddress = null;
-          rec.payer = null;
+          rec.walletAddress = "";
+          rec.payer = "";
           rowsAffected++;
         }
       }
     }
     tables.push({ table: "x402_payment_receipts", action: rowsAffected > 0 ? "anonymized" : "skipped", rowsAffected, strategy: "anonymize" });
   }
+
+  const sessionsRevoked = revokeAllSessionsForWallet(canonicalWallet, "privacy_deletion");
+  eraseSessionsForWallet(canonicalWallet);
+  tables.push({
+    table: "wallet_sessions",
+    action: sessionsRevoked > 0 ? "deleted" : "skipped",
+    rowsAffected: sessionsRevoked,
+    strategy: "hard_delete",
+  });
 
   const portfolioCacheEvicted = clearPortfolioCacheForWallet(canonicalWallet);
 

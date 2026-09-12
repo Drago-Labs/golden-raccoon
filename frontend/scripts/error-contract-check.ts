@@ -20,7 +20,14 @@ const extraAllowed = new Set([
   "duplicate_payment",
   "expected_effects_mismatch",
   "incident_mode",
-  "not_found"
+  "not_found",
+  "session_superseded",
+  "session_revoked",
+  "session_expired",
+  "device_binding_mismatch",
+  "nonce_already_used",
+  "nonce_address_mismatch",
+  "nonce_expired"
 ]);
 
 const ALL_VALID_CODES = new Set([...validCodes, ...extraAllowed]);
