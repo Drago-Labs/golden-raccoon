@@ -1,0 +1,34 @@
+name: Feature - allowance inventory
+
+on:
+  pull_request:
+    paths:
+      - "frontend/src/server/research/allowance-inventory/**"
+      - "frontend/src/components/research/allowance-inventory/**"
+      - "frontend/src/app/api/insights/allowance-inventory/**"
+      - "frontend/src/app/insights/allowance-inventory/**"
+      - "frontend/tests/features/allowance-inventory/**"
+      - "frontend/e2e/specs/allowance-inventory.spec.ts"
+      - "docs/features/allowance-inventory.md"
+      - ".github/workflows/feature-allowance-inventory.yml"
+  workflow_dispatch:
+
+jobs:
+  focused-suite:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx vitest run tests/features/allowance-inventory
+      - run: npx tsc --noEmit --project tests/features/allowance-inventory/tsconfig.json
+      - run: npx eslint src/server/research/allowance-inventory src/components/research/allowance-inventory src/app/api/insights/allowance-inventory src/app/insights/allowance-inventory tests/features/allowance-inventory e2e/specs/allowance-inventory.spec.ts
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test e2e/specs/allowance-inventory.spec.ts --project=chromium-desktop --project=chromium-mobile
