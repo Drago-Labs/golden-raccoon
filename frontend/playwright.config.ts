@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const baseURL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const port = Number(process.env.PORT ?? "3000");
+const baseURL = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${port}`;
 const isCI = !!process.env.CI;
 
 export default defineConfig({
@@ -56,7 +57,7 @@ export default defineConfig({
   webServer: isCI
     ? {
         command: "npm run build && npm run start",
-        port: 3000,
+        port,
         timeout: 240_000,
         reuseExistingServer: false,
         env: {
@@ -70,7 +71,7 @@ export default defineConfig({
       }
     : {
         command: "npm run dev",
-        port: 3000,
+        port,
         timeout: 120_000,
         reuseExistingServer: false,
         env: {

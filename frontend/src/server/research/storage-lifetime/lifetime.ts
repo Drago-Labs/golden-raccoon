@@ -1,0 +1,2 @@
+export function classifyLifetime(observed: number, liveUntil: number | null) { if (liveUntil === null) return { state: "unavailable" as const, remaining: null }; const remaining = liveUntil - observed; return { state: observed <= liveUntil ? "live" as const : "past_boundary" as const, remaining: Math.max(0, remaining) }; }
+export function estimateSeconds(remainingLedgers: number | null, assumedLedgerSeconds = 5) { return remainingLedgers === null ? null : remainingLedgers * assumedLedgerSeconds; }
