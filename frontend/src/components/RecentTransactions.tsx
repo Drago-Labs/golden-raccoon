@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { TransactionRecord } from "@/server/types";
 import { formatUsd } from "@/lib/format";
 
@@ -39,6 +40,11 @@ export function RecentTransactions({ transactions }: { transactions: Transaction
           </div>
         ))}
       </div>
+      <p className="mt-5 text-xs text-white/54">
+        <Link href="/insights/fee-analysis" className="underline underline-offset-2 hover:text-white">
+          See what these transactions cost in network fees
+        </Link>
+      </p>
     </section>
   );
 }
