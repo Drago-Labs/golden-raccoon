@@ -2,7 +2,7 @@
  * Storage schema contract shared by all adapters.
  * Used by the health endpoint and deploy readiness checks.
  */
-export const storageSChemaContract: {
+export const storageSchemaContract = {
   tables: [
     "wallets",
     "agent_runs",
@@ -37,3 +37,5 @@ export const storageSChemaContract: {
     wallets: ["address"],
   },
 };
+
+export const storageSChemaContract = storageSchemaContract;
