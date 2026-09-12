@@ -1,6 +1,10 @@
+import Link from "next/link";
 import type { PortfolioSnapshot } from "@/server/types";
 import { formatUsd } from "@/lib/format";
 
+/**
+ * Renders portfolio value summary with direct navigation to peg deviation analysis.
+ */
 export function PortfolioCard({ portfolio }: { portfolio: PortfolioSnapshot }) {
   return (
     <section className="glass-panel rounded-[28px] p-6">
@@ -23,6 +27,18 @@ export function PortfolioCard({ portfolio }: { portfolio: PortfolioSnapshot }) {
             {portfolio.providerMeta?.network ?? portfolio.holdings[0]?.chainName ?? "Unknown"}
           </div>
         </div>
+      </div>
+
+      <div className="mt-4 border-t border-white/10 pt-4">
+        <Link
+          href="/insights/peg-observations"
+          className="flex items-center justify-between rounded-xl bg-white/6 px-4 py-3 text-xs font-medium text-white transition hover:bg-white/10 focus:ring-2 focus:ring-white/40 focus:outline-none"
+        >
+          <span>Stable-Asset Peg Deviation Workspace</span>
+          <span className="font-mono text-zinc-400" aria-hidden="true">
+            &rarr;
+          </span>
+        </Link>
       </div>
     </section>
   );

@@ -20,6 +20,7 @@
     "test:recovery": "npm --prefix frontend run test:recovery",
     "test:stellar-rpc": "node scripts/check-stellar-rpc.mjs",
     "test:a11y": "npm --prefix frontend run test:a11y",
+    "test:peg-observations": "npm --prefix frontend run test:peg-observations",
     "smoke": "node scripts/smoke-api.mjs",
     "bootstrap": "node scripts/bootstrap.mjs",
     "doctor": "node scripts/doctor.mjs",
