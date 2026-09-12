@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { TransactionPreview as Preview } from "@/server/types";
 import { formatUsd } from "@/lib/format";
 import { SimulationResultPanel } from "@/components/SimulationResultPanel";
@@ -113,6 +114,11 @@ export function TransactionPreview({ preview }: { preview: Preview }) {
           <SimulationResultPanel simulation={preview.simulation} />
         </div>
       ) : null}
+      <p className="mt-5 text-xs text-white/54">
+        <Link href="/insights/signing-inspector" className="underline underline-offset-2 hover:text-white">
+          Inspect the unsigned payload before signing
+        </Link>
+      </p>
     </section>
   );
 }
