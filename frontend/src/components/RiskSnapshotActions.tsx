@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, Copy, Download, FileLock2, Loader2, ShieldX } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import type { RiskSnapshotCreateResponse, TokenScanResult } from "@/server/types";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
@@ -126,6 +127,16 @@ export function RiskSnapshotActions({ source, snapshotId, shareUrl, downloadUrl 
           </button>
         ) : null}
       </div>
+      {activeId ? (
+        <p className="mt-3 text-xs text-white/60">
+          <Link
+            href={`/insights/report-comparison?right=${encodeURIComponent(activeId)}`}
+            className="underline underline-offset-2 hover:text-white"
+          >
+            Compare this snapshot with an earlier one
+          </Link>
+        </p>
+      ) : null}
       {created ? <p className="mt-3 break-all text-xs text-white/48">Hash: {created.hash}</p> : null}
       <p className="mt-3 text-xs leading-5 text-white/42">Snapshots exclude wallet, strategy, transaction-plan, internal-note, and provider-secret fields by default.</p>
       <div aria-live="polite" className={`mt-2 text-sm ${error ? "text-red-200" : "text-emerald-200"}`}>{error ?? message}</div>
