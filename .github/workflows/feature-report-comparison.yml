@@ -1,0 +1,55 @@
+name: Feature - Report Comparison
+
+on:
+  pull_request:
+    paths:
+      - "frontend/src/server/research/report-comparison/**"
+      - "frontend/src/app/api/insights/report-comparison/**"
+      - "frontend/src/components/research/report-comparison/**"
+      - "frontend/src/app/insights/report-comparison/**"
+      - "frontend/tests/features/report-comparison/**"
+      - "docs/features/report-comparison.md"
+      - ".github/workflows/feature-report-comparison.yml"
+  push:
+    branches: [main]
+    paths:
+      - "frontend/src/server/research/report-comparison/**"
+      - "frontend/src/app/api/insights/report-comparison/**"
+      - "frontend/src/components/research/report-comparison/**"
+      - "frontend/src/app/insights/report-comparison/**"
+      - "frontend/tests/features/report-comparison/**"
+      - "docs/features/report-comparison.md"
+      - ".github/workflows/feature-report-comparison.yml"
+
+concurrency:
+  group: report-comparison-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  test-report-comparison:
+    name: Report comparison test suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Run feature vitest tests
+        run: npx vitest run tests/features/report-comparison
+        working-directory: frontend
+
+      - name: Run feature eslint checks
+        run: npx eslint src/server/research/report-comparison src/app/api/insights/report-comparison src/components/research/report-comparison src/app/insights/report-comparison tests/features/report-comparison
+        working-directory: frontend

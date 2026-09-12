@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, Download, FileLock2, Loader2, ShieldX } from "lucide-react";
+import { Check, Copy, Download, FileLock2, GitCompare, Loader2, ShieldX } from "lucide-react";
 import { useState } from "react";
 import type { RiskSnapshotCreateResponse, TokenScanResult } from "@/server/types";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
@@ -111,6 +111,11 @@ export function RiskSnapshotActions({ source, snapshotId, shareUrl, downloadUrl 
         {activeDownloadUrl ? (
           <a href={activeDownloadUrl} className="inline-flex h-11 items-center gap-2 rounded-full border border-white/15 px-5 text-sm font-semibold text-white/80 transition hover:bg-white/8">
             <Download className="h-4 w-4" /> Download JSON
+          </a>
+        ) : null}
+        {activeId ? (
+          <a href={`/insights/report-comparison?baseId=${encodeURIComponent(activeId)}`} className="inline-flex h-11 items-center gap-2 rounded-full border border-white/15 px-5 text-sm font-semibold text-white/80 transition hover:bg-white/8">
+            <GitCompare className="h-4 w-4" /> Compare snapshot
           </a>
         ) : null}
         {created?.revocationToken ? (
