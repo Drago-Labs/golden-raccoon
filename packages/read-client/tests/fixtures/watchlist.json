@@ -1,0 +1,16 @@
+{
+  "entries": [
+    {
+      "id": "watch_1",
+      "walletAddress": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "identityKey": "stellar:stellar-testnet:USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "chain": "stellar",
+      "network": "stellar-testnet",
+      "source": "manual_watchlist",
+      "createdAt": "2026-09-12T00:00:00.000Z",
+      "symbol": "USD",
+      "assetKey": "USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "issuer": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+    }
+  ]
+}
