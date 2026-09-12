@@ -21,6 +21,8 @@ import {
   type StrategyProfileId,
 } from "./presets";
 import { parseBlockedAssetList } from "./assetKeys";
+import { CURRENT_RULE_SCHEMA_VERSION } from "./schema";
+export { getDefaultRules } from "./defaultRules";
 
 const ALLOWED_ACTIONS = [
   "hold",
@@ -177,6 +179,7 @@ type FinalizeInput = Omit<UserRule, "maxRiskScore" | "maxDailyTransactionValueUs
 export function finalizeRule(input: FinalizeInput): UserRule {
   return {
     ...input,
+    schemaVersion: CURRENT_RULE_SCHEMA_VERSION,
     maxRiskScore: input.maxBuyRisk,
     maxDailyTransactionValueUsd: input.maxDailyValueUsd,
     blockedTokens: [...input.blockedAssets],

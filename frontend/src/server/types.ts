@@ -502,14 +502,21 @@ export type StrategyPolicyResult = {
 };
 
 export type UserRule = {
+  schemaVersion?: number;
   walletAddress: string;
-  maxRiskScore: number;
+  profileId?: "conservative" | "balanced" | "aggressive" | "custom";
+  presetVersion?: number;
+  maxBuyRisk?: number;
   maxTradePercent: number;
-  maxMemeExposurePercent: number;
-  maxDailyTransactionValueUsd?: number;
-  maxSlippageBps?: number;
+  maxTradeValueUsd?: number;
+  maxDailyValueUsd?: number;
+  minLiquidityUsd?: number;
+  maxSingleTokenExposurePercent?: number;
   minStableReservePercent?: number;
+  maxMemeExposurePercent: number;
+  maxSlippageBps?: number;
   allowedChains?: string[];
+  blockedAssets?: string[];
   blockedTokens?: string[];
   blockedIssuers?: string[];
   blockedCategories?: string[];
@@ -517,6 +524,12 @@ export type UserRule = {
   autoExecute: boolean;
   version?: number;
   createdAt: string;
+  updatedAt?: string;
+  maxRiskScore: number;
+  maxDailyTransactionValueUsd?: number;
+  chainFamily?: ChainFamily;
+  network?: string;
+  identifier?: string;
 };
 
 export type RiskBreakdownItem = {

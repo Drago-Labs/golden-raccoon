@@ -5,6 +5,8 @@ import type {
   UserRule,
 } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
+import { migrateToCurrent } from "@/server/rules/migrate";
+import { assertValidRule } from "@/server/rules/validate";
 import { getChainFamily } from "@/lib/chainIdentity";
 
 // ---------------------------------------------------------------------------
@@ -130,7 +132,7 @@ export function evaluateStrategy(
   context: StrategyEnforcerContext,
   rules?: UserRule,
 ): StrategyPolicyResult {
-  const safeRules = rules ?? getDefaultRules();
+  const safeRules = rules ? assertValidRule(migrateToCurrent(rules)) : getDefaultRules();
   const defaults = getDefaultRules(safeRules.walletAddress);
   const version = safeRules.version ?? 1;
   const walletAddress = safeRules.walletAddress;
@@ -342,7 +344,7 @@ export function evaluateStrategy(
     context.holdingAllocationPercent >= 25 &&
     context.riskScore >= 50
   ) {
-    const minStable = context.minStableReservePercent ?? 15;
+    const minStable = context.minStableReservePercent ?? safeRules.minStableReservePercent ?? 15;
     if (context.stableReservePercent < minStable) {
       decisions.push(
         makeDecision(

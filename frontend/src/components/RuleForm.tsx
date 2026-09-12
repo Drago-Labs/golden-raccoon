@@ -4,6 +4,10 @@ import { useCallback, useId, useMemo, useRef, useState } from "react";
 import type { UserRule } from "@/server/types";
 import type { StrategyPreset } from "@/server/rules/presets";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { RuleDiffList } from "./RuleDiffList";
+import { RulePreviewPanel } from "./RulePreviewPanel";
+import { calculateRuleDiff } from "@/server/rules/diff";
+import type { RulePreviewResult } from "@/server/rules/preview";
 
 type SaveState =
   | { status: "idle" }
@@ -141,6 +145,10 @@ export function RuleForm({
   save = defaultSave,
 }: RuleFormProps) {
   const [rules, setRules] = useState<UserRule>(initialRules);
+  const [savedSnapshot, setSavedSnapshot] = useState<UserRule>(initialRules);
+  const [previewResult, setPreviewResult] = useState<RulePreviewResult | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
   const [assetDraft, setAssetDraft] = useState("");
   const [assetError, setAssetError] = useState<string | null>(null);
@@ -149,6 +157,30 @@ export function RuleForm({
   const { actionsDisabled } = useOnlineStatus();
 
   const isReadOnly = !walletAddress || actionsDisabled;
+  const diff = useMemo(() => calculateRuleDiff(savedSnapshot, rules), [savedSnapshot, rules]);
+
+  const runPreview = useCallback(async () => {
+    setIsPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const response = await fetch("/api/rules/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rule: { ...rules, walletAddress } }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setPreviewError(payload.message ?? payload.error ?? "Failed to preview strategy");
+      } else {
+        setPreviewResult(payload.preview);
+      }
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : "Preview request failed");
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  }, [rules, walletAddress]);
+
   const fieldIssues = useMemo(() => {
     if (saveState.status !== "error" || !saveState.issues) {
       return new Map<string, string>();
@@ -256,6 +288,7 @@ export function RuleForm({
 
       if (payload.rule) {
         setRules(payload.rule as UserRule);
+        setSavedSnapshot(payload.rule as UserRule);
       }
 
       setSaveState({ status: "saved", at: new Date().toISOString() });
@@ -518,7 +551,28 @@ export function RuleForm({
           </p>
         </section>
 
+        <section aria-labelledby={`${formId}-review-heading`} className="space-y-4">
+          <h2 id={`${formId}-review-heading`} className="sr-only">
+            Rule diff and signal preview
+          </h2>
+          <RuleDiffList diff={diff} />
+          <RulePreviewPanel
+            preview={previewResult}
+            isLoading={isPreviewLoading}
+            error={previewError}
+            onRefresh={runPreview}
+          />
+        </section>
+
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <button
+            type="button"
+            onClick={runPreview}
+            disabled={isReadOnly || isPreviewLoading}
+            className="h-11 rounded-full border border-white/20 px-5 text-sm font-semibold text-white/90 transition hover:border-white/40 hover:text-white disabled:opacity-50"
+          >
+            {isPreviewLoading ? "Simulating…" : "Preview matches"}
+          </button>
           <button
             type="submit"
             disabled={isReadOnly || saveState.status === "saving"}

@@ -29,6 +29,8 @@ import type {
   NotificationPreferences,
 } from "@/server/types";
 import { getDefaultRules } from "@/server/rules/defaultRules";
+import { migrateToCurrent } from "@/server/rules/migrate";
+import { assertValidRule } from "@/server/rules/validate";
 import { isTransactionHashForChain } from "@/lib/chainIdentity";
 import { validateAgentResult } from "@/server/agents/schema";
 import {
@@ -1043,30 +1045,39 @@ export function getAuditSourceRecords(walletAddress: string): {
   };
 }
 
-export function getUserRuleRecord(walletAddress = "0xDemoWallet") {
-  const existing = getUserRules().find((rule) => rule.walletAddress.toLowerCase() === walletAddress.toLowerCase());
+export function getUserRuleRecord(
+  walletAddress = "0xDemoWallet",
+  contextInput?: { chainFamily?: ChainFamily; network?: string },
+) {
+  const existing = getUserRules().find(
+    (rule) => rule.walletAddress.toLowerCase() === walletAddress.toLowerCase(),
+  );
 
-  return {
-    ...getDefaultRules(walletAddress),
-    ...existing,
-    autoExecute: false,
-  };
+  if (!existing) {
+    return getDefaultRules(walletAddress, contextInput);
+  }
+
+  return migrateToCurrent(existing);
 }
 
 export function upsertUserRuleRecord(input: UserRule) {
-  const createdAt = input.createdAt ?? new Date().toISOString();
-  const defaults = getDefaultRules(input.walletAddress);
-  const existingIndex = getUserRules().findIndex((rule) => rule.walletAddress.toLowerCase() === input.walletAddress.toLowerCase());
+  const sanitizedInput = { ...input, autoExecute: false };
+  const migrated = migrateToCurrent(sanitizedInput);
+  const validated = assertValidRule(migrated);
+  const createdAt = input.createdAt ?? validated.createdAt ?? new Date().toISOString();
+  const existingIndex = getUserRules().findIndex(
+    (rule) => rule.walletAddress.toLowerCase() === validated.walletAddress.toLowerCase(),
+  );
   // Always auto-increment version on every upsert so decision/execution
   // see a monotonically-increasing versioned snapshot. Client-supplied
   // version is ignored — trusted storage owns the version counter.
   const currentVersion = existingIndex >= 0 ? (getUserRules()[existingIndex].version ?? 0) : 0;
   const record: UserRule = {
-    ...defaults,
-    ...input,
+    ...validated,
     autoExecute: false,
     version: currentVersion + 1,
     createdAt,
+    updatedAt: new Date().toISOString(),
   };
 
   if (existingIndex >= 0) {
