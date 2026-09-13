@@ -1,0 +1,2 @@
+import type { ProxyResult } from "@/server/research/proxy-inspector";
+export function ImplementationGraph({ result }: { result: ProxyResult }) { return <section aria-label="Implementation graph" className="rounded-2xl border border-white/10 p-4"><h2 className="font-semibold">Implementation path</h2>{result.nodes.map((node) => <div key={node.address} className="mt-3 break-all font-mono text-xs">{node.role}: {node.address} · {node.code ? "code observed" : "no code"}</div>)}</section>; }
