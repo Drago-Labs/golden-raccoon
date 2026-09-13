@@ -1,31 +1,11 @@
-/**
- * Reads of the standardized slots at one address and one block.
- *
- * Each slot is read independently and a failure is recorded against that slot
- * alone. One unavailable slot degrades the report to partial; it does not
- * erase the four slots that were read successfully.
- */
-import { readerMessage } from "./codeReader";
-import { INSPECTED_SLOT_KEYS, decodeSlotWord } from "./standardSlots";
-import { STANDARD_SLOTS, type ChainReader, type SlotObservation } from "./schema";
-
-export async function readStandardSlots(
-  reader: ChainReader,
-  address: string,
-  block: string,
-): Promise<SlotObservation[]> {
-  const observations: SlotObservation[] = [];
-
-  for (const slotKey of INSPECTED_SLOT_KEYS) {
-    const descriptor = STANDARD_SLOTS[slotKey];
-
-    try {
-      const raw = await reader.getStorageAt(address, descriptor.slot, block);
-      observations.push(decodeSlotWord(slotKey, raw, null));
-    } catch (error) {
-      observations.push(decodeSlotWord(slotKey, null, readerMessage(error, "The storage read did not complete.")));
-    }
+export interface RpcReader { call(method: string, params: unknown[]): Promise<unknown> }
+export class JsonRpcReader implements RpcReader {
+  constructor(private readonly url: string) {}
+  async call(method: string, params: unknown[]) {
+    const response = await fetch(this.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.timeout(12_000) });
+    if (!response.ok) throw new Error("RPC request failed");
+    const body = await response.json() as { result?: unknown; error?: { message?: string } };
+    if (body.error || body.result === undefined) throw new Error(body.error?.message ?? "RPC result unavailable");
+    return body.result;
   }
-
-  return observations;
 }

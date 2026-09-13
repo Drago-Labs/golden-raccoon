@@ -1,209 +1,48 @@
-/**
- * Public entry point for proxy implementation and upgrade authority inspection.
- *
- * `inspectProxy` takes a reader as data. That is what makes the feature
- * testable without a chain, and it is also what makes the read-only guarantee
- * checkable: the only capability the service is handed is `ChainReader`, which
- * has no way to send a transaction.
- *
- * The read budget is enforced here rather than in each module, so the ceiling
- * published in `PROXY_LIMITS.maxRpcCalls` holds for the inspection as a whole
- * and not per module.
- */
-import { collectAuthorityEvidence } from "./authorityEvidence";
-import { buildCoverage, buildFindings, classify, type ClassificationInput } from "./classification";
-import { readCode } from "./codeReader";
-import { walkImplementationGraph } from "./implementationGraph";
-import { readStandardSlots } from "./storageReader";
 import { getEvmNetwork } from "@/lib/evm/config";
-import {
-  PROXY_LIMITS,
-  PROXY_SCHEMA_VERSION,
-  ProxyInspectorError,
-  proxyInspectionRequestSchema,
-  type ChainReader,
-  type ProxyInspectionReport,
-  type ScopedAddress,
-} from "./schema";
+import { authorityEvidence } from "./authorityEvidence";
+import { resolveBeacon } from "./beaconResolver";
+import { classify } from "./classification";
+import { hasCode } from "./codeReader";
+import { addNode } from "./implementationGraph";
+import type { ProxyResult } from "./schema";
+import { ERC1967_SLOTS, addressFromSlot } from "./standardSlots";
+import { JsonRpcReader, type RpcReader } from "./storageReader";
 
-class ReadBudgetExceeded extends Error {
-  constructor(budget: number) {
-    super(`The inspection reached its published ceiling of ${budget} reads.`);
-    this.name = "ReadBudgetExceeded";
-  }
-}
-
-type BudgetedReader = {
-  reader: ChainReader;
-  used: () => number;
-  failed: () => number;
-};
-
-/**
- * Wraps a reader so the whole inspection shares one read budget.
- *
- * Once the budget is spent every further read rejects. Callers already treat a
- * rejected read as an unavailable observation, so exhausting the budget
- * degrades the report to partial instead of throwing the work away.
- */
-function budgeted(reader: ChainReader, budget: number): BudgetedReader {
-  let used = 0;
-  let failed = 0;
-
-  async function spend<T>(run: () => Promise<T>): Promise<T> {
-    if (used >= budget) {
-      failed += 1;
-      throw new ReadBudgetExceeded(budget);
+export async function inspectProxy(input: { network: string; contractAddress: string; blockNumber?: number }, deps: { reader?: RpcReader } = {}): Promise<ProxyResult> {
+  const config = getEvmNetwork(input.network);
+  if (!config) throw new Error("Unsupported network");
+  const reader = deps.reader ?? new JsonRpcReader(config.rpcUrl);
+  const observations: ProxyResult["observations"] = [];
+  const nodes: ProxyResult["nodes"] = [];
+  const edges: ProxyResult["edges"] = [];
+  try {
+    const observed = input.blockNumber ?? Number.parseInt(String(await reader.call("eth_blockNumber", [])), 16);
+    const block = "0x" + observed.toString(16);
+    const code = await hasCode(reader, input.contractAddress, block);
+    observations.push({ kind: "code", address: input.contractAddress, detail: code ? "bytecode present" : "no bytecode", ok: code });
+    addNode(nodes, { address: input.contractAddress, role: "proxy", code });
+    const slots = await Promise.all(Object.entries(ERC1967_SLOTS).map(async ([name, slot]) => {
+      const raw = String(await reader.call("eth_getStorageAt", [input.contractAddress, slot, block]));
+      observations.push({ kind: "slot", address: input.contractAddress, detail: name + "=" + raw, ok: true });
+      return [name, addressFromSlot(raw)] as const;
+    }));
+    const values = Object.fromEntries(slots) as Record<keyof typeof ERC1967_SLOTS, string | null>;
+    const conflict = Boolean(values.implementation && values.beacon);
+    let target = values.implementation;
+    if (values.beacon) {
+      addNode(nodes, { address: values.beacon, role: "beacon", code: await hasCode(reader, values.beacon, block) });
+      edges.push({ from: input.contractAddress, to: values.beacon, kind: "beacon" });
+      try { target = await resolveBeacon(reader, values.beacon, block); observations.push({ kind: "call", address: values.beacon, detail: "implementation()=" + target, ok: Boolean(target) }); }
+      catch { observations.push({ kind: "call", address: values.beacon, detail: "implementation() reverted", ok: false }); }
     }
-
-    used += 1;
-
-    try {
-      return await run();
-    } catch (error) {
-      failed += 1;
-      throw error;
+    if (target) {
+      const seen = new Set([input.contractAddress.toLowerCase(), values.beacon?.toLowerCase()]);
+      if (seen.has(target.toLowerCase())) observations.push({ kind: "call", address: target, detail: "cycle detected", ok: false });
+      else { addNode(nodes, { address: target, role: "implementation", code: await hasCode(reader, target, block) }); edges.push({ from: values.beacon ?? input.contractAddress, to: target, kind: "implementation" }); }
     }
+    const classification = classify({ code, implementation: values.implementation, beacon: values.beacon, conflict });
+    return { network: input.network, blockNumber: observed, state: observations.some((o) => !o.ok) ? "partial" : target || !code ? "complete" : "empty", classification, nodes, edges, authority: authorityEvidence(values.admin), observations, warnings: conflict ? ["Implementation and beacon slots conflict."] : [] };
+  } catch (error) {
+    return { network: input.network, blockNumber: null, state: "unavailable", classification: "unavailable", nodes, edges, authority: authorityEvidence(null), observations, warnings: [error instanceof Error ? error.message : "RPC unavailable"] };
   }
-
-  return {
-    reader: {
-      getBlockNumber: () => spend(() => reader.getBlockNumber()),
-      getCode: (address, block) => spend(() => reader.getCode(address, block)),
-      getStorageAt: (address, slot, block) => spend(() => reader.getStorageAt(address, slot, block)),
-      call: (to, data, block) => spend(() => reader.call(to, data, block)),
-    },
-    used: () => used,
-    failed: () => failed,
-  };
 }
-
-function parseBlockNumber(block: string): number | null {
-  if (!/^0x[0-9a-fA-F]+$/.test(block)) return null;
-
-  const value = Number.parseInt(block.slice(2), 16);
-
-  return Number.isSafeInteger(value) ? value : null;
-}
-
-export async function inspectProxy(input: unknown, reader: ChainReader): Promise<ProxyInspectionReport> {
-  const parsed = proxyInspectionRequestSchema.safeParse(input);
-
-  if (!parsed.success) {
-    throw new ProxyInspectorError("invalid_request", "The inspection request could not be read.", parsed.error.flatten());
-  }
-
-  const network = getEvmNetwork(parsed.data.network);
-
-  if (!network) {
-    // Refusing an unknown network is deliberate: an address rendered without a
-    // known chain behind it is the exact ambiguity this feature exists to remove.
-    throw new ProxyInspectorError("unsupported_network", "That network is not configured for EVM reads.", {
-      network: parsed.data.network,
-    });
-  }
-
-  const address = parsed.data.address.toLowerCase();
-  const chainId = network.chainId ?? null;
-  const target: ScopedAddress = { network: network.id, chainId, address };
-  const budget = budgeted(reader, PROXY_LIMITS.maxRpcCalls);
-
-  // Every read below uses this one block, so the report describes a single
-  // consistent moment rather than a smear across several.
-  let block = parsed.data.block;
-
-  if (block === "latest") {
-    try {
-      block = await budget.reader.getBlockNumber();
-    } catch {
-      block = "latest";
-    }
-  }
-
-  const targetCode = await readCode(budget.reader, target, block);
-
-  if (targetCode.unavailableReason || !targetCode.hasCode) {
-    const classificationInput: ClassificationInput = {
-      targetCode,
-      slots: [],
-      path: [],
-      authority: [],
-      cycleDetected: false,
-      truncated: false,
-      failedReadCount: budget.failed(),
-    };
-    const { classification, summary } = classify(classificationInput);
-
-    return {
-      schemaVersion: PROXY_SCHEMA_VERSION,
-      checkedAtBlock: block,
-      checkedAtBlockNumber: parseBlockNumber(block),
-      network: network.id,
-      chainId,
-      target,
-      classification,
-      summary,
-      targetCode,
-      slots: [],
-      path: [],
-      authority: [],
-      findings: buildFindings(classificationInput, classification),
-      coverage: buildCoverage(classificationInput, budget.used(), PROXY_LIMITS.maxRpcCalls),
-      readOnly: true,
-      scoreUnchanged: true,
-    };
-  }
-
-  const slots = await readStandardSlots(budget.reader, address, block);
-
-  const walk = await walkImplementationGraph({
-    reader: budget.reader,
-    network: network.id,
-    chainId,
-    target: address,
-    block,
-    rootSlots: slots,
-  });
-
-  const authority = await collectAuthorityEvidence({
-    reader: budget.reader,
-    network: network.id,
-    chainId,
-    block,
-    slots,
-  });
-
-  const classificationInput: ClassificationInput = {
-    targetCode,
-    slots,
-    path: walk.path,
-    authority,
-    cycleDetected: walk.cycleDetected,
-    truncated: walk.truncated,
-    failedReadCount: budget.failed(),
-  };
-
-  const { classification, summary } = classify(classificationInput);
-
-  return {
-    schemaVersion: PROXY_SCHEMA_VERSION,
-    checkedAtBlock: block,
-    checkedAtBlockNumber: parseBlockNumber(block),
-    network: network.id,
-    chainId,
-    target,
-    classification,
-    summary,
-    targetCode,
-    slots,
-    path: walk.path,
-    authority,
-    findings: buildFindings(classificationInput, classification),
-    coverage: buildCoverage(classificationInput, budget.used(), PROXY_LIMITS.maxRpcCalls),
-    readOnly: true,
-    scoreUnchanged: true,
-  };
-}
-
-export { ProxyInspectorError } from "./schema";
-export type { ChainReader, ProxyInspectionReport } from "./schema";

@@ -1,5 +1,5 @@
-import Link from "next/link";
 import type { RiskBreakdownItem } from "@/server/types";
+import Link from "next/link";
 
 function barColor(score: number) {
   if (score >= 85) return "bg-red-300";
@@ -17,6 +17,7 @@ export function RiskBreakdownCard({ items }: { items: RiskBreakdownItem[] }) {
         </div>
       </div>
       <div className="mt-6 space-y-4">
+        <Link href="/insights/proxy-inspector" className="inline-flex rounded-full border border-white/15 px-4 py-2 text-sm">Inspect proxy implementation</Link>
         {items.slice(0, 6).map((item) => (
           <div key={item.key}>
             <div className="mb-2 flex items-center justify-between gap-4 text-sm">
@@ -30,11 +31,6 @@ export function RiskBreakdownCard({ items }: { items: RiskBreakdownItem[] }) {
           </div>
         ))}
       </div>
-      <p className="mt-5 text-xs text-white/54">
-        <Link href="/insights/proxy-inspector" className="underline underline-offset-2 hover:text-white">
-          Inspect the proxy implementation and upgrade authority
-        </Link>
-      </p>
     </section>
   );
 }
