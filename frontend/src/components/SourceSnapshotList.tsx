@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { SourceSnapshotDetail } from "@/server/types";
 
 type SourceSnapshotListProps = {
@@ -93,6 +94,11 @@ export function SourceSnapshotList({ snapshots, loading, error }: SourceSnapshot
           </div>
         ))}
       </div>
+      <p className="mt-3 text-xs text-white/54">
+        <Link href="/insights/evidence-coverage" className="underline underline-offset-2 hover:text-white">
+          Explore source coverage and contradictions
+        </Link>
+      </p>
     </div>
   );
 }

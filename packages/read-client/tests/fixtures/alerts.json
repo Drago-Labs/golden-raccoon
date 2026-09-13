@@ -1,0 +1,14 @@
+{
+  "alerts": [
+    {
+      "id": "alert1",
+      "walletAddress": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "kind": "liquidity_drop",
+      "title": "Liquidity changed",
+      "detail": "Fixture observation",
+      "severity": "high",
+      "acknowledged": false,
+      "createdAt": "2026-09-12T00:00:00.000Z"
+    }
+  ]
+}
