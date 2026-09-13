@@ -45,7 +45,8 @@
     "test:proxy-inspector": "vitest run tests/features/proxy-inspector",
     "test:signing-inspector": "vitest run tests/features/signing-inspector",
     "test:fee-analysis": "vitest run tests/features/fee-analysis",
-    "test:watchlist-collections": "vitest run tests/features/watchlist-collections"
+    "test:watchlist-collections": "vitest run tests/features/watchlist-collections",
+    "test:run-comparison": "vitest run tests/features/run-comparison"
   },
   "dependencies": {
     "@coinbase/x402": "^2.1.0",

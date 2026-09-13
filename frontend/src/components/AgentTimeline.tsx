@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { AgentStep } from "@/server/types";
 import { Check, CircleDashed } from "lucide-react";
 
@@ -18,6 +19,11 @@ export function AgentTimeline({ steps }: { steps: AgentStep[] }) {
           </div>
         ))}
       </div>
+      <p className="mt-6 text-xs text-white/54">
+        <Link href="/insights/run-comparison" className="underline underline-offset-2 hover:text-white">
+          Compare two saved runs side by side
+        </Link>
+      </p>
     </section>
   );
 }
