@@ -42,7 +42,8 @@
     "test:offline": "tsx --tsconfig tsconfig.json scripts/offline-check.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:proxy-inspector": "vitest run tests/features/proxy-inspector"
+    "test:proxy-inspector": "vitest run tests/features/proxy-inspector",
+    "test:signing-inspector": "vitest run tests/features/signing-inspector"
   },
   "dependencies": {
     "@coinbase/x402": "^2.1.0",
