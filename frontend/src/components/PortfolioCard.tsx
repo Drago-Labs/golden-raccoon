@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { PortfolioSnapshot } from "@/server/types";
 import { formatUsd } from "@/lib/format";
 
@@ -24,6 +25,14 @@ export function PortfolioCard({ portfolio }: { portfolio: PortfolioSnapshot }) {
           </div>
         </div>
       </div>
+      <p className="mt-4 text-xs text-white/54">
+        <Link
+          href={`/insights/peg-observations?network=${encodeURIComponent(portfolio.providerMeta?.network ?? "")}`}
+          className="underline underline-offset-2 hover:text-white"
+        >
+          Inspect stable-asset peg deviations
+        </Link>
+      </p>
     </section>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, CircleAlert, Loader2, Lock, RotateCcw, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
 import type { RecoveryChain, RecoveryIncidentMode, RecoveryList, RecoveryNetworkFreshness, RecoveryRequest, RecoveryType } from "@/server/types";
@@ -348,6 +349,9 @@ export function RecoveryClient({ initialWallet }: { initialWallet?: string }) {
           <p className="mt-2 max-w-2xl text-sm leading-6 text-white/48">
             Stop automation, revoke agents, reduce unsafe EVM allowances, and remove Stellar trustlines. The server never signs \u2014 the connected wallet signs every action.
           </p>
+          <Link href="/insights/allowance-inventory" className="mt-3 inline-flex rounded-full border border-[#d9a441]/35 px-4 py-2 text-sm text-[#f2c86d] hover:bg-[#d9a441]/10">
+            Inspect current token allowances
+          </Link>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <label className="text-xs text-white/46" htmlFor="recovery-wallet">
