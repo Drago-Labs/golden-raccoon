@@ -1,0 +1,35 @@
+{
+  "walletAddress": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+  "nativeBalance": 2,
+  "nativeSymbol": "XLM",
+  "dayChangePercent": 0,
+  "totalValueUsd": 0,
+  "riskScore": 0,
+  "createdAt": "2026-09-12T00:00:00.000Z",
+  "holdings": [
+    {
+      "tokenAddress": "USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "symbol": "USD",
+      "name": "Example",
+      "balance": 1,
+      "priceUsd": null,
+      "valueUsd": 0,
+      "issuer": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "chainId": "stellar-testnet",
+      "priceStatus": "unavailable"
+    }
+  ],
+  "valuationStatus": "unavailable",
+  "dataWarnings": [
+    "Price unavailable"
+  ],
+  "recentActivity": [
+    {
+      "id": "p1",
+      "type": "payment",
+      "createdAt": "2026-09-12T00:00:00.000Z",
+      "transactionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "amount": "922337203685.4775807"
+    }
+  ]
+}

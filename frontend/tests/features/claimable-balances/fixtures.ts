@@ -1,0 +1,6 @@
+import type { ClaimantSource } from "@/server/research/claimable-balances/claimantReader";
+if (typeof window !== "undefined" && !window.localStorage) { const values = new Map<string, string>(); Object.defineProperty(window, "localStorage", { value: { get length() { return values.size; }, clear: () => values.clear(), getItem: (k: string) => values.get(k) ?? null, key: (i: number) => [...values.keys()][i] ?? null, removeItem: (k: string) => values.delete(k), setItem: (k: string, v: string) => values.set(k, v) } }); }
+export const wallet = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+export const issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+export const id = "0".repeat(72);
+export function source(overrides: Partial<Awaited<ReturnType<ClaimantSource["read"]>>> = {}): ClaimantSource { return { read: async () => ({ records: [{ id, asset: "USD:" + issuer, amount: "12.5000000", sponsor: issuer, last_modified_ledger: 10, paging_token: "1", claimants: [{ destination: wallet, predicate: { unconditional: true } }] }], accountBalances: [{ asset_type: "credit_alphanum4", asset_code: "USD", asset_issuer: issuer, is_authorized: true }], ledger: 100, closeTime: "2026-01-01T00:00:00Z", source: "https://horizon.example", pagesRead: 1, duplicatePage: false, truncated: false, missingIds: [], ...overrides }) }; }

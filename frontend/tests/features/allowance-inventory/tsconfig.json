@@ -1,0 +1,15 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "target": "ES2020"
+  },
+  "include": [
+    "../../../next-env.d.ts",
+    "../../../src/server/research/allowance-inventory/**/*.ts",
+    "./fixtures.ts",
+    "./domain.test.ts",
+    "./validation.test.ts"
+  ],
+  "exclude": ["../../../node_modules"]
+}
