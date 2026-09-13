@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { RiskBreakdownItem } from "@/server/types";
 
 function barColor(score: number) {
@@ -29,6 +30,11 @@ export function RiskBreakdownCard({ items }: { items: RiskBreakdownItem[] }) {
           </div>
         ))}
       </div>
+      <p className="mt-5 text-xs text-white/54">
+        <Link href="/insights/proxy-inspector" className="underline underline-offset-2 hover:text-white">
+          Inspect the proxy implementation and upgrade authority
+        </Link>
+      </p>
     </section>
   );
 }

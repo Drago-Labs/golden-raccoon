@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "count": 1,
+  "records": [
+    {
+      "id": "riskpub_1",
+      "network": "stellar-testnet",
+      "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "publisher": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "assetKey": "USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      "assetLabel": "USD",
+      "score": 70,
+      "verdict": "watch",
+      "reportHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "verified": false,
+      "publishedAt": "2026-09-12T00:00:00.000Z",
+      "createdAt": "2026-09-12T00:00:00.000Z"
+    }
+  ]
+}

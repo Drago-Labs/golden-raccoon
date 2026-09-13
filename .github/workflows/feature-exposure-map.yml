@@ -1,0 +1,42 @@
+name: Feature · exposure map
+
+on:
+  pull_request:
+    paths:
+      - "frontend/src/server/research/exposure-map/**"
+      - "frontend/src/components/research/exposure-map/**"
+      - "frontend/src/app/insights/exposure-map/**"
+      - "frontend/src/app/api/insights/exposure-map/**"
+      - "frontend/tests/features/exposure-map/**"
+      - ".github/workflows/feature-exposure-map.yml"
+  push:
+    branches: [main]
+
+concurrency:
+  group: feature-exposure-map-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  focused-suite:
+    name: exposure-map focused suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Run focused suite
+        working-directory: frontend
+        run: npx vitest run tests/features/exposure-map

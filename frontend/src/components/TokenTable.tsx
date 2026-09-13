@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { TokenHolding } from "@/server/types";
 import { formatPercent, formatUsd } from "@/lib/format";
 import { DataTable } from "@/components/layout/DataTable";
@@ -9,6 +10,12 @@ export function TokenTable({ holdings }: { holdings: TokenHolding[] }) {
         <div>
           <h2 className="text-xl font-semibold">Token exposure</h2>
         </div>
+        <Link
+          href="/insights/liquidity-depth"
+          className="text-xs text-muted underline underline-offset-2 transition hover:text-[var(--color-fg)]"
+        >
+          Liquidity depth workbench
+        </Link>
       </div>
       <DataTable caption="Token exposure by holding" minWidth={680}>
           <thead className="text-xs uppercase tracking-[0.16em] text-white/36">
