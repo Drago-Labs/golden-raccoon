@@ -1,0 +1,25 @@
+name: Read client contracts
+on:
+  pull_request:
+    paths: ["packages/read-client/**", "docs/features/read-client.md", ".github/workflows/feature-read-client.yml", "frontend/src/app/api/**", "frontend/src/server/types.ts", "frontend/src/server/snapshots/**", "frontend/src/server/stellar/riskHistory.ts"]
+  push:
+    branches: [main]
+    paths: ["packages/read-client/**", ".github/workflows/feature-read-client.yml"]
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/read-client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: packages/read-client/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
