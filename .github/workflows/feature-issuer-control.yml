@@ -1,0 +1,29 @@
+name: Feature - issuer control
+on:
+  pull_request:
+    paths:
+      [
+        "frontend/src/server/research/issuer-control/**",
+        "frontend/src/components/research/issuer-control/**",
+        "frontend/src/app/api/insights/issuer-control/**",
+        "frontend/src/app/insights/issuer-control/**",
+        "frontend/tests/features/issuer-control/**",
+        "frontend/e2e/specs/issuer-control.spec.ts",
+        "docs/features/issuer-control.md",
+        ".github/workflows/feature-issuer-control.yml",
+      ]
+  workflow_dispatch:
+jobs:
+  focused-suite:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+      - run: npx vitest run tests/features/issuer-control
+      - run: npx tsc --noEmit --project tests/features/issuer-control/tsconfig.json
+      - run: npx eslint src/server/research/issuer-control src/components/research/issuer-control src/app/api/insights/issuer-control src/app/insights/issuer-control tests/features/issuer-control e2e/specs/issuer-control.spec.ts
+      - run: npx playwright install --with-deps chromium
+      - run: PORT=3021 NEXT_PUBLIC_APP_URL=http://localhost:3021 npx playwright test e2e/specs/issuer-control.spec.ts --project=chromium-desktop --project=chromium-mobile

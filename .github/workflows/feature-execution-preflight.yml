@@ -1,0 +1,35 @@
+name: Feature · execution preflight
+
+on:
+  pull_request:
+    paths:
+      - "frontend/src/server/research/execution-preflight/**"
+      - "frontend/src/components/research/execution-preflight/**"
+      - "frontend/src/app/insights/execution-preflight/**"
+      - "frontend/src/app/api/insights/execution-preflight/**"
+      - "frontend/tests/features/execution-preflight/**"
+      - ".github/workflows/feature-execution-preflight.yml"
+  push:
+    branches: [main]
+
+concurrency:
+  group: feature-execution-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  focused-suite:
+    name: execution-preflight focused suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - working-directory: frontend
+        run: npx vitest run tests/features/execution-preflight

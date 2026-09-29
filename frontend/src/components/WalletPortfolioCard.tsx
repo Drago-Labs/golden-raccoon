@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { PortfolioSnapshot } from "@/server/types";
 import { formatUsd, shortAddress } from "@/lib/format";
 import { BadgeCheck } from "lucide-react";
@@ -287,6 +288,14 @@ export function WalletPortfolioCard({
         })}
       </div>
       <PortfolioStressPanel portfolio={portfolio} />
+      <p className="mt-4 text-xs text-muted">
+        <Link
+          href={`/insights/exposure-map?wallet=${encodeURIComponent(portfolio.walletAddress)}`}
+          className="underline underline-offset-2 hover:text-[var(--color-fg)]"
+        >
+          Map shared issuer and protocol exposure
+        </Link>
+      </p>
     </section>
   );
 }

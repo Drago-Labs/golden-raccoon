@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "types": ["node"]
+  },
+  "include": [
+    "next-env.d.ts",
+    "src/server/research/storage-lifetime/**/*.ts",
+    "src/components/research/storage-lifetime/**/*.tsx",
+    "src/app/api/insights/storage-lifetime/**/*.ts",
+    "src/app/insights/storage-lifetime/**/*.tsx",
+    "tests/features/storage-lifetime/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}

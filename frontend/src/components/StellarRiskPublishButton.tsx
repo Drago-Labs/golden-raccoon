@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, Orbit, Shield, Hash, Fuel, Layers, Clock, FileText } from "lucide-react";
 import { getStellarNetwork, normalizeStellarNetworkId } from "@/lib/stellar/config";
@@ -192,6 +193,7 @@ export function StellarRiskPublishButton({
 
   return (
     <div className="mt-4 space-y-3">
+      <Link href="/insights/storage-lifetime" className="inline-flex rounded-full border border-white/15 px-4 py-2 text-sm text-white/70">Inspect contract storage lifetime</Link>
       {/* Preview button */}
       {showStartButton && (
         <button
