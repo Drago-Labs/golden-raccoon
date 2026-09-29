@@ -186,6 +186,10 @@ export function AgentResultPanel({ result }: { result: AgentResult }) {
           <Link href="/insights/news-lineage" className="underline underline-offset-2 hover:text-white">
             Inspect story lineage and independent corroboration
           </Link>
+          {" · "}
+          <Link href="/insights/incident-status" className="underline underline-offset-2 hover:text-white">
+            Reconcile incident claims with official status
+          </Link>
         </p>
       ) : null}
     </section>

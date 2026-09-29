@@ -28,6 +28,7 @@
     "test:watchlist": "tsx --tsconfig tsconfig.json scripts/watchlist-portability-check.ts",
     "test:portfolio-stress": "tsx --tsconfig tsconfig.json scripts/portfolio-stress-check.ts",
     "test:risk-snapshots": "tsx --tsconfig tsconfig.json scripts/risk-snapshot-check.ts",
+    "test:alert-rule-lab": "vitest run tests/features/alert-rule-lab",
     "test": "vitest run src/server/observability/__tests__/slo.test.ts src/server/observability/__tests__/tracing-redact.test.ts",
     "test:reconciliation": "node --conditions=react-server --import tsx scripts/transaction-reconciliation-check.ts",
     "test:alert-delivery": "NODE_OPTIONS='--require ./scripts/stub-server-only.cjs' tsx --tsconfig tsconfig.json scripts/alert-delivery-check.ts",
@@ -46,6 +47,8 @@
     "test:signing-inspector": "vitest run tests/features/signing-inspector",
     "test:fee-analysis": "vitest run tests/features/fee-analysis",
     "test:metadata-integrity": "vitest run tests/features/metadata-integrity",
+    "test:vesting-unlock": "vitest run tests/features/vesting-unlock",
+    "test:authority-history": "vitest run tests/features/authority-history",
     "test:watchlist-collections": "vitest run tests/features/watchlist-collections",
     "test:run-comparison": "vitest run tests/features/run-comparison"
   },

@@ -124,11 +124,10 @@ to `npm run test:a11y`:
 
 ## Remaining manual steps
 
-- Extend the `role="meter"`/text-equivalent treatment applied to
-  `RiskScoreCard` to the remaining `recharts`-based visualizations elsewhere
-  in the app (e.g. any historical trend charts). This was deliberately
-  deferred to avoid an oversized, high-risk diff in this change; each chart
-  should get its own small follow-up PR with a text/table fallback.
+- Research workspace chart equivalents (peg deviation, liquidity depth, storage
+  lifetime, exposure diagram, fee timeline) now ship with textual/tabular
+  companions; see `docs/features/research-a11y.md`. Extend the same treatment to
+  any future research charts as they land.
 - Add Playwright + `@axe-core/playwright` end-to-end coverage once
   Playwright is introduced to this repository (there is no Playwright
   suite today). Until then, `npm run test:a11y` (see

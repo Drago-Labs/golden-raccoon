@@ -1,23 +1,24 @@
 import { NextResponse } from "next/server";
-import { getPendingQueue, getPendingCount } from "@/server/stellar/governance";
+import { readPendingQueue } from "@/server/stellar/governance";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  try {
-    const queue = await getPendingQueue();
-    const count = await getPendingCount();
-    // Verify that readable queue matches on-chain state by returning both count and items
-    return NextResponse.json({
-      pendingCount: count,
-      pendingQueue: queue,
-      verified: queue.length === count,
-      timestamp: Math.floor(Date.now() / 1000),
-    });
-  } catch (error) {
+  const result = await readPendingQueue();
+  if (result.state === "provider_error" || result.state === "malformed" || result.state === "unsupported_version") {
     return NextResponse.json(
-      { error: "Failed to fetch pending governance queue", details: String(error) },
-      { status: 500 }
+      { error: "Failed to fetch pending governance queue", state: result.state, warnings: result.warnings },
+      { status: 502 },
     );
   }
+  const active = result.items.filter((item) => !item.cancelled);
+  return NextResponse.json({
+    state: result.state,
+    pendingCount: active.length,
+    pendingQueue: active,
+    verified: true,
+    ledger: result.ledger,
+    warnings: result.warnings,
+    timestamp: result.observedAtSecs,
+  });
 }

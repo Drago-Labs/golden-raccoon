@@ -238,14 +238,12 @@ function ExposureSession({
               </div>
             </div>
             <p className="mt-1 text-xs text-subtle">
-              The table is the canonical view. The diagram is decorative and carries no information the table omits.
+              The table is the canonical view and always remains available. The diagram is decorative and carries no
+              information the table omits.
             </p>
-            <div className="mt-3">
-              {view === "table" ? (
-                <DependencyTable edges={map.edges} labelFor={labelFor} />
-              ) : (
-                <ExposureGraph nodes={map.nodes} edges={map.edges} />
-              )}
+            <div className="mt-3 space-y-4">
+              {view === "graph" ? <ExposureGraph nodes={map.nodes} edges={map.edges} /> : null}
+              <DependencyTable edges={map.edges} labelFor={labelFor} />
             </div>
           </section>
 

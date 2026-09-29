@@ -1,0 +1,21 @@
+name: Governance queue feature
+on:
+  pull_request:
+    paths:
+      - "frontend/src/server/stellar/governance.ts"
+      - "frontend/src/server/research/governance-queue/**"
+      - "frontend/src/components/research/governance-queue/**"
+      - "frontend/tests/features/governance-queue/**"
+      - "frontend/src/app/api/insights/governance-queue/**"
+      - "frontend/src/app/api/stellar/governance/**"
+jobs:
+  focused-tests:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+      - run: npx vitest run tests/features/governance-queue
+      - run: npx eslint src/server/stellar/governance.ts src/server/research/governance-queue src/components/research/governance-queue tests/features/governance-queue
