@@ -8,6 +8,12 @@ export const transactionSchema = shape({ hash: text, type: text, asset: text, va
   finality: shape({ confirmations: number, required: number, reached: boolean }) });
 export const historySchema = shape({ items: array(transactionSchema), total: number, nextCursor: optional(text) });
 export type TransactionPage = ReturnType<typeof historySchema>;
+/**
+ * Creates the transaction history resource client.
+ *
+ * @param get Transport function.
+ * @returns Object exposing paginated transaction history query methods.
+ */
 export const historyClient = (get: Transport) => ({ transactions: (query: Partial<WalletQuery> & { cursor?: string; limit?: number } = {}, options?: ReadOptions) => {
   if (query.limit !== undefined && (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 200)) throw new ReadClientError("configuration", "History limit must be an integer from 1 to 200.");
   return get("/api/history/transactions", query, historySchema, options);

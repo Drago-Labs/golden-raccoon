@@ -9,6 +9,12 @@ export const registryStatusSchema = shape({ network: text, hash: text, status: t
 export type RegistryHistory = ReturnType<typeof registryHistorySchema>;
 export type RegistryRecord = ReturnType<typeof registryRecordSchema>;
 export type RegistryStatus = ReturnType<typeof registryStatusSchema>;
+/**
+ * Creates the Stellar registry resource client.
+ *
+ * @param get Transport function.
+ * @returns Object exposing publication history, lookup, and transaction status methods.
+ */
 export const registryClient = (get: Transport) => ({
   history: (query: { network?: StellarNetwork } = {}, options?: ReadOptions) => get("/api/stellar/registry/history", query, registryHistorySchema, options),
   find: (query: { network: StellarNetwork; txHash: string }, options?: ReadOptions) => get("/api/stellar/registry/history", query, registryRecordSchema, options),

@@ -7,4 +7,10 @@ export const portfolioSchema = shape({ walletAddress: text, nativeBalance: numbe
   totalValueUsd: number, riskScore: number, createdAt: text, holdings: array(holdingSchema), valuationStatus: optional(text),
   dataWarnings: optional(array(text)), recentActivity: optional(array(shape({ id: text, type: text, createdAt: text, transactionHash: text, amount: optional(text), asset: optional(text) }))) });
 export type Portfolio = ReturnType<typeof portfolioSchema>;
+/**
+ * Creates the portfolio resource client.
+ *
+ * @param get Transport function.
+ * @returns Object exposing portfolio retrieval methods.
+ */
 export const portfolioClient = (get: Transport) => ({ get: (query: WalletQuery & { chain?: string }, options?: ReadOptions) => get("/api/portfolio", query, portfolioSchema, options) });

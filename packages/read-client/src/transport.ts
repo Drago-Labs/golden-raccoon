@@ -17,6 +17,12 @@ function retryDelay(header: string | null, attempt: number): number {
   const date = Date.parse(header);
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 250 * 2 ** attempt;
 }
+/**
+ * Creates the internal HTTP transport function configured with bounded retries and credentials handling.
+ *
+ * @param options Client configuration options.
+ * @returns Transport function for GET requests against the API.
+ */
 export function createTransport(options: ClientOptions) {
   let base: URL;
   try { base = new URL(options.baseUrl); } catch { throw new ReadClientError("configuration", "Provide an absolute HTTP(S) base URL."); }
@@ -47,7 +53,6 @@ export function createTransport(options: ClientOptions) {
           credentials: request.credentials ?? options.credentials ?? "omit", redirect: "error", cache: "no-store" });
       } catch {
         signal?.throwIfAborted();
-        // Network failures are not retried: no server Retry-After contract is available.
         throw new ReadClientError("transport", "Read API could not be reached.");
       }
       signal?.throwIfAborted();

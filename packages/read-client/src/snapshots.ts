@@ -11,6 +11,12 @@ const documentSchema = shape({ schemaVersion: literal("1"),
 export const publicSnapshotSchema = shape({ id: text, schemaVersion: literal("1"), canonicalHash: text, createdAt: text, expiresAt: text, document: documentSchema });
 export const snapshotSchema = shape({ snapshot: publicSnapshotSchema });
 export type Snapshot = ReturnType<typeof publicSnapshotSchema>;
+/**
+ * Creates the public snapshot resource client.
+ *
+ * @param get Transport function.
+ * @returns Object exposing snapshot retrieval methods.
+ */
 export const snapshotsClient = (get: Transport) => ({ get: (id: string, options?: ReadOptions) => {
   if (!/^snapshot_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) throw new ReadClientError("configuration", "Invalid snapshot ID.");
   return get(`/api/snapshots/${encodeURIComponent(id)}`, {}, snapshotSchema, options);

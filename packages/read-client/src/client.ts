@@ -7,6 +7,12 @@ import { watchlistClient } from "./watchlist.js";
 import { alertsClient } from "./alerts.js";
 import { registryClient } from "./registry.js";
 import { snapshotsClient } from "./snapshots.js";
+/**
+ * Instantiates the typed read-only API client with explicit base URL configuration.
+ *
+ * @param options Configuration options including baseUrl, fetcher, headers, and bounded retry policy.
+ * @returns An initialized client instance with typed resource methods.
+ */
 export function createReadClient(options: ClientOptions) {
   const get = createTransport(options);
   return { health: healthClient(get), portfolio: portfolioClient(get), history: historyClient(get),
