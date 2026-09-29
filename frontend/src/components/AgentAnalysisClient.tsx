@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useWalletSession } from "@/hooks/useWalletSession";
 import type { AgentAnalysisResult } from "@/server/agent";
@@ -177,6 +178,15 @@ export function AgentAnalysisClient() {
           </div>
         </div>
       )}
+      <p className="mt-4 text-xs text-white/54">
+        <Link href="/insights/social-coordination" className="underline underline-offset-2 hover:text-white">
+          Inspect coordinated-activity patterns
+        </Link>
+        {" · "}
+        <Link href="/insights/channel-continuity" className="underline underline-offset-2 hover:text-white">
+          Inspect official channel continuity
+        </Link>
+      </p>
     </div>
   );
 }
