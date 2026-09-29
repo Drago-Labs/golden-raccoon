@@ -1,0 +1,42 @@
+name: Feature · incident status
+
+on:
+  pull_request:
+    paths:
+      - "frontend/src/server/research/incident-status/**"
+      - "frontend/src/components/research/incident-status/**"
+      - "frontend/src/app/insights/incident-status/**"
+      - "frontend/src/app/api/insights/incident-status/**"
+      - "frontend/tests/features/incident-status/**"
+      - ".github/workflows/feature-incident-status.yml"
+  push:
+    branches: [main]
+
+concurrency:
+  group: feature-incident-status-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  focused-suite:
+    name: incident-status focused suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Run focused suite
+        working-directory: frontend
+        run: npx vitest run tests/features/incident-status
