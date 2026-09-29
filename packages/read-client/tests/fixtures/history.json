@@ -1,0 +1,29 @@
+{
+  "items": [
+    {
+      "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "type": "transfer",
+      "asset": "XLM",
+      "valueUsd": 0,
+      "status": "confirmed",
+      "lifecycleStatus": "confirmed",
+      "chainFamily": "stellar",
+      "network": "stellar-testnet",
+      "createdAt": "2026-09-12T00:00:00.000Z",
+      "events": [],
+      "observations": [],
+      "finality": {
+        "confirmations": 1,
+        "required": 1,
+        "reached": true
+      },
+      "stellarDetails": {
+        "sequence": "9223372036854775806",
+        "feeCharged": 100,
+        "operationCount": 1
+      }
+    }
+  ],
+  "total": 2,
+  "nextCursor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

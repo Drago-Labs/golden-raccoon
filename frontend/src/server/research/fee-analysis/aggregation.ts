@@ -63,6 +63,9 @@ export function totalsByAsset(charges: FeeCharge[], conversions: Conversion[]): 
       unknownCount,
       estimatedCount: group.filter((charge) => charge.evidence === "estimated").length,
       refundBaseUnits: sumBaseUnits(group.map((charge) => charge.refundBaseUnits)),
+      // A fiat figure is produced only when there is a price *and* nothing
+      // unknown in the group: a dollar total over a partial set reads as a
+      // total over all of it.
       fiat:
         conversion && unknownCount === 0
           ? toFiat({
@@ -122,6 +125,7 @@ export function bucketStart(iso: string, bucket: "day" | "week" | "month"): stri
   const day = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 
   if (bucket === "week") {
+    // ISO weeks start on Monday; getUTCDay() calls Sunday 0.
     const offset = (day.getUTCDay() + 6) % 7;
     day.setUTCDate(day.getUTCDate() - offset);
   }
@@ -133,6 +137,9 @@ export function buildTimeline(charges: FeeCharge[], conversions: Conversion[], b
   const buckets = new Map<string, FeeCharge[]>();
 
   for (const charge of charges) {
+    // A charge with no timestamp cannot be placed on a timeline. It stays in
+    // the totals and is absent here, rather than being pinned to an arbitrary
+    // bucket that would misdate it.
     if (!charge.occurredAt) continue;
 
     const key = bucketStart(charge.occurredAt, bucket);

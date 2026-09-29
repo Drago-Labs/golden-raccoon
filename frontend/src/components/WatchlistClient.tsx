@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 export function WatchlistAddForm({ wallet }: { wallet: string }) {
@@ -88,6 +89,7 @@ export function WatchlistAddForm({ wallet }: { wallet: string }) {
   }
 
   return (
+    <>
     <form className="mt-3 space-y-3" onSubmit={handleSubmit}>
       <div className="grid gap-3 md:grid-cols-[1fr_160px_160px]">
         <div>
@@ -199,6 +201,12 @@ export function WatchlistAddForm({ wallet }: { wallet: string }) {
         </p>
       )}
     </form>
+    <p className="mt-4 text-xs text-white/54">
+      <Link href="/insights/watchlist-collections" className="underline underline-offset-2 hover:text-white">
+        Organise this watchlist into collections, tags and saved views
+      </Link>
+    </p>
+    </>
   );
 }
 

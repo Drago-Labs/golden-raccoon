@@ -1,0 +1,1 @@
+export function coverage(requested: number, returned: number) { const missing = Math.max(0, requested - returned); return { requested, returned, missing, message: missing ? "Some RPC entries are missing; archival is not inferred." : "Every supported requested key returned evidence." }; }

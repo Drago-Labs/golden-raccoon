@@ -48,10 +48,15 @@ export async function attributeCharge(candidate: FeeCandidate, reader: FeeReader
     category: candidate.category,
     occurredAt: candidate.occurredAt,
     asset,
+    // A refund is only ever set from a field the chain reported. There is no
+    // code path that infers one, because an inferred refund makes a total
+    // smaller than the wallet actually paid.
     refundBaseUnits: null,
   };
 
   if (record.chainFamily === "stellar") {
+    // Records that already carry Stellar fee metadata are read locally rather
+    // than over the network: the same evidence, without spending a read.
     const local = record.stellarDetails;
 
     const reading =

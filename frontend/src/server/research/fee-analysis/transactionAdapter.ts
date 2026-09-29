@@ -55,10 +55,14 @@ export function adaptRecords(
   const excluded: ExcludedRecord[] = [];
   const seenHashes = new Map<string, TransactionRecord>();
 
+  // The accounts the caller vouched for. A record whose owner is not one of
+  // them is another wallet's, whichever chain family it came from.
   const ownedAccounts = new Set(
     [filters.walletAddress, filters.stellarAccount].filter((value): value is string => Boolean(value)).map((value) => value.toLowerCase()),
   );
 
+  // A hash named as someone's replacement is superseded, wherever it appears
+  // in the list — so the set is built before any record is accepted.
   const supersededBy = new Map<string, string>();
 
   for (const record of records) {

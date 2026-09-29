@@ -1,0 +1,29 @@
+name: Feature - soroban auth footprint
+on:
+  pull_request:
+    paths:
+      [
+        "frontend/src/server/research/soroban-auth-footprint/**",
+        "frontend/src/components/research/soroban-auth-footprint/**",
+        "frontend/src/app/api/insights/soroban-auth-footprint/**",
+        "frontend/src/app/insights/soroban-auth-footprint/**",
+        "frontend/tests/features/soroban-auth-footprint/**",
+        "frontend/e2e/specs/soroban-auth-footprint.spec.ts",
+        "docs/features/soroban-auth-footprint.md",
+        ".github/workflows/feature-soroban-auth-footprint.yml",
+      ]
+  workflow_dispatch:
+jobs:
+  focused-suite:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+      - run: npx vitest run tests/features/soroban-auth-footprint
+      - run: npx tsc --noEmit --project tests/features/soroban-auth-footprint/tsconfig.json
+      - run: npx eslint src/server/research/soroban-auth-footprint src/components/research/soroban-auth-footprint src/app/api/insights/soroban-auth-footprint src/app/insights/soroban-auth-footprint tests/features/soroban-auth-footprint e2e/specs/soroban-auth-footprint.spec.ts
+      - run: npx playwright install --with-deps chromium
+      - run: PORT=3024 NEXT_PUBLIC_APP_URL=http://localhost:3024 npx playwright test e2e/specs/soroban-auth-footprint.spec.ts --project=chromium-desktop --project=chromium-mobile

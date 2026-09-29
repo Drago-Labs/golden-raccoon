@@ -6,6 +6,7 @@ import type { FormEvent } from "react";
 import type { AlertRule, AlertSeverity, AlertTriggerType } from "@/server/types";
 import { useWalletSession } from "@/hooks/useWalletSession";
 import { LiveRegion } from "@/components/a11y/LiveRegion";
+import Link from "next/link";
 
 const triggerOptions: Array<{ value: AlertTriggerType; label: string; description: string; direction: "high_is_bad" | "low_is_bad" }> = [
   { value: "critical_risk", label: "Critical risk", description: "Trigger when AgentResult.riskScore ≥ threshold.", direction: "high_is_bad" },
@@ -229,6 +230,7 @@ export function AlertRuleForm({ initialRule, onSaved }: { initialRule?: AlertRul
       </div>
 
       <div className="mt-6 flex items-center gap-3">
+        <Link href="/insights/alert-rule-lab" className="inline-flex h-11 items-center rounded-full border border-white/15 px-5 text-sm">Test draft in rule lab</Link>
         <button
           type="submit"
           disabled={saving || !isConnected}

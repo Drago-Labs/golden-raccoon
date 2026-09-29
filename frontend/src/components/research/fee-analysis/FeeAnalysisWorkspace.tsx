@@ -100,6 +100,8 @@ function WorkspaceSession({
         .then(async (response) => {
           const body = await response.json();
 
+          // Dropped when a newer period has been requested, so a slow response
+          // for one wallet cannot repaint another's numbers.
           if (requestGeneration !== generation.current) return;
 
           if (!response.ok) {

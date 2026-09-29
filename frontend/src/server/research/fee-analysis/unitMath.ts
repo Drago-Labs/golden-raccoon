@@ -35,6 +35,8 @@ export function sumBaseUnits(values: Array<string | null>): string {
   for (const value of values) {
     const parsed = parseAmount(value);
 
+    // A null is skipped, never coerced to zero: the caller counts unknowns
+    // separately so a missing amount cannot disappear into a total.
     if (parsed !== null) total += parsed;
   }
 

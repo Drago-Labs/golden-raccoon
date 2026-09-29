@@ -1,0 +1,1 @@
+{"extends":"../../../tsconfig.json","compilerOptions":{"incremental":false,"target":"ES2022"},"include":["../../../next-env.d.ts","../../../src/server/research/soroban-auth-footprint/schema.ts","../../../src/server/research/soroban-auth-footprint/decode.ts"],"exclude":["../../../node_modules"]}

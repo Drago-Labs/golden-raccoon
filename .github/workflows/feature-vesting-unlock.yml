@@ -1,0 +1,57 @@
+name: Feature · vesting unlock
+
+on:
+  pull_request:
+    paths:
+      - "frontend/src/server/research/vesting-unlock/**"
+      - "frontend/src/components/research/vesting-unlock/**"
+      - "frontend/src/app/insights/vesting-unlock/**"
+      - "frontend/src/app/api/insights/vesting-unlock/**"
+      - "frontend/tests/features/vesting-unlock/**"
+      - "frontend/e2e/specs/vesting-unlock.spec.ts"
+      - "docs/features/vesting-unlock.md"
+      - ".github/workflows/feature-vesting-unlock.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: feature-vesting-unlock-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  focused-suite:
+    name: vesting-unlock focused suite
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run focused suite
+        run: npx vitest run tests/features/vesting-unlock
+
+      - name: Typecheck focused modules
+        run: npx tsc --noEmit --project tests/features/vesting-unlock/tsconfig.json
+
+      - name: Lint focused paths
+        run: npx eslint src/server/research/vesting-unlock src/components/research/vesting-unlock src/app/api/insights/vesting-unlock src/app/insights/vesting-unlock tests/features/vesting-unlock e2e/specs/vesting-unlock.spec.ts
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run focused e2e
+        run: PORT=3020 NEXT_PUBLIC_APP_URL=http://localhost:3020 npx playwright test e2e/specs/vesting-unlock.spec.ts --project=chromium-desktop --project=chromium-mobile
