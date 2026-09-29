@@ -1,0 +1,42 @@
+name: Feature · signing inspector
+
+on:
+  pull_request:
+    paths:
+      - "frontend/src/server/research/signing-inspector/**"
+      - "frontend/src/components/research/signing-inspector/**"
+      - "frontend/src/app/insights/signing-inspector/**"
+      - "frontend/src/app/api/insights/signing-inspector/**"
+      - "frontend/tests/features/signing-inspector/**"
+      - ".github/workflows/feature-signing-inspector.yml"
+  push:
+    branches: [main]
+
+concurrency:
+  group: feature-signing-inspector-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  focused-suite:
+    name: signing-inspector focused suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Run focused suite
+        working-directory: frontend
+        run: npx vitest run tests/features/signing-inspector

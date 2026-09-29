@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { PortfolioSnapshot } from "@/server/types";
 import { formatUsd } from "@/lib/format";
 
@@ -23,6 +24,7 @@ export function WalletBalanceCard({ portfolio }: { portfolio: PortfolioSnapshot 
           </div>
         </div>
       </div>
+      {portfolio.nativeSymbol === "XLM" ? <Link href="/insights/reserve-planner" className="mt-4 inline-flex rounded-full border border-[#d9a441]/35 px-4 py-2 text-sm text-[#f2c86d] hover:bg-[#d9a441]/10">Plan reserve and sponsorship changes</Link> : null}
     </section>
   );
 }

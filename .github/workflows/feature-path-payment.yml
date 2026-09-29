@@ -1,0 +1,29 @@
+name: Feature - path payment
+on:
+  pull_request:
+    paths:
+      [
+        "frontend/src/server/research/path-payment/**",
+        "frontend/src/components/research/path-payment/**",
+        "frontend/src/app/api/insights/path-payment/**",
+        "frontend/src/app/insights/path-payment/**",
+        "frontend/tests/features/path-payment/**",
+        "frontend/e2e/specs/path-payment.spec.ts",
+        "docs/features/path-payment.md",
+        ".github/workflows/feature-path-payment.yml",
+      ]
+  workflow_dispatch:
+jobs:
+  focused-suite:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+      - run: npx vitest run tests/features/path-payment
+      - run: npx tsc --noEmit --project tests/features/path-payment/tsconfig.json
+      - run: npx eslint src/server/research/path-payment src/components/research/path-payment src/app/api/insights/path-payment src/app/insights/path-payment tests/features/path-payment e2e/specs/path-payment.spec.ts
+      - run: npx playwright install --with-deps chromium
+      - run: PORT=3023 NEXT_PUBLIC_APP_URL=http://localhost:3023 npx playwright test e2e/specs/path-payment.spec.ts --project=chromium-desktop --project=chromium-mobile

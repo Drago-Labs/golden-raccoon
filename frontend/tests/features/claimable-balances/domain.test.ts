@@ -1,0 +1,11 @@
+import { describe, expect, it } from "vitest";
+import { decodePredicate, evaluatePredicate, exploreClaimableBalances } from "@/server/research/claimable-balances";
+import { id, source, wallet } from "./fixtures";
+const request = { walletAddress: wallet, network: "stellar-testnet" as const, walletNetwork: "stellar-testnet" as const, pageSize: 20, maxPages: 3, knownBalanceIds: [] };
+describe("claimable balance domain", () => {
+  it("evaluates nested predicates and exact absolute boundaries from ledger time", () => { const node = decodePredicate({ and: [{ unconditional: true }, { not: { abs_before: "100" } }] }); expect(evaluatePredicate(node, { ledgerCloseEpochSeconds: 100n })).toBe(true); expect(evaluatePredicate(decodePredicate({ abs_before: "100" }), { ledgerCloseEpochSeconds: 100n })).toBe(false); });
+  it("keeps relative predicates unknown without creation context", () => { expect(evaluatePredicate(decodePredicate({ rel_before: "60" }), { ledgerCloseEpochSeconds: 100n })).toBe("unknown"); });
+  it("does not report full eligibility when trustline evidence is missing", async () => { const result = await exploreClaimableBalances(request, { source: source({ accountBalances: null }) }); expect(result.items[0].predicateResult).toBe(true); expect(result.items[0].eligibility).toBe("unknown"); expect(result.state).toBe("partial"); });
+  it("separates complete empty, partial disappeared, and unavailable states", async () => { expect((await exploreClaimableBalances(request, { source: source({ records: [] }) })).state).toBe("complete"); const partial = await exploreClaimableBalances({ ...request, knownBalanceIds: [id] }, { source: source({ records: [], missingIds: [id] }) }); expect(partial.state).toBe("partial"); expect(partial.disappearedIds).toEqual([id]); expect((await exploreClaimableBalances(request, { source: { read: async () => { throw new Error("offline"); } } })).state).toBe("unavailable"); });
+  it("marks duplicate and truncated pagination explicit", async () => { const result = await exploreClaimableBalances(request, { source: source({ duplicatePage: true, truncated: true }) }); expect(result.state).toBe("partial"); expect(result.coverage.duplicatePage).toBe(true); });
+});

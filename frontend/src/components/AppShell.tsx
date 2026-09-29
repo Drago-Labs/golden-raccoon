@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { WalletConnectButton } from "@/components/WalletConnectButton";
 import { OfflineBanner } from "@/components/OfflineBanner";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { CommandTrigger } from "@/components/commandPalette/CommandTrigger";
+import type { SessionAsset } from "@/lib/commandPalette/schema";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
@@ -20,7 +22,7 @@ const navLinkClassName =
 const mobileNavLinkClassName =
   "shrink-0 rounded-full px-3 py-2 text-sm text-[var(--color-nav-fg)] hover:bg-[var(--color-nav-hover-bg)] hover:text-[var(--color-fg)] focus-visible:bg-white/8 focus-visible:text-white";
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children, commandAssets }: { children: ReactNode; commandAssets?: readonly SessionAsset[] }) {
   return (
     <div className="min-h-screen overflow-hidden bg-background text-foreground">
       <a href="#main-content" className="skip-link">
@@ -49,6 +51,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             ))}
           </nav>
           <div className="flex items-center gap-2 sm:gap-3">
+            <CommandTrigger assets={commandAssets} />
             <ThemeToggle />
             <WalletConnectButton />
           </div>

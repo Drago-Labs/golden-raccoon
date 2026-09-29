@@ -1,9 +1,11 @@
 "use client";
 
 import { CircleHelp, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
-import type { TokenHolding } from "@/server/types";
+import type { RiskReport, TokenHolding } from "@/server/types";
 import { getPortfolioRiskSignals } from "@/server/portfolio/riskScoring";
+import { sessionKeyFor, stageExplanationReport } from "@/components/research/risk-explanations/ExplanationWorkbench";
 
 function polarToCartesian(cx: number, cy: number, radius: number, angle: number) {
   const radians = ((angle - 90) * Math.PI) / 180;
@@ -22,7 +24,21 @@ function arcPath(startAngle: number, endAngle: number) {
   return `M ${start.x} ${start.y} A 74 74 0 ${largeArcFlag} 0 ${end.x} ${end.y}`;
 }
 
-export function RiskScoreCard({ score, holdings = [] }: { score: number; holdings?: TokenHolding[] }) {
+export function RiskScoreCard({
+  score,
+  holdings = [],
+  report,
+  account,
+  network,
+}: {
+  score: number;
+  holdings?: TokenHolding[];
+  /** Optional report to explain. When absent the entry link is not rendered. */
+  report?: RiskReport;
+  account?: string | null;
+  network?: string | null;
+}) {
+  const router = useRouter();
   const [showBreakdown, setShowBreakdown] = useState(false);
   const headingId = useId();
   const toggleButtonRef = useRef<HTMLButtonElement>(null);
@@ -56,6 +72,21 @@ export function RiskScoreCard({ score, holdings = [] }: { score: number; holding
   function closeBreakdown() {
     setShowBreakdown(false);
     toggleButtonRef.current?.focus();
+  }
+
+  /**
+   * Hands the selected report to the explanation workbench in memory. The
+   * report is keyed to the current wallet session, so a stale token from
+   * another account or network is refused on arrival.
+   */
+  function openExplanationWorkbench() {
+    if (!report) return;
+    const sessionKey = sessionKeyFor(account, network);
+    const token = stageExplanationReport(sessionKey, report);
+    const query = new URLSearchParams({ handoff: token });
+    if (account) query.set("account", account);
+    if (network) query.set("network", network);
+    router.push(`/insights/risk-explanations?${query.toString()}`);
   }
 
   return (
@@ -165,6 +196,17 @@ export function RiskScoreCard({ score, holdings = [] }: { score: number; holding
           </text>
         </svg>
       </div>
+
+      {report ? (
+        <button
+          type="button"
+          onClick={openExplanationWorkbench}
+          className="mt-4 self-start rounded-full border border-[var(--color-border-strong)] px-3 py-1.5 text-xs font-medium text-muted transition hover:text-[var(--color-fg)] focus-visible:outline-2 focus-visible:outline-[var(--color-brand)]"
+        >
+          Explain this score
+          <span className="sr-only"> — open the evidence-linked explanation workbench for report {report.id}</span>
+        </button>
+      ) : null}
     </section>
   );
 }

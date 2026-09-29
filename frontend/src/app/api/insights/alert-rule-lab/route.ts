@@ -1,0 +1,6 @@
+import { NextResponse } from "next/server";
+import { labRequestSchema, replayAlertRule } from "@/server/research/alert-rule-lab";
+import { resolveWalletSession } from "@/server/security/walletSession";
+import { evaluateCapability } from "@/server/security/authz";
+import { checkRateLimit } from "@/server/security/rateLimit";
+export async function POST(request: Request) { const limited = checkRateLimit(request, { namespace: "alert-rule-lab:read", limit: 30, windowMs: 60_000 }); if (limited) return limited; const parsed = labRequestSchema.safeParse(await request.json().catch(() => null)); if (!parsed.success) return NextResponse.json({ error: "invalid_request", details: parsed.error.flatten() }, { status: 400 }); const session = resolveWalletSession(request, { suppliedWallet: parsed.data.walletAddress }); if (session.response) return session.response; const access = evaluateCapability({ kind: "wallet", walletAddress: session.wallet, walletHash: "alert-rule-lab", chainFamily: parsed.data.chainFamily, network: parsed.data.network }, "portfolio:read", { walletAddress: session.wallet, network: parsed.data.network }); if (!access.allowed) return NextResponse.json({ error: "auth_error" }, { status: 403 }); return NextResponse.json(replayAlertRule(parsed.data)); }

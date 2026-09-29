@@ -1,0 +1,2 @@
+import type { ProxyResult } from "@/server/research/proxy-inspector";
+export function AuthorityTable({ result }: { result: ProxyResult }) { return <section className="rounded-2xl border border-white/10 p-4"><h2 className="font-semibold">Observed authority</h2><div className="mt-2 break-all font-mono text-xs">{result.authority.address ?? "No ERC-1967 admin observed"}</div><p className="mt-2 text-sm text-white/60">{result.authority.conclusion}</p></section>; }

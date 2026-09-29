@@ -1,0 +1,1 @@
+{"extends":"../../../tsconfig.json","compilerOptions":{"incremental":false,"target":"ES2022"},"include":["../../../next-env.d.ts","../../../src/server/research/path-payment/schema.ts","../../../src/server/research/path-payment/assets.ts","../../../src/server/research/path-payment/normalize.ts"],"exclude":["../../../node_modules"]}
