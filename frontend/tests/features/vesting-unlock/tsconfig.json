@@ -1,0 +1,16 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "target": "ES2022"
+  },
+  "include": [
+    "../../../next-env.d.ts",
+    "../../../src/server/research/vesting-unlock/schema.ts",
+    "../../../src/server/research/vesting-unlock/unitMath.ts",
+    "../../../src/server/research/vesting-unlock/time.ts",
+    "../../../src/server/research/vesting-unlock/normalize.ts",
+    "../../../src/server/research/vesting-unlock/coverage.ts"
+  ],
+  "exclude": ["../../../node_modules"]
+}
