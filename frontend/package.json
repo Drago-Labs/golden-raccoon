@@ -46,6 +46,7 @@
     "test:proxy-inspector": "vitest run tests/features/proxy-inspector",
     "test:signing-inspector": "vitest run tests/features/signing-inspector",
     "test:fee-analysis": "vitest run tests/features/fee-analysis",
+    "test:metadata-integrity": "vitest run tests/features/metadata-integrity",
     "test:vesting-unlock": "vitest run tests/features/vesting-unlock",
     "test:authority-history": "vitest run tests/features/authority-history",
     "test:watchlist-collections": "vitest run tests/features/watchlist-collections",
