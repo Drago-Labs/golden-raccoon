@@ -182,6 +182,10 @@ export function AgentAnalysisClient() {
         <Link href="/insights/social-coordination" className="underline underline-offset-2 hover:text-white">
           Inspect coordinated-activity patterns
         </Link>
+        {" · "}
+        <Link href="/insights/channel-continuity" className="underline underline-offset-2 hover:text-white">
+          Inspect official channel continuity
+        </Link>
       </p>
     </div>
   );
