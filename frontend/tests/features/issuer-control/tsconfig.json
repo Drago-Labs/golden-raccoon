@@ -1,0 +1,1 @@
+{"extends":"../../../tsconfig.json","compilerOptions":{"incremental":false,"target":"ES2022"},"include":["../../../next-env.d.ts","../../../src/server/research/issuer-control/schema.ts","../../../src/server/research/issuer-control/trustlineState.ts","../../../src/server/research/issuer-control/events.ts"],"exclude":["../../../node_modules"]}

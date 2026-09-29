@@ -1,0 +1,42 @@
+name: Feature · research a11y
+
+on:
+  pull_request:
+    paths:
+      - "frontend/src/components/research/**"
+      - "frontend/src/components/a11y/**"
+      - "frontend/tests/features/research-a11y/**"
+      - "docs/features/research-a11y.md"
+      - "docs/A11Y_AUDIT.md"
+      - ".github/workflows/feature-research-a11y.yml"
+  push:
+    branches: [main]
+
+concurrency:
+  group: feature-research-a11y-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  focused-suite:
+    name: research-a11y focused suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Run focused suite
+        working-directory: frontend
+        run: npx vitest run tests/features/research-a11y
