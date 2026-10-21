@@ -1,0 +1,8 @@
+{
+  "description": "A recorded transfer destined for Stellar (CCTP domain 27), used as the reference shape for routing the destination check to checkStellarNonceUsed instead of checkEvmNonceUsed, and for formatCrossChainAddress rendering the mint recipient as a Stellar contract strkey rather than an EVM 0x address.",
+  "destinationDomain": 27,
+  "destinationChain": "Stellar",
+  "messageTransmitterContractId": "CBJ6MTCKKZG73PMDZCJMSFRD7DQEMI4FKDH7CGDSV4W6FHCRBCQAVVJY",
+  "cctpForwarderContractId": "CA66Q2WFBND6V4UEB7RD4SAXSVIWMD6RA4X3U32ELVFGXV5PJK4T4VSZ",
+  "note": "mintRecipient and destinationCaller on the source burn must both be set to the CctpForwarder contract address, per Circle's Stellar integration reference, or the mint cannot reach a G-address recipient."
+}

@@ -1,0 +1,11 @@
+{
+  "description": "A recorded registry fetch that timed out, used as the reference shape for inspectPackageProvenance's unavailable-coverage case — the report carries no release data, not a fabricated empty history.",
+  "registry": "npm",
+  "packageName": "@stellar/example-sdk",
+  "outcome": "timeout",
+  "issues": ["The operation was aborted."],
+  "coverage": {
+    "state": "unavailable",
+    "note": "The npm registry could not be read: The operation was aborted."
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "network": "stellar-testnet",
+  "asset": "DOWN:GAVH4D4VH6UJHT4XERRWWSGALJPQ7QIPTIKML4P54HVYA2WO6T4HGMMU",
+  "ledger": null,
+  "ledgerClosedAt": null,
+  "failure": "Horizon returned HTTP 503 for the asset supply record.",
+  "supply": null,
+  "pages": [],
+  "pools": [],
+  "poolsTruncated": false,
+  "claimables": [],
+  "claimablesTruncated": false,
+  "distributionAccounts": [],
+  "tomlRead": false
+}

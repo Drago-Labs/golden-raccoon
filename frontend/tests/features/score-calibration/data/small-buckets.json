@@ -1,0 +1,5 @@
+{
+  "description": "A bucket with a single included snapshot, used as the reference shape for sufficientSample being false below SCORE_CALIBRATION_LIMITS.minBucketSampleSize — the rate is still reported, never hidden, just flagged as imprecise.",
+  "minBucketSampleSize": 10,
+  "bucket": { "label": "0-20", "sampleSize": 1, "outcomeCount": 1, "observedRate": 1, "sufficientSample": false }
+}

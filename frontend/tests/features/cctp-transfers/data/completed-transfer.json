@@ -1,0 +1,14 @@
+{
+  "description": "A real Sepolia testnet CCTP V2 burn, spot-checked against the live chain and Circle's Iris attestation API before this feature was written. Used as the reference shape for a fully reconciled, completed transfer.",
+  "sourceChain": "Ethereum",
+  "network": "testnet",
+  "sourceTransactionHash": "0xcfc0abf8b9251719212a90edadf9ca1866b0e9e7ab4952eaf648701562fabecd",
+  "nonce": "0xc5d43240e77e25a22dd8e0b06998101f7880795739a2c5bdb31a4d3a0907a5b6",
+  "destinationDomain": 5,
+  "destinationChain": "Solana",
+  "amountBaseUnits": "500000",
+  "maxFeeBaseUnits": "50",
+  "feeExecutedBaseUnits": "50",
+  "attestationStatus": "complete",
+  "destinationMintTxHashReported": "5bzqJ1o9BuHy5sPWBMZQREvLrJXyct435JpJUx3cNrY3NwMyNPuQkN3LvhzcXQXfWnuyZQt8vJ7BTD4zWW8EqE8u"
+}

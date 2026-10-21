@@ -1,0 +1,14 @@
+{
+  "description": "A recorded pair of page fetches where the content did not change at all; this must create no new timeline entry.",
+  "requestedUrl": "https://stellar.org/terms-of-service",
+  "before": {
+    "httpStatus": 200,
+    "contentType": "text/html",
+    "body": "<html><body><h1>Terms of Service</h1><p>Withdrawal fees are 2% of the transaction amount.</p></body></html>"
+  },
+  "after": {
+    "httpStatus": 200,
+    "contentType": "text/html",
+    "body": "<html><body><h1>Terms of Service</h1><p>Withdrawal fees are 2% of the transaction amount.</p></body></html>"
+  }
+}

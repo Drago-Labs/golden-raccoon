@@ -1,0 +1,43 @@
+{
+  "request": {
+    "network": "testnet",
+    "target": "GCY6OG5CBR23KEFIKVJUILMJWFKWMLOTBVOORZ5BQWKTAV2WAZQ266DA"
+  },
+  "horizon": {
+    "status": "unavailable",
+    "message": "Horizon timed out."
+  },
+  "rpc": {
+    "status": "available",
+    "observation": {
+      "provider": "rpc",
+      "network": "testnet",
+      "endpoint": "https://soroban-testnet.stellar.org",
+      "passphrase": "Test SDF Network ; September 2015",
+      "latestLedger": 5100,
+      "retentionStartLedger": 1000,
+      "retentionEndLedger": 5100,
+      "notFound": false,
+      "contractDataExposed": true,
+      "contractEntries": [],
+      "omittedTrustlines": 0,
+      "omittedLedgerKeys": 0,
+      "account": {
+        "ledger": 5000,
+        "sequence": "123456789",
+        "nativeBalanceStroops": "100000000",
+        "raw": { "balance": "100000000", "lastModifiedLedgerSeq": 5000 },
+        "trustlines": [
+          {
+            "code": "USDC",
+            "issuer": "GAVP2FDG7NQV27RDXTMOTXGGE7IY32F5R3XGZIOH7GJ3WGVI27AHB3GW",
+            "balanceStroops": "250000000",
+            "limitStroops": "1000000000",
+            "ledger": 5000,
+            "raw": { "balance": "250000000", "lastModifiedLedgerSeq": 5000 }
+          }
+        ]
+      }
+    }
+  }
+}

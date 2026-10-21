@@ -1,0 +1,13 @@
+{
+  "description": "A recorded release whose version has no matching tag in the declared repository, used as the reference shape for matchReleaseTags' no_matching_tag case.",
+  "registry": "npm",
+  "packageName": "@stellar/example-sdk",
+  "version": "1.2.0",
+  "declaredRepository": "https://github.com/stellar/example-sdk",
+  "tagsChecked": ["v1.1.0", "v1.0.0"],
+  "tagMatch": {
+    "state": "no_matching_tag",
+    "expectedTag": null,
+    "note": "No tag in the declared repository matches this release version."
+  }
+}

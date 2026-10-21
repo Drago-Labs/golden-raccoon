@@ -1,0 +1,8 @@
+{
+  "description": "A snapshot published too recently for its horizon to have elapsed, used as the reference shape for horizonNotElapsedExclusion — this snapshot is excluded, not counted as did_not_occur.",
+  "snapshotId": "snap-recent",
+  "publishedAt": "2026-01-01T00:00:00.000Z",
+  "horizonDays": 30,
+  "evaluatedAt": "2026-01-05T00:00:00.000Z",
+  "expectedExclusionReason": "horizon_not_elapsed"
+}

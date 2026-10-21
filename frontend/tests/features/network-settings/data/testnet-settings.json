@@ -1,0 +1,64 @@
+{
+  "network": "testnet",
+  "ledger": 5312967,
+  "protocolVersion": 29,
+  "passphrase": "Test SDF Network ; September 2015",
+  "entries": [
+    {
+      "id": "max-size",
+      "xdr": "AAAACAAAAAAAAgAA"
+    },
+    {
+      "id": "compute",
+      "xdr": "AAAACAAAAAEAAAAAIpIZAAAAAAAX14QAAAAAAAAAAAMCgAAA"
+    },
+    {
+      "id": "historical",
+      "xdr": "AAAACAAAAAMAAAAAAAAH7Q=="
+    },
+    {
+      "id": "events",
+      "xdr": "AAAACAAAAAQAAEAAAAAAAAAACcQ="
+    },
+    {
+      "id": "bandwidth",
+      "xdr": "AAAACAAAAAUADS8AAAIEAAAAAAAAAADL"
+    },
+    {
+      "id": "key-size",
+      "xdr": "AAAACAAAAAgAAAD6"
+    },
+    {
+      "id": "entry-size",
+      "xdr": "AAAACAAAAAkAAQAA"
+    },
+    {
+      "id": "archival",
+      "xdr": "AAAACAAAAAoAL3YAAAAC0AAB2IAAAAAAAAAEvwAAAAAAAAl+AAAD6AAAAB4AAABAAAehIAAAAAc="
+    },
+    {
+      "id": "lanes",
+      "xdr": "AAAACAAAAAsAAAfQ"
+    },
+    {
+      "id": "parallel",
+      "xdr": "AAAACAAAAA4AAAAD"
+    },
+    {
+      "id": "ledger-cost-ext",
+      "xdr": "AAAACAAAAA8AAAGQAAAAAAAAAbU="
+    },
+    {
+      "id": "scp",
+      "xdr": "AAAACAAAABAAABOIAAAD6AAAA+gAAAPoAAAD6A=="
+    },
+    {
+      "id": "cpu-cost",
+      "xdr": "AAAABgAAAAEAAAAAAAAAAAAAAEcAAAAAAAAADQ=="
+    },
+    {
+      "id": "ledger-cost",
+      "xdr": "AAAAAgAAB9AABhqAAAAH0AAEiCgAAADIAAMNQAAAAMgAAgQAAAAAAAAAAw0AAAAAAAAE4gAAAAAAAADfAAAAAO5rKAD///////+9mAAAAAAAACcQAAAAMg=="
+    }
+  ]
+}

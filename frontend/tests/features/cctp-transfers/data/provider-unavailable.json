@@ -1,0 +1,8 @@
+{
+  "description": "A recorded source-chain RPC failure, used as the reference shape for trackCctpTransfer's unavailable coverage — the report carries no fabricated burn data, and the destination step is never checked once the burn itself cannot be read.",
+  "sourceChain": "Ethereum",
+  "network": "testnet",
+  "rpcError": "Request timed out",
+  "burn": { "state": "unknown", "issues": ["The source chain RPC request failed."] },
+  "coverage": { "state": "unavailable" }
+}

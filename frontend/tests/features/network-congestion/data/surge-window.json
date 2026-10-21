@@ -1,0 +1,97 @@
+{
+  "request": { "network": "stellar-pubnet", "fromSequence": 200, "toSequence": 202 },
+  "passphrase": "Public Global Stellar Network ; September 2015",
+  "truncated": false,
+  "ledgers": [
+    {
+      "sequence": 200,
+      "closedAt": "2026-04-02T00:00:00.000Z",
+      "operationCount": 10,
+      "maxOperations": 10,
+      "baseFeeStroops": 100,
+      "omittedTransactionCount": 0,
+      "transactions": [
+        {
+          "hash": "surge-200-a",
+          "operationCount": 4,
+          "successful": true,
+          "classicInclusionFeeStroops": "800",
+          "sorobanInclusionFeeStroops": null,
+          "sorobanResourceFeeStroops": null,
+          "sorobanRentFeeStroops": null,
+          "split": "classic"
+        },
+        {
+          "hash": "surge-200-b",
+          "operationCount": 6,
+          "successful": true,
+          "classicInclusionFeeStroops": "1200",
+          "sorobanInclusionFeeStroops": null,
+          "sorobanResourceFeeStroops": null,
+          "sorobanRentFeeStroops": null,
+          "split": "classic"
+        }
+      ]
+    },
+    {
+      "sequence": 201,
+      "closedAt": "2026-04-02T00:00:05.000Z",
+      "operationCount": 10,
+      "maxOperations": 10,
+      "baseFeeStroops": 100,
+      "omittedTransactionCount": 0,
+      "transactions": [
+        {
+          "hash": "surge-201-a",
+          "operationCount": 5,
+          "successful": true,
+          "classicInclusionFeeStroops": "5000",
+          "sorobanInclusionFeeStroops": null,
+          "sorobanResourceFeeStroops": null,
+          "sorobanRentFeeStroops": null,
+          "split": "classic"
+        },
+        {
+          "hash": "surge-201-b",
+          "operationCount": 5,
+          "successful": false,
+          "classicInclusionFeeStroops": "5000",
+          "sorobanInclusionFeeStroops": null,
+          "sorobanResourceFeeStroops": null,
+          "sorobanRentFeeStroops": null,
+          "split": "classic"
+        }
+      ]
+    },
+    {
+      "sequence": 202,
+      "closedAt": "2026-04-02T00:00:10.000Z",
+      "operationCount": 10,
+      "maxOperations": 10,
+      "baseFeeStroops": 100,
+      "omittedTransactionCount": 0,
+      "transactions": [
+        {
+          "hash": "surge-202-classic",
+          "operationCount": 8,
+          "successful": true,
+          "classicInclusionFeeStroops": "3200",
+          "sorobanInclusionFeeStroops": null,
+          "sorobanResourceFeeStroops": null,
+          "sorobanRentFeeStroops": null,
+          "split": "classic"
+        },
+        {
+          "hash": "surge-202-soroban",
+          "operationCount": 2,
+          "successful": true,
+          "classicInclusionFeeStroops": null,
+          "sorobanInclusionFeeStroops": "2000",
+          "sorobanResourceFeeStroops": "3000",
+          "sorobanRentFeeStroops": "250",
+          "split": "soroban"
+        }
+      ]
+    }
+  ]
+}

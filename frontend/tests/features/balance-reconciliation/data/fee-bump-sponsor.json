@@ -1,0 +1,24 @@
+{
+  "from_ledger": 10,
+  "to_ledger": 20,
+  "account": "GD6ROJBYLKQMOW3E7N4M2YBPUHMZD7PL65VRHRMO24BOVSBV5H3BQRSL",
+  "inner_account": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+  "opening": {
+    "native": "5.0000000"
+  },
+  "closing": {
+    "native": "4.9999700"
+  },
+  "truncated": false,
+  "effects": [],
+  "transactions": [
+    {
+      "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "ledger": 16,
+      "fee_charged": "300",
+      "fee_account": "GD6ROJBYLKQMOW3E7N4M2YBPUHMZD7PL65VRHRMO24BOVSBV5H3BQRSL",
+      "source_account": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+      "fee_bump": true
+    }
+  ]
+}

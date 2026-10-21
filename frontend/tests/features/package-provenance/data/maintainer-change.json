@@ -1,0 +1,9 @@
+{
+  "description": "A recorded maintainer-set change between two consecutive releases, used as the reference shape for diffMaintainers attributing a change to the release where it first takes effect.",
+  "registry": "npm",
+  "packageName": "@stellar/example-sdk",
+  "fromVersion": "1.1.0",
+  "toVersion": "1.2.0",
+  "added": ["mallory"],
+  "removed": []
+}

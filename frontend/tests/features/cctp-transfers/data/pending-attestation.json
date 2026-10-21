@@ -1,0 +1,11 @@
+{
+  "description": "A recorded burn that has not yet been attested by Circle, used as the reference shape for the attestation step's pending_confirmations/404 handling — a 404 from Iris means not yet observed, not an error.",
+  "sourceChain": "Arbitrum",
+  "network": "testnet",
+  "attestationHttpStatus": 404,
+  "attestationBody": { "error": "Message not found for provided parameters" },
+  "burn": { "state": "completed" },
+  "attestation": { "state": "pending", "status": "not_found" },
+  "destination": { "state": "unknown" },
+  "coverage": { "state": "partial" }
+}

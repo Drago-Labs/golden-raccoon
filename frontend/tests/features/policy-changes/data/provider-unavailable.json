@@ -1,0 +1,7 @@
+{
+  "description": "A recorded fetch that timed out, with no prior history for the project — coverage must report unavailable, not partial.",
+  "requestedUrl": "https://stellar.org/terms-of-service",
+  "outcome": "timeout",
+  "httpStatus": null,
+  "issues": ["The operation was aborted."]
+}

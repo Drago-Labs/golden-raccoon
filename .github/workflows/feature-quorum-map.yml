@@ -1,0 +1,52 @@
+name: Feature · quorum map
+
+on:
+  pull_request:
+    paths:
+      - "frontend/src/server/research/quorum-map/**"
+      - "frontend/src/components/research/quorum-map/**"
+      - "frontend/src/app/insights/quorum-map/**"
+      - "frontend/src/app/api/insights/quorum-map/**"
+      - "frontend/tests/features/quorum-map/**"
+      - "docs/features/quorum-map.md"
+      - "docs/features/quorum-map-evidence.md"
+      - "docs/features/quorum-map-api.md"
+      - ".github/workflows/feature-quorum-map.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: feature-quorum-map-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  focused-suite:
+    name: quorum-map focused suite
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run focused suite
+        run: npx vitest run tests/features/quorum-map
+
+      - name: Typecheck focused modules
+        run: npx tsc --noEmit --project tests/features/quorum-map/tsconfig.json
+
+      - name: Lint focused paths
+        run: npx eslint src/server/research/quorum-map src/components/research/quorum-map src/app/api/insights/quorum-map src/app/insights/quorum-map tests/features/quorum-map
