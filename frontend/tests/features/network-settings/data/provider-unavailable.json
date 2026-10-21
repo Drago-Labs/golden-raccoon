@@ -1,0 +1,5 @@
+{
+  "network": "testnet",
+  "code": "provider_unavailable",
+  "message": "Stellar RPC did not return config settings before the timeout."
+}

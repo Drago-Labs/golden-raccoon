@@ -1,0 +1,77 @@
+{
+  "records": [
+    {
+      "network": "testnet",
+      "ledger": 1000,
+      "protocolVersion": 21,
+      "upgradeXdr": "AAAAAQAAABU=",
+      "entries": [
+        {
+          "xdr": "AAAAAAABAAA="
+        },
+        {
+          "xdr": "AAAACwAAAGQ="
+        },
+        {
+          "xdr": "AAAAAQAAAAAAAAPoAAAAAAAAAZAAAAAAAAAAGQAABAA="
+        }
+      ]
+    },
+    {
+      "network": "testnet",
+      "ledger": 2000,
+      "protocolVersion": 22,
+      "upgradeXdr": "AAAAAQAAABY=",
+      "entries": [
+        {
+          "xdr": "AAAAAAABAAA="
+        },
+        {
+          "xdr": "AAAACwAAAFA="
+        },
+        {
+          "xdr": "AAAAAQAAAAAAAAPoAAAAAAAAAZAAAAAAAAAAKAAABAA="
+        }
+      ]
+    },
+    {
+      "network": "testnet",
+      "ledger": 3000,
+      "protocolVersion": 23,
+      "upgradeXdr": "AAAAAQAAABc=",
+      "entries": [
+        {
+          "xdr": "AAAAAAACAAA="
+        },
+        {
+          "xdr": "AAAACwAAAFA="
+        },
+        {
+          "xdr": "AAAAAQAAAAAAAAPoAAAAAAAAAZAAAAAAAAAAKAAABAA="
+        }
+      ]
+    },
+    {
+      "network": "mainnet",
+      "ledger": 999999,
+      "protocolVersion": 23,
+      "upgradeXdr": "AAAAAQAAABc=",
+      "entries": [
+        {
+          "xdr": "AAAAAAAAAAE="
+        }
+      ]
+    },
+    {
+      "network": "futurenet",
+      "ledger": 50,
+      "protocolVersion": 24,
+      "upgradeXdr": "AAAAAQAAABg=",
+      "entries": [
+        {
+          "xdr": "AAAACwAAAAc="
+        }
+      ]
+    }
+  ]
+}
