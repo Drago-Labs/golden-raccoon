@@ -1,0 +1,11 @@
+{
+  "description": "A recorded npm publish attestation (SLSA provenance predicate) for a release built in GitHub Actions, used as the reference shape for classifyNpmProvenance's verified case.",
+  "registry": "npm",
+  "packageName": "@stellar/example-sdk",
+  "version": "1.2.0",
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "sourceRepository": "https://github.com/stellar/example-sdk",
+  "workflowPath": ".github/workflows/publish.yml",
+  "commit": "b4893496f69116d9db2a4a90214a7236831b6656",
+  "buildRunUrl": "https://github.com/stellar/example-sdk/actions/runs/36797106084/attempts/1"
+}
