@@ -1,0 +1,52 @@
+name: Feature · account data entries
+
+on:
+  pull_request:
+    paths:
+      - "frontend/src/server/research/account-data-entries/**"
+      - "frontend/src/components/research/account-data-entries/**"
+      - "frontend/src/app/insights/account-data-entries/**"
+      - "frontend/src/app/api/insights/account-data-entries/**"
+      - "frontend/tests/features/account-data-entries/**"
+      - "docs/features/account-data-entries.md"
+      - "docs/features/account-data-entries-evidence.md"
+      - "docs/features/account-data-entries-api.md"
+      - ".github/workflows/feature-account-data-entries.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: feature-account-data-entries-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  focused-suite:
+    name: account-data-entries focused suite
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run focused suite
+        run: npx vitest run tests/features/account-data-entries
+
+      - name: Typecheck focused modules
+        run: npx tsc --noEmit --project tests/features/account-data-entries/tsconfig.json
+
+      - name: Lint focused paths
+        run: npx eslint src/server/research/account-data-entries src/components/research/account-data-entries src/app/api/insights/account-data-entries src/app/insights/account-data-entries tests/features/account-data-entries

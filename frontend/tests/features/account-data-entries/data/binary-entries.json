@@ -1,0 +1,37 @@
+{
+  "account_id": "GCFIOX77D2ZYIUKXPLGVV7XEAVCWK2G5PSE6BEEGHICVPPD26SPRPPVB",
+  "observation_ledger": 100,
+  "account": {
+    "id": "GCFIOX77D2ZYIUKXPLGVV7XEAVCWK2G5PSE6BEEGHICVPPD26SPRPPVB",
+    "sequence": "20",
+    "subentry_count": 2,
+    "last_modified_ledger": 100,
+    "data": {
+      "pointer": "q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=",
+      "blob": "/wD+"
+    }
+  },
+  "operations": [
+    {
+      "id": "b1",
+      "paging_token": "b1",
+      "type": "manage_data",
+      "name": "pointer",
+      "value": "q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=",
+      "source_account": "GBXHUHG5FGYLPD6RHL2MKWMP572O6KUXCZXDZJXS4T57ZTMAKBN7DWXN",
+      "ledger": 40,
+      "created_at": "2026-02-01T00:00:00Z"
+    },
+    {
+      "id": "b2",
+      "paging_token": "b2",
+      "type": "payment",
+      "name": null,
+      "value": null,
+      "source_account": "GBXHUHG5FGYLPD6RHL2MKWMP572O6KUXCZXDZJXS4T57ZTMAKBN7DWXN",
+      "ledger": 41,
+      "created_at": "2026-02-01T00:00:00Z"
+    }
+  ],
+  "truncated": false
+}
