@@ -1,0 +1,87 @@
+{
+  "request": { "network": "stellar-pubnet", "fromSequence": 300, "toSequence": 304 },
+  "passphrase": "Public Global Stellar Network ; September 2015",
+  "truncated": false,
+  "ledgers": [
+    {
+      "sequence": 300,
+      "closedAt": "2026-04-03T00:00:00.000Z",
+      "operationCount": 10,
+      "maxOperations": 10,
+      "baseFeeStroops": 100,
+      "omittedTransactionCount": 0,
+      "transactions": [
+        {
+          "hash": "gap-300",
+          "operationCount": 10,
+          "successful": true,
+          "classicInclusionFeeStroops": "2000",
+          "sorobanInclusionFeeStroops": null,
+          "sorobanResourceFeeStroops": null,
+          "sorobanRentFeeStroops": null,
+          "split": "classic"
+        }
+      ]
+    },
+    {
+      "sequence": 301,
+      "closedAt": "2026-04-03T00:00:05.000Z",
+      "operationCount": 10,
+      "maxOperations": 10,
+      "baseFeeStroops": 100,
+      "omittedTransactionCount": 0,
+      "transactions": [
+        {
+          "hash": "gap-301",
+          "operationCount": 10,
+          "successful": true,
+          "classicInclusionFeeStroops": "5000",
+          "sorobanInclusionFeeStroops": null,
+          "sorobanResourceFeeStroops": null,
+          "sorobanRentFeeStroops": null,
+          "split": "classic"
+        }
+      ]
+    },
+    {
+      "sequence": 303,
+      "closedAt": "2026-04-03T00:00:15.000Z",
+      "operationCount": 10,
+      "maxOperations": 10,
+      "baseFeeStroops": 100,
+      "omittedTransactionCount": 0,
+      "transactions": [
+        {
+          "hash": "gap-303",
+          "operationCount": 10,
+          "successful": true,
+          "classicInclusionFeeStroops": "1000",
+          "sorobanInclusionFeeStroops": null,
+          "sorobanResourceFeeStroops": null,
+          "sorobanRentFeeStroops": null,
+          "split": "classic"
+        }
+      ]
+    },
+    {
+      "sequence": 304,
+      "closedAt": "2026-04-03T00:00:20.000Z",
+      "operationCount": 2,
+      "maxOperations": 10,
+      "baseFeeStroops": 100,
+      "omittedTransactionCount": 0,
+      "transactions": [
+        {
+          "hash": "gap-304",
+          "operationCount": 2,
+          "successful": true,
+          "classicInclusionFeeStroops": "200",
+          "sorobanInclusionFeeStroops": null,
+          "sorobanResourceFeeStroops": null,
+          "sorobanRentFeeStroops": null,
+          "split": "classic"
+        }
+      ]
+    }
+  ]
+}
