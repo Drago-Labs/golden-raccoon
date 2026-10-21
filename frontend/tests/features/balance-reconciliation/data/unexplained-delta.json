@@ -1,0 +1,24 @@
+{
+  "from_ledger": 10,
+  "to_ledger": 20,
+  "account": "GCFIOX77D2ZYIUKXPLGVV7XEAVCWK2G5PSE6BEEGHICVPPD26SPRPPVB",
+  "opening": {
+    "native": "1.0000000"
+  },
+  "closing": {
+    "native": "2.0000002"
+  },
+  "truncated": false,
+  "effects": [
+    {
+      "id": "u1",
+      "paging_token": "u1",
+      "type": "account_credited",
+      "ledger": 11,
+      "account": "GCFIOX77D2ZYIUKXPLGVV7XEAVCWK2G5PSE6BEEGHICVPPD26SPRPPVB",
+      "asset_type": "native",
+      "amount": "1.0000000"
+    }
+  ],
+  "transactions": []
+}

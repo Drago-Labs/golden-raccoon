@@ -1,0 +1,12 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "target": "ES2022"
+  },
+  "include": [
+    "../../../next-env.d.ts",
+    "../../../src/server/research/balance-reconciliation/**/*.ts"
+  ],
+  "exclude": ["../../../node_modules"]
+}
