@@ -9,6 +9,7 @@
 import { getStellarDataApiUrls, getStellarNetwork } from "@/lib/stellar/config";
 import { HolderDistributionError } from "./errors";
 import { distributionAccountsFromToml, stellarTomlUrl } from "./issuerAdjacency";
+import { readPublicHttpsText } from "@/server/security/publicHttpsText";
 import { HOLDER_LIMITS } from "./limits";
 import { resolveNetworkIdentity } from "./networkIdentity";
 import type { CanonicalAsset, HolderDistributionReader, SupplySnapshot, TrustlinePage, TrustlineRecord } from "./schema";
@@ -228,15 +229,7 @@ async function readDistributionAccounts(asset: CanonicalAsset): Promise<{ accoun
 
     if (!url) return { accounts: [], tomlRead: false };
 
-    const response = await fetch(url, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(HOLDER_LIMITS.timeoutMs),
-      headers: { accept: "text/plain, text/toml, */*" },
-    });
-
-    if (!response.ok) return { accounts: [], tomlRead: false };
-
-    const toml = (await response.text()).slice(0, HOLDER_LIMITS.maxTomlBytes);
+    const toml = await readPublicHttpsText(url, HOLDER_LIMITS.maxTomlBytes, HOLDER_LIMITS.timeoutMs);
 
     return { accounts: distributionAccountsFromToml(toml, asset.code, asset.issuer), tomlRead: true };
   } catch {

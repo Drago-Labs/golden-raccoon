@@ -26,7 +26,7 @@ fn setup() -> (Env, GovernanceContractClient<'static>, Address, Address, Address
     signers.push_back(signer_b.clone());
     signers.push_back(signer_c.clone());
 
-    client.initialize(&signers, &2, &86400, &30 * 86400, &emergency);
+    client.initialize(&signers, &2, &86400, &(30 * 86400), &emergency);
 
     (env, client, signer_a, signer_b, signer_c, emergency)
 }
@@ -65,7 +65,7 @@ fn propose_requires_delay_bounds() {
 
     // too long
     let res2 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.propose(&a, &target, &sel, &payload, &31 * 86400);
+        client.propose(&a, &target, &sel, &payload, &(31 * 86400));
     }));
     assert!(res2.is_err());
 }
@@ -209,7 +209,7 @@ fn pending_queue_readable_and_matches_state() {
     assert_eq!(client.get_pending_count(), 1);
     let q2 = client.get_pending_queue();
     assert_eq!(q2.len(), 1);
-    assert_eq!(q2.get(0).id, pid2);
+    assert_eq!(q2.get(0).unwrap().id, pid2);
 }
 
 #[test]
