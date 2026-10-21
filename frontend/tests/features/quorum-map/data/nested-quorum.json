@@ -1,0 +1,73 @@
+{
+  "network": "stellar-testnet",
+  "source": "recorded-nested-quorum",
+  "fetchedAt": "2026-10-21T09:00:00.000Z",
+  "nodes": [
+    {
+      "publicKey": "GBTL47RTFR5EKMZSXWOQU735WBK7LRPPDIDK3JTNTCZZ7NUBBRDTVSK2",
+      "organization": "Alpha",
+      "homeDomain": "alpha.example",
+      "quorumSet": {
+        "threshold": 3,
+        "validators": [
+          "GBTL47RTFR5EKMZSXWOQU735WBK7LRPPDIDK3JTNTCZZ7NUBBRDTVSK2",
+          "GAFVCOWZWSJEAFOKBEBO2B4QITJ2YXN6YIYG6BUURQINVDVW4OPS3OL6"
+        ],
+        "innerSets": [
+          {
+            "threshold": 1,
+            "validators": [
+              "GCI2FCQLOQ4BLE5E3FDJK6JARETK7SFNQLEIHG3WIQ2ZXHV2TJFTUNWJ",
+              "GDM36IKIOSFILSE5UWVNR3QLB7BNCBP5HHKBUTDZMU3DKTYK4KIAYEFK"
+            ],
+            "innerSets": []
+          }
+        ]
+      }
+    },
+    {
+      "publicKey": "GAFVCOWZWSJEAFOKBEBO2B4QITJ2YXN6YIYG6BUURQINVDVW4OPS3OL6",
+      "organization": "Alpha",
+      "homeDomain": "alpha.example",
+      "quorumSet": {
+        "threshold": 2,
+        "validators": [
+          "GAFVCOWZWSJEAFOKBEBO2B4QITJ2YXN6YIYG6BUURQINVDVW4OPS3OL6"
+        ],
+        "innerSets": []
+      }
+    },
+    {
+      "publicKey": "GCI2FCQLOQ4BLE5E3FDJK6JARETK7SFNQLEIHG3WIQ2ZXHV2TJFTUNWJ",
+      "organization": "Beta",
+      "homeDomain": "beta.example",
+      "quorumSet": {
+        "threshold": 1,
+        "validators": [
+          "GCI2FCQLOQ4BLE5E3FDJK6JARETK7SFNQLEIHG3WIQ2ZXHV2TJFTUNWJ"
+        ],
+        "innerSets": []
+      }
+    }
+  ],
+  "toml": [
+    {
+      "publicKey": "GBTL47RTFR5EKMZSXWOQU735WBK7LRPPDIDK3JTNTCZZ7NUBBRDTVSK2",
+      "homeDomain": "alpha.example",
+      "source": "https://alpha.example/.well-known/stellar.toml",
+      "fetchedAt": "2026-10-21T09:00:00.000Z"
+    },
+    {
+      "publicKey": "GAFVCOWZWSJEAFOKBEBO2B4QITJ2YXN6YIYG6BUURQINVDVW4OPS3OL6",
+      "homeDomain": "alpha.example",
+      "source": "https://alpha.example/.well-known/stellar.toml",
+      "fetchedAt": "2026-10-21T09:00:00.000Z"
+    },
+    {
+      "publicKey": "GCI2FCQLOQ4BLE5E3FDJK6JARETK7SFNQLEIHG3WIQ2ZXHV2TJFTUNWJ",
+      "homeDomain": "beta.example",
+      "source": "https://beta.example/.well-known/stellar.toml",
+      "fetchedAt": "2026-10-21T09:00:00.000Z"
+    }
+  ]
+}

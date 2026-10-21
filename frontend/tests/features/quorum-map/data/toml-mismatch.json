@@ -1,0 +1,40 @@
+{
+  "network": "stellar-testnet",
+  "source": "recorded-toml-mismatch",
+  "fetchedAt": "2020-01-01T00:00:00.000Z",
+  "nodes": [
+    {
+      "publicKey": "GBTL47RTFR5EKMZSXWOQU735WBK7LRPPDIDK3JTNTCZZ7NUBBRDTVSK2",
+      "organization": "Alpha",
+      "homeDomain": "alpha.example",
+      "quorumSet": {
+        "threshold": 1,
+        "validators": [
+          "GBTL47RTFR5EKMZSXWOQU735WBK7LRPPDIDK3JTNTCZZ7NUBBRDTVSK2",
+          "GAF655NJ4Z46NI7BGT7CPA3374ZMPS27LVCOUCN4WDSUFOWWUTAMZUES"
+        ],
+        "innerSets": []
+      }
+    },
+    {
+      "publicKey": "GAF655NJ4Z46NI7BGT7CPA3374ZMPS27LVCOUCN4WDSUFOWWUTAMZUES",
+      "organization": "Gamma",
+      "homeDomain": "gamma.example",
+      "quorumSet": {
+        "threshold": 1,
+        "validators": [
+          "GAF655NJ4Z46NI7BGT7CPA3374ZMPS27LVCOUCN4WDSUFOWWUTAMZUES"
+        ],
+        "innerSets": []
+      }
+    }
+  ],
+  "toml": [
+    {
+      "publicKey": "GBTL47RTFR5EKMZSXWOQU735WBK7LRPPDIDK3JTNTCZZ7NUBBRDTVSK2",
+      "homeDomain": "other.example",
+      "source": "https://other.example/.well-known/stellar.toml",
+      "fetchedAt": "2020-01-01T00:00:00.000Z"
+    }
+  ]
+}
