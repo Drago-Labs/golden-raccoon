@@ -1,0 +1,11 @@
+{
+  "description": "A recorded set of score snapshots with elapsed horizons and known outcomes, used as the reference shape for a complete-coverage calibration report with a well-sized bucket.",
+  "outcomeType": "large_drawdown",
+  "horizonDays": 30,
+  "snapshots": [
+    { "snapshotId": "snap-1", "assetKey": "USDX:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", "score": 15, "publishedAt": "2025-01-01T00:00:00.000Z", "outcome": "occurred" },
+    { "snapshotId": "snap-2", "assetKey": "USDX:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", "score": 12, "publishedAt": "2025-01-05T00:00:00.000Z", "outcome": "did_not_occur" },
+    { "snapshotId": "snap-3", "assetKey": "USDX:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", "score": 85, "publishedAt": "2025-01-10T00:00:00.000Z", "outcome": "did_not_occur" }
+  ],
+  "expectedBucket": { "label": "0-20", "sampleSize": 2, "outcomeCount": 1, "observedRate": 0.5 }
+}

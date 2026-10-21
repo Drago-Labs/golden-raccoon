@@ -1,0 +1,7 @@
+{
+  "description": "A recorded Horizon trade-aggregation failure for the large_drawdown outcome, used as the reference shape for a snapshot excluded with price_data_unavailable rather than silently counted as did_not_occur.",
+  "assetKey": "USDX:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+  "horizonDays": 30,
+  "horizonError": "Horizon returned HTTP 503.",
+  "expectedExclusionReason": "price_data_unavailable"
+}
