@@ -1,0 +1,35 @@
+{
+  "network": "stellar-testnet",
+  "asset": "CONC:GAVH4D4VH6UJHT4XERRWWSGALJPQ7QIPTIKML4P54HVYA2WO6T4HGMMU",
+  "ledger": 482113,
+  "ledgerClosedAt": "2026-04-01T00:00:00Z",
+  "failure": null,
+  "supply": {
+    "issued": "100.0000000",
+    "authorized": "100.0000000",
+    "authorizedToMaintainLiabilities": "0.0000000",
+    "unauthorized": "0.0000000",
+    "liquidityPools": "0.0000000",
+    "claimableBalances": "0.0000000",
+    "contracts": "0.0000000",
+    "numAccounts": 4
+  },
+  "pages": [
+    {
+      "cursor": null,
+      "nextCursor": null,
+      "records": [
+        { "accountId": "GDKWN7TCZT2E6QGQYDGEWD2FLJEYWOXGX6AKBKT55Q6V6HIW76RPRMB7", "balance": "50.0000000" },
+        { "accountId": "GADN7W4OPTBNTRM64GRJGNSXA2NWB5CVCRENCRFM44WKXPQO4WQCUB3W", "balance": "30.0000000" },
+        { "accountId": "GDKU6WGUYCQHQHP6BMMAZY2ALM5JDAUE7JDEMP5DSJJPEAGFOFS7RQJH", "balance": "15.0000000" },
+        { "accountId": "GCHUZS5KQDI3TPG6SXSGBACK6G4QGKUFRUJ6S35D4JDGMJJ7S675ZGHB", "balance": "5.0000000" }
+      ]
+    }
+  ],
+  "pools": [],
+  "poolsTruncated": false,
+  "claimables": [],
+  "claimablesTruncated": false,
+  "distributionAccounts": ["GDKWN7TCZT2E6QGQYDGEWD2FLJEYWOXGX6AKBKT55Q6V6HIW76RPRMB7"],
+  "tomlRead": true
+}
