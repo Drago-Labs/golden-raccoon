@@ -1,0 +1,22 @@
+{
+  "hash": "7fd8ec724ca36fd10d4e5be9d32c8a989c65d1a3475ee954861eaca35e772c91",
+  "ledger": 100,
+  "network": "stellar-testnet",
+  "envelope_xdr": "AAAAAgAAAADqSmxj4pxSCr71UHsTLsX5lUd2rr6+e5JCHuppFEbSLAAAASwAAAAAAAAACwAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAQAAAAATmPYsbRpFfFG6aktfPb0vafypMhYhjciZfkFr0X2TygAAAAAAAAAAAJiWgAAAAAAAAAABAAAAABOY9ixtGkV8UbpqS189vS9p/KkyFiGNyJl+QWvRfZPKAAAAAAAAAAAC+vCAAAAAAAAAAAEAAAAAQ6cucUQBdi32a2jCbfvfJoKq7J8kdOykYT5CSg+6/TwAAAAAAAAAAACYloAAAAAAAAAAAA==",
+  "result_xdr": "AAAAAAAAAGT/////AAAAAgAAAAAAAAABAAAAAAAAAAAAAAAB/////gAAAAA=",
+  "fee_charged": "100",
+  "source_account": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+  "account": {
+    "id": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+    "sequence": "10",
+    "subentry_count": 0,
+    "last_modified_ledger": 99,
+    "balances": [
+      {
+        "asset_type": "native",
+        "balance": "1.5000000"
+      }
+    ],
+    "observed_ledger": 100
+  }
+}

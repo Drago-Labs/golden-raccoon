@@ -1,0 +1,52 @@
+name: Feature · tx failure diagnostics
+
+on:
+  pull_request:
+    paths:
+      - "frontend/src/server/research/tx-failure-diagnostics/**"
+      - "frontend/src/components/research/tx-failure-diagnostics/**"
+      - "frontend/src/app/insights/tx-failure-diagnostics/**"
+      - "frontend/src/app/api/insights/tx-failure-diagnostics/**"
+      - "frontend/tests/features/tx-failure-diagnostics/**"
+      - "docs/features/tx-failure-diagnostics.md"
+      - "docs/features/tx-failure-diagnostics-evidence.md"
+      - "docs/features/tx-failure-diagnostics-api.md"
+      - ".github/workflows/feature-tx-failure-diagnostics.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: feature-tx-failure-diagnostics-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  focused-suite:
+    name: tx-failure-diagnostics focused suite
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run focused suite
+        run: npx vitest run tests/features/tx-failure-diagnostics
+
+      - name: Typecheck focused modules
+        run: npx tsc --noEmit --project tests/features/tx-failure-diagnostics/tsconfig.json
+
+      - name: Lint focused paths
+        run: npx eslint src/server/research/tx-failure-diagnostics src/components/research/tx-failure-diagnostics src/app/api/insights/tx-failure-diagnostics src/app/insights/tx-failure-diagnostics tests/features/tx-failure-diagnostics

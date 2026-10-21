@@ -1,0 +1,22 @@
+{
+  "hash": "0dde24aaa3c72520bc7b6437d2c575934997f51c928bbece974b8134f4b98275",
+  "ledger": 100,
+  "network": "stellar-testnet",
+  "envelope_xdr": "AAAAAgAAAADqSmxj4pxSCr71UHsTLsX5lUd2rr6+e5JCHuppFEbSLAAAAGQAAAAAAAAACwAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAQAAAAATmPYsbRpFfFG6aktfPb0vafypMhYhjciZfkFr0X2TygAAAAAAAAAAAJiWgAAAAAAAAAAA",
+  "result_xdr": "AAAAAAAAAGT////7AAAAAA==",
+  "fee_charged": "100",
+  "source_account": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+  "account": {
+    "id": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+    "sequence": "4",
+    "subentry_count": 0,
+    "last_modified_ledger": 99,
+    "balances": [
+      {
+        "asset_type": "native",
+        "balance": "1.5000000"
+      }
+    ],
+    "observed_ledger": 100
+  }
+}
