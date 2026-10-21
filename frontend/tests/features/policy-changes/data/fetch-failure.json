@@ -1,0 +1,7 @@
+{
+  "description": "A recorded fetch that failed with an HTTP error; the prior timeline must be preserved as a gap, not a removal.",
+  "requestedUrl": "https://stellar.org/terms-of-service",
+  "outcome": "http_error",
+  "httpStatus": 503,
+  "issues": ["HTTP status 503"]
+}

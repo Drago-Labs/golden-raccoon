@@ -1,0 +1,14 @@
+{
+  "description": "A recorded pair of page fetches where the withdrawal fee changed from 2% to 5%.",
+  "requestedUrl": "https://stellar.org/terms-of-service",
+  "before": {
+    "httpStatus": 200,
+    "contentType": "text/html",
+    "body": "<html><body><h1>Terms of Service</h1><p>Withdrawal fees are 2% of the transaction amount.</p><p>We may change these terms at any time without notice.</p></body></html>"
+  },
+  "after": {
+    "httpStatus": 200,
+    "contentType": "text/html",
+    "body": "<html><body><h1>Terms of Service</h1><p>Withdrawal fees are 5% of the transaction amount.</p><p>We may change these terms at any time without notice.</p></body></html>"
+  }
+}
