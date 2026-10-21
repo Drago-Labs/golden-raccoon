@@ -1,0 +1,67 @@
+{
+  "request": { "network": "stellar-pubnet", "fromSequence": 100, "toSequence": 102 },
+  "passphrase": "Public Global Stellar Network ; September 2015",
+  "truncated": false,
+  "ledgers": [
+    {
+      "sequence": 100,
+      "closedAt": "2026-04-01T00:00:00.000Z",
+      "operationCount": 2,
+      "maxOperations": 100,
+      "baseFeeStroops": 100,
+      "omittedTransactionCount": 0,
+      "transactions": [
+        {
+          "hash": "quiet-100",
+          "operationCount": 2,
+          "successful": true,
+          "classicInclusionFeeStroops": "200",
+          "sorobanInclusionFeeStroops": null,
+          "sorobanResourceFeeStroops": null,
+          "sorobanRentFeeStroops": null,
+          "split": "classic"
+        }
+      ]
+    },
+    {
+      "sequence": 101,
+      "closedAt": "2026-04-01T00:00:05.000Z",
+      "operationCount": 1,
+      "maxOperations": 100,
+      "baseFeeStroops": 100,
+      "omittedTransactionCount": 0,
+      "transactions": [
+        {
+          "hash": "quiet-101",
+          "operationCount": 1,
+          "successful": true,
+          "classicInclusionFeeStroops": null,
+          "sorobanInclusionFeeStroops": "100",
+          "sorobanResourceFeeStroops": "5000",
+          "sorobanRentFeeStroops": "100",
+          "split": "soroban"
+        }
+      ]
+    },
+    {
+      "sequence": 102,
+      "closedAt": "2026-04-01T00:00:10.000Z",
+      "operationCount": 4,
+      "maxOperations": 100,
+      "baseFeeStroops": 100,
+      "omittedTransactionCount": 0,
+      "transactions": [
+        {
+          "hash": "quiet-102",
+          "operationCount": 4,
+          "successful": true,
+          "classicInclusionFeeStroops": "400",
+          "sorobanInclusionFeeStroops": null,
+          "sorobanResourceFeeStroops": null,
+          "sorobanRentFeeStroops": null,
+          "split": "classic"
+        }
+      ]
+    }
+  ]
+}
