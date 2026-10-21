@@ -2,6 +2,7 @@ import { QuorumMapError } from "./errors";
 import { QUORUM_LIMITS } from "./limits";
 import { tomlUrl, validatorDirectoryUrl, type StellarNetwork } from "./networkIdentity";
 import { parseTomlValidators, type TomlValidator } from "./tomlValidators";
+import { parsePublicHttpsUrl, readPublicHttpsText } from "@/server/security/publicHttpsText";
 
 export type DirectoryNode = {
   publicKey: string;
@@ -59,11 +60,18 @@ function nodeFrom(value: unknown): DirectoryNode | null {
 /** Fetch the configured directory and each validator home-domain stellar.toml. */
 export async function readValidatorSnapshot(
   network: StellarNetwork,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl?: typeof fetch,
   now = new Date(),
 ): Promise<ReadOutcome<ValidatorSnapshot>> {
   const directoryUrl = validatorDirectoryUrl(network);
-  const directory = await readText(directoryUrl, fetchImpl);
+  let directory: Awaited<ReturnType<typeof readText>>;
+  try {
+    directory = fetchImpl
+      ? await readText(directoryUrl, fetchImpl)
+      : { ok: true, text: await readPublicHttpsText(directoryUrl, QUORUM_LIMITS.maxResponseBytes, QUORUM_LIMITS.timeoutMs) };
+  } catch (error) {
+    directory = { ok: false, reason: error instanceof Error ? error.message : "The validator directory was unavailable." };
+  }
   if (!directory.ok) return { status: "unavailable", reason: directory.reason };
   let body: unknown;
   try {
@@ -84,7 +92,15 @@ export async function readValidatorSnapshot(
   const tomlFailures: ValidatorSnapshot["tomlFailures"] = [];
   for (const domain of domains) {
     const url = tomlUrl(domain);
-    const document = await readText(url, fetchImpl);
+    let document: Awaited<ReturnType<typeof readText>>;
+    try {
+      parsePublicHttpsUrl(url);
+      document = fetchImpl
+        ? await readText(url, fetchImpl)
+        : { ok: true, text: await readPublicHttpsText(url, QUORUM_LIMITS.maxResponseBytes, QUORUM_LIMITS.timeoutMs) };
+    } catch (error) {
+      document = { ok: false, reason: error instanceof Error ? error.message : "The TOML request was blocked." };
+    }
     if (!document.ok) {
       tomlFailures.push({ name: url, fetchedAt: null, reason: document.reason });
       continue;

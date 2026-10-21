@@ -294,7 +294,7 @@ impl GovernanceContract {
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage()
             .instance()
-            .set(&DataKey::ProposalQueue, &Vec::new(&env));
+            .set(&DataKey::ProposalQueue, &Vec::<BytesN<32>>::new(&env));
         env.storage()
             .instance()
             .set(&DataKey::ProposalCount, &0u64);
