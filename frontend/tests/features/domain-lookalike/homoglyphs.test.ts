@@ -1,0 +1,1 @@
+import { describe, expect, it } from "vitest"; import { findHomoglyphs, skeleton } from "@/server/research/domain-lookalike/homoglyphs"; describe("homoglyphs", () => { it("explains confusable characters", () => { expect(skeleton("exаmple")).toBe("example"); expect(findHomoglyphs("exаmple")).toEqual([{ character: "а", resembles: "a", position: 2 }]); }); });
