@@ -1,0 +1,2 @@
+import type { CirculatingSupplyReport } from "@/server/research/circulating-supply/schema";
+export function ReportedComparison({ rows }: { rows: CirculatingSupplyReport["comparisons"] }) { return <section><h2 className="font-semibold">Reported versus implied</h2><ul className="mt-2 grid gap-2">{rows.map((row) => <li key={`${row.name}-${row.sourceUrl}`}><a href={row.sourceUrl}>{row.name}</a>: reported {row.reported}; implied {row.implied}; gap {row.gap}. Fetched <time dateTime={row.fetchedAt}>{row.fetchedAt}</time>.</li>)}</ul></section>; }
