@@ -1,0 +1,1 @@
+"use client"; import { useState } from "react"; import type { DisclosureReport } from "@/server/research/disclosure-programs/schema"; export type DisclosureView = { status: "idle" | "loading" } | { status: "ready"; report: DisclosureReport } | { status: "error"; message: string }; export function useWorkbenchState() { return useState<DisclosureView>({ status: "idle" }); }
