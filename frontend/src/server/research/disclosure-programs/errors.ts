@@ -1,0 +1,1 @@
+export type DisclosureState = "found" | "not_found" | "partial" | "unavailable"; export class DisclosureError extends Error { constructor(public readonly code: "invalid_request", message: string, public readonly details?: unknown) { super(message); this.name = "DisclosureError"; } }
