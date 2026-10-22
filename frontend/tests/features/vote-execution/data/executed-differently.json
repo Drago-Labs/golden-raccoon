@@ -1,0 +1,1 @@
+{"proposal":{"id":"p2","title":"Change parameter","state":"passed","payload":[{"target":"0x2222222222222222222222222222222222222222","calldata":"0x0102","value":"0"}]},"execution":{"txHash":"0xbbb","target":"0x2222222222222222222222222222222222222222","calldata":"0x0304","value":"0","blockNumber":130,"evidenceUrl":"https://explorer.example/tx/bbb"}}
