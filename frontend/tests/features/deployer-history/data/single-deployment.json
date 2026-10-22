@@ -1,0 +1,19 @@
+{
+  "latestBlock": "1000",
+  "codeFromBlock": {
+    "0x6307bb06ca2c495338bc0b56f9372c40178e31e6": "100"
+  },
+  "blocks": {
+    "100": [
+      {
+        "hash": "0xcreate",
+        "from": "0x9999999999999999999999999999999999999999",
+        "to": null,
+        "nonce": 0,
+        "value": "0x0"
+      }
+    ]
+  },
+  "contractAddress": "0x6307Bb06CA2c495338bc0b56f9372c40178e31E6",
+  "deployer": "0x9999999999999999999999999999999999999999"
+}
