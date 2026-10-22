@@ -1,0 +1,1 @@
+"use client"; import { useState } from "react"; import type { DomainCheckReport } from "@/server/research/domain-lookalike/schema"; export type DomainView = { status: "idle" | "loading" } | { status: "ready"; report: DomainCheckReport } | { status: "error"; message: string }; export function useWorkbenchState() { return useState<DomainView>({ status: "idle" }); }
