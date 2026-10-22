@@ -1,0 +1,4 @@
+{
+  "scenario": "provider_unavailable",
+  "description": "The RPC endpoint could not be reached at all (timeout, DNS failure, or non-2xx response). service.test.ts drives this by injecting a VaultRpc whose blockNumber()/call() reject."
+}
