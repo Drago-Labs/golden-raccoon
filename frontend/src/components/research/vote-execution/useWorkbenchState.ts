@@ -1,0 +1,1 @@
+"use client"; import { useState } from "react"; import type { VoteExecutionReport } from "@/server/research/vote-execution/schema"; export type VoteView = { status: "idle" | "loading" } | { status: "ready"; report: VoteExecutionReport } | { status: "error"; message: string }; export function useWorkbenchState() { return useState<VoteView>({ status: "idle" }); }
