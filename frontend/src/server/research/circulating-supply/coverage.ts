@@ -1,0 +1,1 @@
+export function supplyCoverage(exclusionCount: number, sourceCount: number): string { return `Observed declared supply and ${exclusionCount} evidenced non-circulating address(es). ${sourceCount} reported source(s) are shown independently; undeclared addresses are not inferred.`; }
