@@ -1,0 +1,28 @@
+{
+  "rpc": {
+    "blockNumber": "12000000",
+    "standard": "erc721",
+    "erc721MetadataExtension": true,
+    "erc4906": true,
+    "contractUri": "ipfs://bafybeicontractcid/collection.json",
+    "tokenUriFor": {
+      "1": "ipfs://bafybeitoken1cid/1.json",
+      "2": "ipfs://bafybeitoken2cid/2.json",
+      "3": "ipfs://bafybeitoken3cid/3.json"
+    },
+    "owner": "0x3333333333333333333333333333333333333333",
+    "freezeFlags": { "isFrozen": true },
+    "setterRevertReasons": {},
+    "metadataUpdateLogCount": 0,
+    "batchMetadataUpdateLogCount": 0
+  },
+  "http": {
+    "https://ipfs.io/ipfs/bafybeicontractcid/collection.json": { "status": "ok", "body": "{\"name\":\"Collection\",\"description\":\"desc\"}" },
+    "https://ipfs.io/ipfs/bafybeitoken1cid/1.json": { "status": "ok", "body": "{\"name\":\"Token 1\",\"image\":\"ipfs://bafybeimedia1cid/1.png\"}" },
+    "https://ipfs.io/ipfs/bafybeitoken2cid/2.json": { "status": "ok", "body": "{\"name\":\"Token 2\",\"image\":\"ipfs://bafybeimedia2cid/2.png\"}" },
+    "https://ipfs.io/ipfs/bafybeitoken3cid/3.json": { "status": "ok", "body": "{\"name\":\"Token 3\",\"image\":\"ipfs://bafybeimedia3cid/3.png\"}" },
+    "https://ipfs.io/ipfs/bafybeimedia1cid/1.png": { "status": "ok", "body": "binarydata" },
+    "https://ipfs.io/ipfs/bafybeimedia2cid/2.png": { "status": "ok", "body": "binarydata" },
+    "https://ipfs.io/ipfs/bafybeimedia3cid/3.png": { "status": "ok", "body": "binarydata" }
+  }
+}

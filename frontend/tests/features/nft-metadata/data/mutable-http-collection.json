@@ -1,0 +1,28 @@
+{
+  "rpc": {
+    "blockNumber": "500",
+    "standard": "erc1155",
+    "erc721MetadataExtension": true,
+    "erc4906": false,
+    "contractUri": "https://metadata.example.com/contract.json",
+    "tokenUriFor": {
+      "1": "https://metadata.example.com/token/1.json",
+      "2": "https://metadata.example.com/token/2.json",
+      "3": "https://metadata.example.com/token/3.json"
+    },
+    "owner": "0x3333333333333333333333333333333333333333",
+    "freezeFlags": {},
+    "setterRevertReasons": { "setURI(string)": "Ownable: caller is not the owner" },
+    "metadataUpdateLogCount": 3,
+    "batchMetadataUpdateLogCount": 1
+  },
+  "http": {
+    "https://metadata.example.com/contract.json": { "status": "ok", "body": "{\"name\":\"Mutable Collection\"}" },
+    "https://metadata.example.com/token/1.json": { "status": "ok", "body": "{\"name\":\"Token 1\",\"image\":\"https://metadata.example.com/media/1.png\"}" },
+    "https://metadata.example.com/token/2.json": { "status": "ok", "body": "{\"name\":\"Token 2\",\"image\":\"https://metadata.example.com/media/2.png\"}" },
+    "https://metadata.example.com/token/3.json": { "status": "ok", "body": "{\"name\":\"Token 3\",\"image\":\"https://metadata.example.com/media/3.png\"}" },
+    "https://metadata.example.com/media/1.png": { "status": "ok", "body": "binarydata" },
+    "https://metadata.example.com/media/2.png": { "status": "ok", "body": "binarydata" },
+    "https://metadata.example.com/media/3.png": { "status": "ok", "body": "binarydata" }
+  }
+}

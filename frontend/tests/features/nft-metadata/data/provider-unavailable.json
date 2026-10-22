@@ -1,0 +1,6 @@
+{
+  "rpc": {
+    "failBlockNumber": true
+  },
+  "http": {}
+}
