@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { LEAF_ENCODINGS, type LeafEncoding } from "@/server/research/merkle-claims";
+import { LEAF_ENCODINGS, type LeafEncoding } from "@/server/research/merkle-claims/leafEncoding";
 import { SUPPORTED_NETWORKS } from "./useWorkbenchState";
 
 const NETWORK_LABELS: Record<string, string> = {

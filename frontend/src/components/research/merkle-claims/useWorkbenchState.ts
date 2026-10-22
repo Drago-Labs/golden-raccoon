@@ -2,7 +2,8 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import { useWalletSession } from "@/hooks/useWalletSession";
-import { LEAF_ENCODINGS, type LeafEncoding, type MerkleClaimsResult } from "@/server/research/merkle-claims";
+import { LEAF_ENCODINGS, type LeafEncoding } from "@/server/research/merkle-claims/leafEncoding";
+import type { MerkleClaimsResult } from "@/server/research/merkle-claims/schema";
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 export const SUPPORTED_NETWORKS = ["ethereum", "base", "arbitrum", "polygon", "optimism", "bsc", "avalanche"] as const;
