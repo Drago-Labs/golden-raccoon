@@ -1,0 +1,9 @@
+{
+  "rpc": {
+    "failBlockNumber": true
+  },
+  "treeSource": "https://example.com/valid-tree.json",
+  "treeFileBody": "{\"merkleRoot\":\"0xa20a274a6cb0afb70e5b6f7ffbb42710a8d88099e9bc4b620a4550365c9e3361\",\"claims\":{\"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{\"index\":0,\"amount\":\"100\",\"proof\":[\"0x0aa899fc3c90ed128f835896593f1f03924419299f1b582dba5f6e038071032e\"]},\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\":{\"index\":1,\"amount\":\"200\",\"proof\":[\"0x831b128d2fddcbfe7f9bc1b682f908ee800b9373b18ee4ae4f9fb00838447e3e\"]}}}",
+  "claimAddress": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "leafEncoding": "index-account-amount-packed"
+}
