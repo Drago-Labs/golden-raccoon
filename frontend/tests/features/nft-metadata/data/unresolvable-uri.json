@@ -1,0 +1,23 @@
+{
+  "rpc": {
+    "blockNumber": "777",
+    "standard": "erc721",
+    "erc721MetadataExtension": true,
+    "erc4906": true,
+    "contractUri": "ipfs://bafycontractcid/collection.json",
+    "tokenUriFor": {
+      "1": "ipfs://bafydeadcid/1.json",
+      "2": "ipfs://bafydeadcid/2.json",
+      "3": null
+    },
+    "freezeFlags": {},
+    "setterRevertReasons": {},
+    "metadataUpdateLogCount": 0,
+    "batchMetadataUpdateLogCount": 0
+  },
+  "http": {
+    "https://ipfs.io/ipfs/bafycontractcid/collection.json": { "status": "ok", "body": "{\"name\":\"Collection\"}" },
+    "https://ipfs.io/ipfs/bafydeadcid/1.json": { "status": "error", "errorMessage": "HTTP 404" },
+    "https://ipfs.io/ipfs/bafydeadcid/2.json": { "status": "error", "errorMessage": "Provider request timed out" }
+  }
+}
