@@ -1,0 +1,3 @@
+export type NormalizedUrl = { url: string; hostname: string; asciiHostname: string; registrableDomain: string };
+export function registrableDomain(hostname: string): string { const labels = hostname.replace(/\.$/, "").split("."); return labels.slice(-2).join("."); }
+export function normalizeUrl(value: string): NormalizedUrl { const parsed = new URL(value); if (!['http:', 'https:'].includes(parsed.protocol)) throw new TypeError("Only HTTP(S) URLs are supported."); const asciiHostname = parsed.hostname.toLowerCase().replace(/\.$/, ""); return { url: parsed.toString(), hostname: parsed.hostname, asciiHostname, registrableDomain: registrableDomain(asciiHostname) }; }
