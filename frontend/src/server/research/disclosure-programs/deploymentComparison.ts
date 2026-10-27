@@ -1,0 +1,1 @@
+import type { DisclosureRequest, ProgramScope } from "./schema"; export function compareDeployments(deployments: DisclosureRequest["deployments"], scope: ProgramScope) { return deployments.map((deployment) => ({ ...deployment, covered: scope.addresses.includes(deployment.address.toLowerCase()) })); }
