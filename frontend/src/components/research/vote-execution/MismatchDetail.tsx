@@ -1,0 +1,1 @@
+import type { ReconciliationRow } from "@/server/research/vote-execution/schema"; export function MismatchDetail({ row }: { row: ReconciliationRow }) { return <details><summary>Match detail</summary><p>{row.reason}</p>{row.executions.map((execution) => <p key={execution.txHash} className="font-mono text-xs">{execution.target} · {execution.calldata}</p>)}</details>; }

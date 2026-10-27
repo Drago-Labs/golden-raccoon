@@ -1,0 +1,1 @@
+export type ReconciliationState = "complete" | "partial" | "unavailable"; export class VoteExecutionError extends Error { constructor(public readonly code: "invalid_request", message: string, public readonly details?: unknown) { super(message); this.name = "VoteExecutionError"; } }

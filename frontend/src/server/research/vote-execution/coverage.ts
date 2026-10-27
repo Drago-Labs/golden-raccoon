@@ -1,0 +1,1 @@
+export function voteExecutionCoverage(fromBlock: number, toBlock: number, proposalCount: number, executionCount: number): string { return `Compared ${proposalCount} bounded proposal(s) with ${executionCount} executor event(s) from block ${fromBlock} through ${toBlock}. Matches require declared target, calldata, and value; missing declarations can only remain unmatched.`; }
