@@ -1,0 +1,55 @@
+{
+  "reserves": [
+    {
+      "poolId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+      "assetId": "XLM",
+      "symbol": "XLM",
+      "decimals": 7,
+      "collateralFactorBps": 7500,
+      "liabilityFactorBps": 9000,
+      "bRateRaw": "1100000000",
+      "dRateRaw": "1050000000"
+    },
+    {
+      "poolId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+      "assetId": "USDC",
+      "symbol": "USDC",
+      "decimals": 7,
+      "collateralFactorBps": 9000,
+      "liabilityFactorBps": 9500,
+      "bRateRaw": "1020000000",
+      "dRateRaw": "1040000000"
+    }
+  ],
+  "positions": {
+    "poolId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+    "accountId": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    "ledger": 512000,
+    "entries": [
+      {
+        "poolId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        "assetId": "XLM",
+        "bTokensRaw": "10000000000",
+        "dTokensRaw": "0"
+      },
+      {
+        "poolId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        "assetId": "USDC",
+        "bTokensRaw": "0",
+        "dTokensRaw": "2000000000"
+      }
+    ]
+  },
+  "oracles": [
+    {
+      "assetId": "XLM",
+      "priceUsd": 0.5,
+      "oracleLedger": 512000
+    },
+    {
+      "assetId": "USDC",
+      "priceUsd": null,
+      "oracleLedger": null
+    }
+  ]
+}
