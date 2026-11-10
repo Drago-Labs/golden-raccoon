@@ -1,0 +1,13 @@
+{
+  "contractId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+  "deployed": true,
+  "ledger": 700105,
+  "executableKind": "wasm",
+  "wasmHash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  "boundAssetCanonical": null,
+  "reportedMetadata": {
+    "name": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    "symbol": "USDC",
+    "decimals": 7
+  }
+}

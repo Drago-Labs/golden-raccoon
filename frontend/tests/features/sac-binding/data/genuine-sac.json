@@ -1,0 +1,13 @@
+{
+  "contractId": "CB64D3G7SM2RTH6JSGG34DDTFTQ5CFDKVDZJZSODMCX4NJ2HV2KN7OHT",
+  "deployed": true,
+  "ledger": 700100,
+  "executableKind": "stellar_asset",
+  "wasmHash": null,
+  "boundAssetCanonical": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+  "reportedMetadata": {
+    "name": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    "symbol": "USDC",
+    "decimals": 7
+  }
+}
