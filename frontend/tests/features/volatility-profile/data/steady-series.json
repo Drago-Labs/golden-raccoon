@@ -1,0 +1,24 @@
+{
+  "assetSymbol": "USDC",
+  "source": "recorded-feed",
+  "interval": "1d",
+  "expectedStepSeconds": 86400,
+  "observations": [
+    {
+      "timestamp": 86400,
+      "price": 1.0
+    },
+    {
+      "timestamp": 172800,
+      "price": 1.001
+    },
+    {
+      "timestamp": 259200,
+      "price": 1.0
+    },
+    {
+      "timestamp": 345600,
+      "price": 1.001
+    }
+  ]
+}

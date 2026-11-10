@@ -1,0 +1,24 @@
+{
+  "assetSymbol": "XLM",
+  "source": "recorded-feed",
+  "interval": "1d",
+  "expectedStepSeconds": 86400,
+  "observations": [
+    {
+      "timestamp": 86400,
+      "price": 100
+    },
+    {
+      "timestamp": 172800,
+      "price": 102
+    },
+    {
+      "timestamp": 518400,
+      "price": 110
+    },
+    {
+      "timestamp": 604800,
+      "price": 112
+    }
+  ]
+}
