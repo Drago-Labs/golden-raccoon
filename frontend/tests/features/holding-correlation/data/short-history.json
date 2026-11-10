@@ -1,0 +1,48 @@
+[
+  {
+    "assetId": "ETH",
+    "symbol": "ETH",
+    "balanceRaw": "1000000000000000000",
+    "points": [
+      {
+        "timestamp": 1000,
+        "price": 100
+      },
+      {
+        "timestamp": 2000,
+        "price": 110
+      },
+      {
+        "timestamp": 3000,
+        "price": 121
+      },
+      {
+        "timestamp": 4000,
+        "price": 108.9
+      },
+      {
+        "timestamp": 5000,
+        "price": 119.79
+      },
+      {
+        "timestamp": 6000,
+        "price": 131.769
+      }
+    ]
+  },
+  {
+    "assetId": "NEW",
+    "symbol": "NEW",
+    "balanceRaw": "100",
+    "points": [
+      {
+        "timestamp": 5000,
+        "price": 10
+      },
+      {
+        "timestamp": 6000,
+        "price": 11
+      }
+    ]
+  }
+]
