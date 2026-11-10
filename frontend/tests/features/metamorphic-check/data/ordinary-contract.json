@@ -1,0 +1,22 @@
+{
+  "creation": {
+    "found": true,
+    "txHash": "0xabc2",
+    "creationKind": "CREATE",
+    "factoryAddress": null,
+    "salt": null,
+    "initCodeHex": "0x6080604052",
+    "deploymentBlock": 18000000
+  },
+  "runtimeBytecodeHex": "0x60ff5000",
+  "codeHashSamples": [
+    {
+      "blockNumber": 18000000,
+      "codeHash": "0xhash_const"
+    },
+    {
+      "blockNumber": 19000000,
+      "codeHash": "0xhash_const"
+    }
+  ]
+}

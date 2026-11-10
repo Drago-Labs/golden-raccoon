@@ -1,0 +1,13 @@
+{
+  "creation": {
+    "found": false,
+    "txHash": null,
+    "creationKind": "unknown",
+    "factoryAddress": null,
+    "salt": null,
+    "initCodeHex": null,
+    "deploymentBlock": null
+  },
+  "runtimeBytecodeHex": "0x6080604052",
+  "codeHashSamples": []
+}
