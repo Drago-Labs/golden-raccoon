@@ -1,0 +1,14 @@
+{
+  "recordedBlock": 19500000,
+  "recordedTimestamp": 1700000000,
+  "normalizedName": "alice.eth",
+  "registryResolver": "0x231b0ee14048e9dCcD1d247744d114a4EB5E8E63",
+  "forwardAddress": "0x2222222222222222222222222222222222222222",
+  "queriedAddress": "0x1111111111111111111111111111111111111111",
+  "reverseName": "alice.eth",
+  "reverseForwardAddress": "0x2222222222222222222222222222222222222222",
+  "registrant": "0x1111111111111111111111111111111111111111",
+  "controller": "0x1111111111111111111111111111111111111111",
+  "nameWrapperWrapped": true,
+  "expiresAtTimestamp": 1800000000
+}
