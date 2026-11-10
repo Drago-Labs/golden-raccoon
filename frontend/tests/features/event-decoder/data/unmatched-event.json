@@ -1,0 +1,62 @@
+{
+  "specs": [
+    {
+      "name": "TransferEvent",
+      "signatureSymbol": "transfer",
+      "topicCount": 3,
+      "dataType": "i128",
+      "fields": [
+        {
+          "name": "event",
+          "type": "symbol",
+          "location": "topic",
+          "topicIndex": 0
+        },
+        {
+          "name": "from",
+          "type": "address",
+          "location": "topic",
+          "topicIndex": 1
+        },
+        {
+          "name": "to",
+          "type": "address",
+          "location": "topic",
+          "topicIndex": 2
+        },
+        {
+          "name": "amount",
+          "type": "i128",
+          "location": "data"
+        }
+      ]
+    }
+  ],
+  "window": {
+    "earliestRetainedLedger": 900000,
+    "latestLedger": 901000,
+    "pages": [
+      [
+        {
+          "eventId": "0900200-0001",
+          "ledger": 900200,
+          "txHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "topics": [
+            {
+              "type": "symbol",
+              "value": "custom_mystery_op"
+            },
+            {
+              "type": "address",
+              "value": "GALICE"
+            }
+          ],
+          "data": {
+            "type": "u64",
+            "value": "42"
+          }
+        }
+      ]
+    ]
+  }
+}
