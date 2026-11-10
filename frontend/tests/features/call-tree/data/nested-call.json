@@ -1,0 +1,83 @@
+{
+  "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "ledger": 610000,
+  "diagnosticsEnabled": true,
+  "topLevelCall": {
+    "contractId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+    "functionName": "swap_exact_tokens",
+    "args": [
+      {
+        "name": "amount_in",
+        "type": "i128",
+        "value": "50000000"
+      }
+    ],
+    "returnValue": {
+      "type": "i128",
+      "value": "49500000"
+    }
+  },
+  "events": [
+    {
+      "kind": "fn_call",
+      "contractId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+      "functionName": "swap_exact_tokens",
+      "args": [
+        {
+          "name": "amount_in",
+          "type": "i128",
+          "value": "50000000"
+        }
+      ]
+    },
+    {
+      "kind": "fn_call",
+      "contractId": "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB6S2",
+      "functionName": "transfer",
+      "args": [
+        {
+          "name": "from",
+          "type": "Address",
+          "value": "GUSER"
+        },
+        {
+          "name": "to",
+          "type": "Address",
+          "value": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+        },
+        {
+          "name": "amount",
+          "type": "i128",
+          "value": "50000000"
+        }
+      ]
+    },
+    {
+      "kind": "transfer",
+      "contractId": "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB6S2",
+      "transfer": {
+        "tokenContractId": "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB6S2",
+        "symbol": "USDC",
+        "from": "GUSER",
+        "to": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        "amountRaw": "50000000"
+      }
+    },
+    {
+      "kind": "fn_return",
+      "contractId": "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB6S2",
+      "returnValue": {
+        "type": "Void",
+        "value": "void"
+      }
+    },
+    {
+      "kind": "fn_return",
+      "contractId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+      "returnValue": {
+        "type": "i128",
+        "value": "49500000"
+      }
+    }
+  ]
+}

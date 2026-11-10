@@ -1,0 +1,21 @@
+{
+  "txHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "ledger": 610010,
+  "diagnosticsEnabled": false,
+  "topLevelCall": {
+    "contractId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+    "functionName": "swap_exact_tokens",
+    "args": [
+      {
+        "name": "amount_in",
+        "type": "i128",
+        "value": "50000000"
+      }
+    ],
+    "returnValue": {
+      "type": "i128",
+      "value": "49500000"
+    }
+  },
+  "events": []
+}
