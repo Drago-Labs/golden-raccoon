@@ -1,0 +1,47 @@
+{
+  "recordedBlock": 19000100,
+  "recordedTimestamp": 1700090000,
+  "minDelaySeconds": 86400,
+  "events": [
+    {
+      "kind": "CallScheduled",
+      "operationId": "0xbatch",
+      "index": 1,
+      "target": "0x1111111111111111111111111111111111111111",
+      "valueWei": "0",
+      "data": "0xdeadbeef1234",
+      "predecessor": "0x0",
+      "delaySeconds": 86400,
+      "scheduledAtTimestamp": 1700000000,
+      "blockNumber": 18999900
+    },
+    {
+      "kind": "CallScheduled",
+      "operationId": "0xbatch",
+      "index": 0,
+      "target": "0x1111111111111111111111111111111111111111",
+      "valueWei": "0",
+      "data": "0xe177246e0000000000000000000000000000000000000000000000000000000000015180",
+      "predecessor": "0x0",
+      "delaySeconds": 86400,
+      "scheduledAtTimestamp": 1700000000,
+      "blockNumber": 18999900
+    }
+  ],
+  "roles": {
+    "proposers": [
+      {
+        "address": "0x3333333333333333333333333333333333333333",
+        "isContract": true
+      }
+    ],
+    "executors": [
+      {
+        "address": "0x4444444444444444444444444444444444444444",
+        "isContract": true
+      }
+    ],
+    "cancellers": [],
+    "admins": []
+  }
+}
