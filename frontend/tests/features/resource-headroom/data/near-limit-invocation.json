@@ -1,0 +1,17 @@
+{
+  "network": "stellar-testnet",
+  "ledger": 800012,
+  "failed": false,
+  "errorMessage": null,
+  "diagnosticEvents": [],
+  "metrics": {
+    "instructions": 92000000,
+    "memoryBytes": 36000000,
+    "readEntries": 36,
+    "writeEntries": 22,
+    "readBytes": 180000,
+    "writeBytes": 60000,
+    "eventsSizeBytes": 2000,
+    "txSizeBytes": 60000
+  }
+}

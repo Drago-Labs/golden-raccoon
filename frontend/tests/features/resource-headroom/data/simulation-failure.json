@@ -1,0 +1,11 @@
+{
+  "network": "stellar-testnet",
+  "ledger": 800015,
+  "failed": true,
+  "errorMessage": "HostError: Error(Budget, ExceededLimit)",
+  "diagnosticEvents": [
+    "fn_call: swap(amount=100000000)",
+    "diagnostic: CPU instruction budget exceeded inside router loop"
+  ],
+  "metrics": null
+}
