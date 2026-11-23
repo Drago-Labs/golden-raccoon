@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "account": "GABC123",
+  "poolId": "pool-1",
+  "network": "stellar-testnet",
+  "windowStart": 100,
+  "windowEnd": 200,
+  "state": "unavailable",
+  "breakdown": null,
+  "position": [],
+  "reserves": [],
+  "prices": [],
+  "coverageGaps": [],
+  "coverageNotice": "Pool returns unavailable: Provider is currently unavailable.",
+  "priceSource": "unknown",
+  "readOnly": true
+}

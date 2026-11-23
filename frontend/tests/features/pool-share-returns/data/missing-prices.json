@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "account": "GABC123",
+  "poolId": "pool-1",
+  "network": "stellar-testnet",
+  "windowStart": 100,
+  "windowEnd": 200,
+  "state": "partial",
+  "breakdown": null,
+  "position": [
+    {
+      "ledger": 100,
+      "shares": "100000000",
+      "operation": "initial"
+    }
+  ],
+  "reserves": [
+    {
+      "ledger": 100,
+      "reserveA": "1000000000",
+      "reserveB": "1000000000",
+      "totalShares": "1000000000"
+    }
+  ],
+  "prices": [],
+  "coverageGaps": [
+    {
+      "fromLedger": 100,
+      "toLedger": 200,
+      "reason": "missing_prices"
+    }
+  ],
+  "coverageNotice": "Partial coverage: missing price data from ledger 100 to 200.",
+  "priceSource": "unknown",
+  "readOnly": true
+}
