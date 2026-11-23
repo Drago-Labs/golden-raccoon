@@ -1,0 +1,41 @@
+{
+  "projectId": "multisig-project",
+  "deployments": [
+    {
+      "chain": "evm",
+      "address": "0xvault",
+      "name": "Vault"
+    },
+    {
+      "chain": "evm",
+      "address": "0xtoken",
+      "name": "Token"
+    }
+  ],
+  "privileges": [
+    {
+      "contract": "0xvault",
+      "chain": "evm",
+      "role": "owner",
+      "controller": "0xsafe",
+      "threshold": 2,
+      "signers": [
+        "0xa",
+        "0xb",
+        "0xc"
+      ]
+    },
+    {
+      "contract": "0xtoken",
+      "chain": "evm",
+      "role": "admin",
+      "controller": "0xsafe",
+      "threshold": 2,
+      "signers": [
+        "0xa",
+        "0xb",
+        "0xc"
+      ]
+    }
+  ]
+}

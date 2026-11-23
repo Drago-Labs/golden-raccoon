@@ -1,0 +1,18 @@
+{
+  "projectId": "single-key-project",
+  "deployments": [
+    {
+      "chain": "evm",
+      "address": "0xone",
+      "name": "Singleton"
+    }
+  ],
+  "privileges": [
+    {
+      "contract": "0xone",
+      "chain": "evm",
+      "role": "owner",
+      "controller": "0xkey"
+    }
+  ]
+}

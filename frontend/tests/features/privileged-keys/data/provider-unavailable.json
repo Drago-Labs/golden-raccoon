@@ -1,0 +1,4 @@
+{
+  "unavailable": true,
+  "reason": "The RPC did not answer before the timeout."
+}

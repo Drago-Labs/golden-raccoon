@@ -1,0 +1,41 @@
+{
+  "projectId": "mixed-chains",
+  "deployments": [
+    {
+      "chain": "evm",
+      "address": "0xvault",
+      "name": "Vault"
+    },
+    {
+      "chain": "soroban",
+      "address": "CVAULT",
+      "name": "Soroban vault"
+    }
+  ],
+  "privileges": [
+    {
+      "contract": "0xvault",
+      "chain": "evm",
+      "role": "owner",
+      "controller": "0xsafe",
+      "threshold": 2,
+      "signers": [
+        "0xa",
+        "0xb"
+      ]
+    },
+    {
+      "contract": "CVAULT",
+      "chain": "soroban",
+      "role": "upgrade",
+      "controller": "CTIME",
+      "delaySeconds": 172800
+    },
+    {
+      "contract": "CVAULT",
+      "chain": "soroban",
+      "role": "unknown_admin",
+      "controller": ""
+    }
+  ]
+}
