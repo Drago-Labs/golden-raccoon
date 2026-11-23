@@ -1,0 +1,113 @@
+{
+  "source": "Recorded offline portfolio captures and one page of the transaction-history read API",
+  "recordedAt": "2026-11-20T00:05:00Z",
+  "window": {
+    "start": "2026-11-18T00:00:00.000Z",
+    "end": "2026-11-20T00:00:00.000Z",
+    "granularity": "day"
+  },
+  "note": "No external flow: every change is market movement, and the price effect explains all of it.",
+  "observations": [
+    {
+      "walletAddress": "0x4444444444444444444444444444444444444444",
+      "network": "ethereum",
+      "at": "2026-11-18T00:00:00.000Z",
+      "source": "Offline portfolio capture",
+      "holdings": [
+        {
+          "key": "ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+          "symbol": "WETH",
+          "chain": "ethereum",
+          "quantity": "10",
+          "priceUsd": "2000.00000000",
+          "valueUsd": "20000.00000000"
+        },
+        {
+          "key": "ethereum:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "symbol": "USDC",
+          "chain": "ethereum",
+          "quantity": "5000",
+          "priceUsd": "1.00000000",
+          "valueUsd": "5000.00000000"
+        }
+      ]
+    },
+    {
+      "walletAddress": "0x4444444444444444444444444444444444444444",
+      "network": "ethereum",
+      "at": "2026-11-19T00:00:00.000Z",
+      "source": "Offline portfolio capture",
+      "holdings": [
+        {
+          "key": "ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+          "symbol": "WETH",
+          "chain": "ethereum",
+          "quantity": "10",
+          "priceUsd": "2200.00000000",
+          "valueUsd": "22000.00000000"
+        },
+        {
+          "key": "ethereum:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "symbol": "USDC",
+          "chain": "ethereum",
+          "quantity": "5000",
+          "priceUsd": "1.00000000",
+          "valueUsd": "5000.00000000"
+        }
+      ]
+    },
+    {
+      "walletAddress": "0x4444444444444444444444444444444444444444",
+      "network": "ethereum",
+      "at": "2026-11-20T00:00:00.000Z",
+      "source": "Offline portfolio capture",
+      "holdings": [
+        {
+          "key": "ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+          "symbol": "WETH",
+          "chain": "ethereum",
+          "quantity": "10",
+          "priceUsd": "2100.00000000",
+          "valueUsd": "21000.00000000"
+        },
+        {
+          "key": "ethereum:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "symbol": "USDC",
+          "chain": "ethereum",
+          "quantity": "5000",
+          "priceUsd": "1.00000000",
+          "valueUsd": "5000.00000000"
+        }
+      ]
+    }
+  ],
+  "history": {
+    "items": [
+      {
+        "hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "type": "swap",
+        "asset": "WETH",
+        "valueUsd": 1234.5,
+        "status": "confirmed",
+        "lifecycleStatus": "confirmed",
+        "chainFamily": "evm",
+        "network": "ethereum",
+        "walletAddress": "0x4444444444444444444444444444444444444444",
+        "createdAt": "2026-11-18T10:00:00.000Z"
+      },
+      {
+        "hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "type": "transfer",
+        "asset": "USDC",
+        "valueUsd": 500.0,
+        "status": "submitted",
+        "lifecycleStatus": "submitted",
+        "chainFamily": "evm",
+        "network": "ethereum",
+        "walletAddress": "0x4444444444444444444444444444444444444444",
+        "createdAt": "2026-11-18T11:00:00.000Z"
+      }
+    ],
+    "nextCursor": null
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "source": "Recorded captures where one holding lost its price and one period has no observation",
+  "recordedAt": "2026-11-21T00:07:00Z",
+  "window": {
+    "start": "2026-11-18T00:00:00.000Z",
+    "end": "2026-11-21T00:00:00.000Z",
+    "granularity": "day"
+  },
+  "observations": [
+    {
+      "walletAddress": "0x4444444444444444444444444444444444444444",
+      "network": "ethereum",
+      "at": "2026-11-18T00:00:00.000Z",
+      "source": "Offline portfolio capture",
+      "holdings": [
+        {
+          "key": "ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+          "symbol": "WETH",
+          "chain": "ethereum",
+          "quantity": "10",
+          "priceUsd": "2000.00000000",
+          "valueUsd": "20000.00000000"
+        },
+        {
+          "key": "ethereum:0x0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+          "symbol": "GOAT",
+          "chain": "ethereum",
+          "quantity": "1000",
+          "priceUsd": "0.50000000",
+          "valueUsd": "500.00000000"
+        }
+      ]
+    },
+    {
+      "walletAddress": "0x4444444444444444444444444444444444444444",
+      "network": "ethereum",
+      "at": "2026-11-19T00:00:00.000Z",
+      "source": "Offline portfolio capture",
+      "holdings": [
+        {
+          "key": "ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+          "symbol": "WETH",
+          "chain": "ethereum",
+          "quantity": "10",
+          "priceUsd": "2100.00000000",
+          "valueUsd": "21000.00000000"
+        },
+        {
+          "key": "ethereum:0x0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e",
+          "symbol": "GOAT",
+          "chain": "ethereum",
+          "quantity": "1000",
+          "priceUsd": null,
+          "valueUsd": null
+        }
+      ]
+    }
+  ],
+  "history": {
+    "items": [],
+    "nextCursor": null
+  }
+}
