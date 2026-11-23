@@ -1,0 +1,7 @@
+{
+  "domain": "app.example",
+  "html": "<script src=\"https://cdn.example/lib.js\"></script>",
+  "headers": {
+    "content-security-policy": "default-src *"
+  }
+}
