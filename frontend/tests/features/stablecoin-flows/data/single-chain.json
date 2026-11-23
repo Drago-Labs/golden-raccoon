@@ -1,0 +1,86 @@
+{
+  "source": "Recorded Horizon payments page for the USDC issuing account",
+  "recordedAt": "2026-11-20T00:11:00Z",
+  "window": {
+    "start": "2026-11-18T00:00:00Z",
+    "end": "2026-11-20T00:00:00Z"
+  },
+  "stellar": {
+    "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    "records": [
+      {
+        "id": "2051414301696001",
+        "type": "payment",
+        "asset_type": "credit_alphanum4",
+        "asset_code": "USDC",
+        "asset_issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount": "10000.0000000",
+        "created_at": "2026-11-19T21:00:00Z",
+        "transaction_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "transaction_successful": true,
+        "from": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "to": "GBXYZ4ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L3M"
+      },
+      {
+        "id": "2051414301696005",
+        "type": "create_account",
+        "created_at": "2026-11-18T12:00:00Z",
+        "transaction_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "funder": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "account": "GDYZ3ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L77",
+        "starting_balance": "2.0000000"
+      },
+      {
+        "id": "2051414301696004",
+        "type": "payment",
+        "asset_type": "credit_alphanum4",
+        "asset_code": "USDC",
+        "asset_issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount": "7.0000000",
+        "created_at": "2026-11-18T11:00:00Z",
+        "transaction_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "from": "GBXYZ4ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L3M",
+        "to": "GCYZ3ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L99"
+      },
+      {
+        "id": "2051414301696003",
+        "type": "payment",
+        "asset_type": "credit_alphanum4",
+        "asset_code": "EURC",
+        "asset_issuer": "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+        "amount": "999.0000000",
+        "created_at": "2026-11-18T10:00:00Z",
+        "transaction_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "transaction_successful": true,
+        "from": "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+        "to": "GBXYZ4ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L3M"
+      },
+      {
+        "id": "2051414301696002",
+        "type": "payment",
+        "asset_type": "credit_alphanum4",
+        "asset_code": "USDC",
+        "asset_issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount": "50000.0000000",
+        "created_at": "2026-11-18T09:00:00Z",
+        "transaction_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "transaction_successful": true,
+        "from": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "to": "GBXYZ4ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L3M"
+      },
+      {
+        "id": "2051414301696006",
+        "type": "payment",
+        "asset_type": "credit_alphanum4",
+        "asset_code": "USDC",
+        "asset_issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount": "123.0000000",
+        "created_at": "2026-11-17T23:00:00Z",
+        "transaction_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "transaction_successful": true,
+        "from": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "to": "GBXYZ4ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L3M"
+      }
+    ]
+  }
+}

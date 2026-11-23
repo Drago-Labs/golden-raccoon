@@ -1,0 +1,142 @@
+{
+  "source": "Recorded eth_getLogs / eth_getBlockByNumber responses (ethereum) and a Horizon payments page (stellar issuer)",
+  "recordedAt": "2026-11-20T00:10:00Z",
+  "window": {
+    "start": "2026-11-18T00:00:00Z",
+    "end": "2026-11-20T00:00:00Z"
+  },
+  "note": "Amounts are chosen so every daily total and the net issuance can be checked by hand; see docs/features/stablecoin-flows-evidence.md",
+  "evm": {
+    "ethereum": {
+      "latestBlock": "0x15ef3c0",
+      "latestBlockTimestamp": "0x6aff8d80",
+      "blocks": {
+        "0x15ec288": "0x6afd3ee0",
+        "0x15ed098": "0x6afde7a0",
+        "0x15ee5b0": "0x6afee4c0"
+      },
+      "logs": [
+        {
+          "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "topics": [
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "0x00000000000000000000000055fe002aeff02f77364de339a1292923a15844b8"
+          ],
+          "data": "0x000000000000000000000000000000000000000000000000000000e8d4a51000",
+          "blockNumber": "0x15ec288",
+          "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+          "logIndex": "0xc",
+          "_at": "2026-11-18T06:00:00Z",
+          "_direction": "mint"
+        },
+        {
+          "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "topics": [
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            "0x00000000000000000000000055fe002aeff02f77364de339a1292923a15844b8",
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "data": "0x0000000000000000000000000000000000000000000000000000003a35294400",
+          "blockNumber": "0x15ed098",
+          "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2",
+          "logIndex": "0x4",
+          "_at": "2026-11-18T18:00:00Z",
+          "_direction": "burn"
+        },
+        {
+          "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "topics": [
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            "0x00000000000000000000000055fe002aeff02f77364de339a1292923a15844b8",
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+          ],
+          "data": "0x0000000000000000000000000000000000000000000000000000005d21dba000",
+          "blockNumber": "0x15ee5b0",
+          "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3",
+          "logIndex": "0x7",
+          "_at": "2026-11-19T12:00:00Z",
+          "_direction": "burn"
+        }
+      ]
+    }
+  },
+  "stellar": {
+    "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    "records": [
+      {
+        "id": "2051414301696001",
+        "type": "payment",
+        "asset_type": "credit_alphanum4",
+        "asset_code": "USDC",
+        "asset_issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount": "10000.0000000",
+        "created_at": "2026-11-19T21:00:00Z",
+        "transaction_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "transaction_successful": true,
+        "from": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "to": "GBXYZ4ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L3M"
+      },
+      {
+        "id": "2051414301696005",
+        "type": "create_account",
+        "created_at": "2026-11-18T12:00:00Z",
+        "transaction_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "funder": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "account": "GDYZ3ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L77",
+        "starting_balance": "2.0000000"
+      },
+      {
+        "id": "2051414301696004",
+        "type": "payment",
+        "asset_type": "credit_alphanum4",
+        "asset_code": "USDC",
+        "asset_issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount": "7.0000000",
+        "created_at": "2026-11-18T11:00:00Z",
+        "transaction_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "from": "GBXYZ4ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L3M",
+        "to": "GCYZ3ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L99"
+      },
+      {
+        "id": "2051414301696003",
+        "type": "payment",
+        "asset_type": "credit_alphanum4",
+        "asset_code": "EURC",
+        "asset_issuer": "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+        "amount": "999.0000000",
+        "created_at": "2026-11-18T10:00:00Z",
+        "transaction_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "transaction_successful": true,
+        "from": "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+        "to": "GBXYZ4ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L3M"
+      },
+      {
+        "id": "2051414301696002",
+        "type": "payment",
+        "asset_type": "credit_alphanum4",
+        "asset_code": "USDC",
+        "asset_issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount": "50000.0000000",
+        "created_at": "2026-11-18T09:00:00Z",
+        "transaction_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "transaction_successful": true,
+        "from": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "to": "GBXYZ4ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L3M"
+      },
+      {
+        "id": "2051414301696006",
+        "type": "payment",
+        "asset_type": "credit_alphanum4",
+        "asset_code": "USDC",
+        "asset_issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "amount": "123.0000000",
+        "created_at": "2026-11-17T23:00:00Z",
+        "transaction_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "transaction_successful": true,
+        "from": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "to": "GBXYZ4ZQ7Q5ASJ3VNJ4HMTWBTLJ4R7A3PQJ5SZ7YGQ6TQHV3C5ZQ2L3M"
+      }
+    ]
+  }
+}
