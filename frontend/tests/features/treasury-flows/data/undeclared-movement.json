@@ -1,0 +1,41 @@
+{
+  "projectId": "active-treasury",
+  "addresses": [
+    {
+      "chain": "stellar",
+      "address": "GTREASURY",
+      "source": "https://project.example/treasury"
+    }
+  ],
+  "checkpoints": [
+    {
+      "time": 1,
+      "asset": "USDC",
+      "chain": "stellar",
+      "amount": "100"
+    },
+    {
+      "time": 2,
+      "asset": "USDC",
+      "chain": "stellar",
+      "amount": "80"
+    }
+  ],
+  "outflows": [
+    {
+      "time": 2,
+      "asset": "USDC",
+      "chain": "stellar",
+      "amount": "5",
+      "destination": "GUNKNOWN"
+    }
+  ],
+  "reported": [
+    {
+      "asset": "USDC",
+      "chain": "stellar",
+      "reported": "80",
+      "source": "https://project.example/treasury"
+    }
+  ]
+}
