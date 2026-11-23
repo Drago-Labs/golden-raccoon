@@ -1,0 +1,46 @@
+{
+  "bridge": "cctp",
+  "now": 2000,
+  "windowSeconds": 10000,
+  "stuckAfterSeconds": 3600,
+  "sends": [
+    {
+      "id": "m1",
+      "route": "eth-stellar",
+      "sentAt": 1000,
+      "tx": "0xs1",
+      "bridge": "cctp",
+      "format": "standard"
+    },
+    {
+      "id": "m2",
+      "route": "eth-stellar",
+      "sentAt": 1000,
+      "tx": "0xs2",
+      "bridge": "cctp",
+      "format": "standard"
+    },
+    {
+      "id": "m3",
+      "route": "eth-stellar",
+      "sentAt": 1000,
+      "tx": "0xs3",
+      "bridge": "cctp",
+      "format": "standard"
+    }
+  ],
+  "deliveries": [
+    {
+      "id": "m1",
+      "deliveredAt": 1010
+    },
+    {
+      "id": "m2",
+      "deliveredAt": 1030
+    },
+    {
+      "id": "m3",
+      "deliveredAt": 1050
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "bridge": "cctp",
+  "now": 10000,
+  "windowSeconds": 20000,
+  "stuckAfterSeconds": 1000,
+  "sends": [
+    {
+      "id": "stuck1",
+      "route": "eth-stellar",
+      "sentAt": 1000,
+      "tx": "0xstuck",
+      "bridge": "cctp",
+      "format": "standard"
+    },
+    {
+      "id": "fresh",
+      "route": "eth-stellar",
+      "sentAt": 9500,
+      "tx": "0xfresh",
+      "bridge": "cctp",
+      "format": "standard"
+    }
+  ],
+  "deliveries": []
+}
