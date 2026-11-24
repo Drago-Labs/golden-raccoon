@@ -1,0 +1,1 @@
+export type FlashTraceState = "idle" | "loading" | "ready" | "error"; export class FlashTraceError extends Error { constructor(public code: "provider_unavailable" | "range_too_large" | "invalid_input", message: string) { super(message); } }

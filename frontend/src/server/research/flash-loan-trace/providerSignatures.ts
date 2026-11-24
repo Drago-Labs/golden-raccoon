@@ -1,0 +1,1 @@
+export const FLASH_PROVIDERS = { Aave: ["FlashLoan", "FlashLoanSimple"], Balancer: ["FlashLoan"], Uniswap: ["Swap", "uniswapV3FlashCallback"], Maker: ["FlashMint", "onFlashLoan"] } as const; export function supportedProvider(value?: string): value is keyof typeof FLASH_PROVIDERS { return Boolean(value && value in FLASH_PROVIDERS); }

@@ -1,0 +1,1 @@
+import { getAddress, isAddress } from "viem"; export function normalizeProtocolAddresses(values: string[]) { const unique = new Map<string, string>(); for (const value of values) { if (!isAddress(value)) throw new Error("Invalid protocol address"); const address = getAddress(value); unique.set(address.toLowerCase(), address); } return [...unique.values()]; }
