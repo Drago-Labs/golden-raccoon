@@ -1,0 +1,67 @@
+{
+  "from_ledger": 10,
+  "to_ledger": 20,
+  "asset_code": "TOKEN",
+  "issuer": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+  "holder": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+  "opening_stroops": "0",
+  "network_supply": "12.0000000",
+  "truncated": false,
+  "checkpoints": [
+    { "ledger": 12, "network_supply": "15.0000000" },
+    { "ledger": 20, "network_supply": "12.0000000" }
+  ],
+  "operations": [
+    {
+      "id": "op1",
+      "paging_token": "op1",
+      "type": "payment",
+      "ledger": 10,
+      "from": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+      "to": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+      "amount": "10.0000000",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "TOKEN",
+      "asset_issuer": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+      "transaction_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "created_at": "2024-01-01T00:00:10Z"
+    },
+    {
+      "id": "op2",
+      "paging_token": "op2",
+      "type": "path_payment_strict_send",
+      "ledger": 12,
+      "from": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+      "to": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+      "amount": "5.0000000",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "TOKEN",
+      "asset_issuer": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+      "transaction_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "created_at": "2024-01-01T00:00:12Z"
+    },
+    {
+      "id": "op3",
+      "paging_token": "op3",
+      "type": "payment",
+      "ledger": 15,
+      "from": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+      "to": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+      "amount": "3.0000000",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "TOKEN",
+      "asset_issuer": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+      "transaction_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "created_at": "2024-01-01T00:00:15Z"
+    },
+    {
+      "id": "op4",
+      "paging_token": "op4",
+      "type": "create_account",
+      "ledger": 16,
+      "source_account": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+      "transaction_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "created_at": "2024-01-01T00:00:16Z"
+    }
+  ]
+}

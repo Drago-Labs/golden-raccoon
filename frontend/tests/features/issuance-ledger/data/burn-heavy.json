@@ -1,0 +1,56 @@
+{
+  "from_ledger": 10,
+  "to_ledger": 30,
+  "asset_code": "BURN",
+  "issuer": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+  "holder": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+  "opening_stroops": "0",
+  "network_supply": "1.0000000",
+  "truncated": false,
+  "checkpoints": [
+    { "ledger": 30, "network_supply": "1.0000000" }
+  ],
+  "operations": [
+    {
+      "id": "b1",
+      "paging_token": "b1",
+      "type": "payment",
+      "ledger": 10,
+      "from": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+      "to": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+      "amount": "20.0000000",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "BURN",
+      "asset_issuer": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+      "transaction_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "created_at": "2024-01-01T00:00:10Z"
+    },
+    {
+      "id": "b2",
+      "paging_token": "b2",
+      "type": "payment",
+      "ledger": 15,
+      "from": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+      "to": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+      "amount": "15.0000000",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "BURN",
+      "asset_issuer": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+      "transaction_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "created_at": "2024-01-01T00:00:15Z"
+    },
+    {
+      "id": "b3",
+      "paging_token": "b3",
+      "type": "clawback_claimable_balance",
+      "ledger": 20,
+      "from": "GDWUSKGGFDI4FRXK5EBTRECZSVQSSWJHHJOGH6JWG3AUMFFMQ435DIAG",
+      "amount": "4.0000000",
+      "asset_type": "credit_alphanum4",
+      "asset_code": "BURN",
+      "asset_issuer": "GDFJHLAXAUMHA4OWPOB4P7YO72AQR2HMIUYFOXLXE2DZGM633K7HZDQP",
+      "transaction_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+      "created_at": "2024-01-01T00:00:20Z"
+    }
+  ]
+}
