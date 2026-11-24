@@ -1,0 +1,1 @@
+export function oracleWindow(hours: number, now = Date.now()) { const bounded = Math.min(720, Math.max(1, Math.trunc(hours))); return { start: new Date(now - bounded * 3_600_000).toISOString(), end: new Date(now).toISOString(), hours: bounded }; }
