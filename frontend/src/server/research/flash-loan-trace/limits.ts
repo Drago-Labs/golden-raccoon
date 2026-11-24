@@ -1,0 +1,1 @@
+export const FLASH_TRACE_LIMITS = { maxBlockRange: 5_000, maxTransactions: 250, timeoutMs: 15_000 } as const; export function assertTraceRange(from: number, to: number) { if (to < from || to - from > FLASH_TRACE_LIMITS.maxBlockRange) throw new Error(`Block range must not exceed ${FLASH_TRACE_LIMITS.maxBlockRange}`); }

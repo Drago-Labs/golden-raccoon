@@ -1,0 +1,1 @@
+import type { CallNode } from "./schema"; export type TraceReader = (hash: string) => Promise<CallNode[] | null>; export function flattenTrace(nodes: CallNode[], depth = 0): string[] { return nodes.flatMap((node) => [`${"  ".repeat(depth)}${node.type} ${node.from} → ${node.to} (${node.value})`, ...flattenTrace(node.children, depth + 1)]); }
