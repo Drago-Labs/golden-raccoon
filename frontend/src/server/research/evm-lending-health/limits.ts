@@ -1,0 +1,1 @@
+export const LENDING_LIMITS = { timeoutMs: 10_000, maxReserves: 128 } as const; export function boundedReserveCount(value: number) { return Math.min(LENDING_LIMITS.maxReserves, Math.max(1, Math.trunc(value))); }

@@ -1,0 +1,1 @@
+export function AddressInput({ value, onChange }: { value: string; onChange: (v: string) => void }) { return <label className="flex flex-col gap-1"><span>Account address</span><input required value={value} onChange={(e) => onChange(e.target.value)} placeholder="0x…" className="rounded-lg border border-white/15 bg-transparent p-2 font-mono" /></label>; }
