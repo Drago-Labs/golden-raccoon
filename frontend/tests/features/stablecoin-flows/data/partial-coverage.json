@@ -1,0 +1,39 @@
+{
+  "source": "Recorded responses where one chain's provider failed and another chain is younger than the window",
+  "recordedAt": "2026-11-20T00:12:00Z",
+  "window": {
+    "start": "2026-11-18T00:00:00Z",
+    "end": "2026-11-20T00:00:00Z"
+  },
+  "evm": {
+    "ethereum": {
+      "error": {
+        "code": -32603,
+        "message": "query returned more than 10000 results"
+      }
+    },
+    "base": {
+      "latestBlock": "0x2ee0",
+      "latestBlockTimestamp": "0x6aff8d80",
+      "blocks": {
+        "0x4b0": "0x6aff3920"
+      },
+      "logs": [
+        {
+          "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "topics": [
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "0x00000000000000000000000055fe002aeff02f77364de339a1292923a15844b8"
+          ],
+          "data": "0x00000000000000000000000000000000000000000000000000000005d21dba00",
+          "blockNumber": "0x4b0",
+          "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9",
+          "logIndex": "0x1",
+          "_at": "2026-11-19T18:00:00Z",
+          "_direction": "mint"
+        }
+      ]
+    }
+  }
+}
