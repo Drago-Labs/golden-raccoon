@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "contractId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "network": "stellar-testnet",
+  "state": "complete",
+  "wasmHash": "matching-hash",
+  "metadata": {
+    "repository": "https://github.com/example/matching-contract",
+    "commit": "abc123def456",
+    "sdkVersion": "22.0.0",
+    "rustVersion": "1.84.0",
+    "buildTool": "soroban-cli",
+    "sectionPresent": true
+  },
+  "envMeta": {
+    "interfaceVersion": "23",
+    "sectionPresent": true
+  },
+  "specMeta": {
+    "entryCount": 3,
+    "sectionPresent": true
+  },
+  "readOnly": true
+}
