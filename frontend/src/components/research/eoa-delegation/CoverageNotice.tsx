@@ -1,0 +1,1 @@
+export function CoverageNotice({ items }: { items: string[] }) { return <aside aria-label="Coverage notice" className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-4 text-sm"><strong>Coverage</strong><ul className="mt-1 list-disc pl-5">{items.map((item) => <li key={item}>{item}</li>)}</ul></aside>; }
