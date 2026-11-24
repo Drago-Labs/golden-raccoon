@@ -1,0 +1,25 @@
+{
+  "source": "Recorded response when the provider rejected the log query",
+  "recordedAt": "2026-11-23T12:03:00Z",
+  "governance": {
+    "chain": "ethereum",
+    "tokenAddress": "0x7a2e1e8b9c0d4f3a5b6c7d8e9f0a1b2c3d4e5f60",
+    "governorAddress": "0x1f2e3d4c5b6a79889900aabbccddeeff00112233",
+    "delegates": [
+      "0xaaaa0000000000000000000000000000000000a1"
+    ]
+  },
+  "range": {
+    "fromBlock": 900,
+    "toBlock": 2000
+  },
+  "latestBlock": 2000,
+  "code": {
+    "0x1f2e3d4c5b6a79889900aabbccddeeff00112233": "0x6080604052348015600f57600080fd5b50"
+  },
+  "logs": [],
+  "error": {
+    "code": -32603,
+    "message": "query returned more than 10000 results"
+  }
+}
