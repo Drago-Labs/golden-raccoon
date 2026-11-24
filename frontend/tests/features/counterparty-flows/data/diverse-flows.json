@@ -1,0 +1,59 @@
+{
+  "account": "GAT6WV6IR42RFIFJVAC5I7IGDHVEWGYLUPLLOEQ7LGDIIYGNNFG4SGMQ",
+  "network": "stellar-testnet",
+  "windowStart": "2026-01-01T00:00:00.000Z",
+  "windowEnd": "2026-01-31T00:00:00.000Z",
+  "labels": {},
+  "events": [
+    {
+      "id": "pay-a",
+      "kind": "payment",
+      "direction": "out",
+      "counterparty": "GB5FXIMTMUOQXH7RPY3L6XNLWGBP3EZ4PAWHS7YMFE64U2HBIWFFWGQI",
+      "asset": "native",
+      "amount": "10.0000000",
+      "createdAt": "2026-01-05T10:00:00.000Z",
+      "ledger": 2001
+    },
+    {
+      "id": "pay-b",
+      "kind": "payment",
+      "direction": "out",
+      "counterparty": "GC7GZ3B7SP6WQCQIMW7SEKTEMNFQ4BEAGNY5P7QZOF4BEJS7X7RVNOKQ",
+      "asset": "native",
+      "amount": "20.0000000",
+      "createdAt": "2026-01-06T10:00:00.000Z",
+      "ledger": 2002
+    },
+    {
+      "id": "path-c",
+      "kind": "path_payment",
+      "direction": "out",
+      "counterparty": "GDF2JK5NQKKTCXZ67AMPD7D7CC2YRAOBIZZUHQPQZZ7LJFIGTSLW6JKG",
+      "asset": "native",
+      "amount": "30.0000000",
+      "createdAt": "2026-01-07T10:00:00.000Z",
+      "ledger": 2003
+    },
+    {
+      "id": "claim-d",
+      "kind": "claim",
+      "direction": "in",
+      "counterparty": "GCDCEILHZVFXFZTDIQQAUGERJKJ7GC4BOX56FGXJM7FZNS72P2E6A3J3",
+      "asset": "native",
+      "amount": "15.0000000",
+      "createdAt": "2026-01-08T10:00:00.000Z",
+      "ledger": 2004
+    },
+    {
+      "id": "pay-e",
+      "kind": "payment",
+      "direction": "out",
+      "counterparty": "GB5FXIMTMUOQXH7RPY3L6XNLWGBP3EZ4PAWHS7YMFE64U2HBIWFFWGQI",
+      "asset": "native",
+      "amount": "5.0000000",
+      "createdAt": "2026-01-09T10:00:00.000Z",
+      "ledger": 2005
+    }
+  ]
+}

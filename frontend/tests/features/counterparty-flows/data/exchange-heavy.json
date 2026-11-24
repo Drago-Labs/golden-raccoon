@@ -1,0 +1,44 @@
+{
+  "account": "GAT6WV6IR42RFIFJVAC5I7IGDHVEWGYLUPLLOEQ7LGDIIYGNNFG4SGMQ",
+  "network": "stellar-testnet",
+  "windowStart": "2026-01-01T00:00:00.000Z",
+  "windowEnd": "2026-01-31T00:00:00.000Z",
+  "labels": {
+    "GBB47USUTI3NCW7227HZCKPYA2B4ZJ5TDQJY6Y4EVLKI33O57IPOANDJ": {
+      "label": "Exchange Desk",
+      "evidence": "fixture identity directory"
+    }
+  },
+  "events": [
+    {
+      "id": "pay-1",
+      "kind": "payment",
+      "direction": "out",
+      "counterparty": "GBB47USUTI3NCW7227HZCKPYA2B4ZJ5TDQJY6Y4EVLKI33O57IPOANDJ",
+      "asset": "native",
+      "amount": "80.0000000",
+      "createdAt": "2026-01-10T12:00:00.000Z",
+      "ledger": 1001
+    },
+    {
+      "id": "pay-2",
+      "kind": "payment",
+      "direction": "out",
+      "counterparty": "GB5FXIMTMUOQXH7RPY3L6XNLWGBP3EZ4PAWHS7YMFE64U2HBIWFFWGQI",
+      "asset": "native",
+      "amount": "20.0000000",
+      "createdAt": "2026-01-11T12:00:00.000Z",
+      "ledger": 1002
+    },
+    {
+      "id": "pay-3",
+      "kind": "payment",
+      "direction": "in",
+      "counterparty": "GBB47USUTI3NCW7227HZCKPYA2B4ZJ5TDQJY6Y4EVLKI33O57IPOANDJ",
+      "asset": "native",
+      "amount": "5.0000000",
+      "createdAt": "2026-01-12T12:00:00.000Z",
+      "ledger": 1003
+    }
+  ]
+}
