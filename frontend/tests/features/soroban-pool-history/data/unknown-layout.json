@@ -1,0 +1,20 @@
+{
+  "from_ledger": 10,
+  "to_ledger": 30,
+  "pool_id": "CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGCK3",
+  "opening_reserve_a": "500000000",
+  "opening_reserve_b": "500000000",
+  "storage_reserve_a": "500000000",
+  "storage_reserve_b": "500000000",
+  "truncated": false,
+  "events": [
+    {
+      "id": "u1",
+      "ledger": 15,
+      "topic": "mystery_fee",
+      "transactionHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "amountA": "1",
+      "amountB": "1"
+    }
+  ]
+}
