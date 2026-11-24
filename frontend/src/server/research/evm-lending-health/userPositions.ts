@@ -1,0 +1,1 @@
+import type { Position } from "./schema"; export type UserPositionReader = (address: string, market: string) => Promise<{ positions: Position[]; eMode: boolean }>; export function activePositions(rows: Position[]): Position[] { return rows.filter((row) => row.collateralAmount > 0 || row.debtAmount > 0); }

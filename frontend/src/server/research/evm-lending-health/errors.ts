@@ -1,0 +1,1 @@
+export type LendingHealthState = "idle" | "loading" | "ready" | "error"; export class LendingHealthError extends Error { constructor(public code: "provider_unavailable" | "unsupported_market", message: string) { super(message); } }

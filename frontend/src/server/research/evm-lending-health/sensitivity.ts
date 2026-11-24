@@ -1,0 +1,2 @@
+import { computeHealth } from "./healthFactor"; import type { Position } from "./schema";
+export function buildSensitivity(positions: Position[], movePercent: number, eMode = false) { return positions.filter((p) => p.collateralAmount > 0).map((target) => ({ asset: target.symbol, movePercent, healthFactor: computeHealth(positions.map((p) => p === target ? { ...p, priceUsd: p.priceUsd * (1 + movePercent / 100) } : p), eMode).healthFactor })); }

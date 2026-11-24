@@ -1,0 +1,1 @@
+export const MARKETS = { "aave-v3-ethereum": { network: "ethereum", pool: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2", oracleMaxAgeSeconds: 3600 }, "aave-v3-base": { network: "base", pool: "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5", oracleMaxAgeSeconds: 3600 } } as const; export function marketConfig(id: string) { return MARKETS[id as keyof typeof MARKETS] ?? null; }
