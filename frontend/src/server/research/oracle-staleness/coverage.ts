@@ -1,0 +1,1 @@
+export function oracleCoverage(input: { discovery: boolean; history: boolean; source: boolean }): string[] { return [input.discovery ? "Feed discovery completed." : "Feed discovery is incomplete.", input.history ? "Update history evaluated." : "Update history unavailable.", input.source ? "Verified consumer source inspected." : "Consumer source coverage unavailable."]; }

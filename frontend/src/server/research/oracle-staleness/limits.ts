@@ -1,0 +1,1 @@
+export const ORACLE_LIMITS = { maxFeeds: 64, maxUpdatesPerFeed: 2_000, timeoutMs: 10_000 } as const; export function boundedFeedCount(value: number) { return Math.min(ORACLE_LIMITS.maxFeeds, Math.max(1, Math.trunc(value))); }

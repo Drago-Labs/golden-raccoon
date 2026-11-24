@@ -1,0 +1,1 @@
+export type OracleWorkbenchState = "idle" | "loading" | "ready" | "error"; export class OracleStalenessError extends Error { constructor(public code: "provider_unavailable" | "invalid_input", message: string) { super(message); } }

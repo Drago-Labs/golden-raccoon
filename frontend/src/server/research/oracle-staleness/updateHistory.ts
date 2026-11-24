@@ -1,0 +1,1 @@
+import type { Feed } from "./schema"; export function normalizeUpdateHistory(rows: Feed["updates"]): Feed["updates"] { return [...rows].filter((row) => Number.isFinite(Date.parse(row.timestamp))).sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp)); }
