@@ -1,0 +1,73 @@
+{
+  "contractId": "CADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP5KR",
+  "network": "stellar-testnet",
+  "windowStart": 1000,
+  "windowEnd": 2000,
+  "status": "available",
+  "priorCallerDays": {
+    "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5": ["2024-01-01"]
+  },
+  "coverageGaps": [],
+  "invocations": [
+    {
+      "txHash": "tx-busy-1",
+      "ledger": 1100,
+      "day": "2024-02-01",
+      "functionName": "transfer",
+      "success": true,
+      "directCaller": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "originatingAccount": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "intermediary": null
+    },
+    {
+      "txHash": "tx-busy-2",
+      "ledger": 1200,
+      "day": "2024-02-01",
+      "functionName": "transfer",
+      "success": true,
+      "directCaller": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "originatingAccount": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "intermediary": null
+    },
+    {
+      "txHash": "tx-busy-3",
+      "ledger": 1300,
+      "day": "2024-02-02",
+      "functionName": "approve",
+      "success": true,
+      "directCaller": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+      "originatingAccount": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+      "intermediary": null
+    },
+    {
+      "txHash": "tx-busy-4",
+      "ledger": 1400,
+      "day": "2024-02-02",
+      "functionName": "transfer",
+      "success": false,
+      "directCaller": "GBTL47RTFR5EKMZSXWOQU735WBK7LRPPDIDK3JTNTCZZ7NUBBRDTVSK2",
+      "originatingAccount": "GBTL47RTFR5EKMZSXWOQU735WBK7LRPPDIDK3JTNTCZZ7NUBBRDTVSK2",
+      "intermediary": null
+    },
+    {
+      "txHash": "tx-busy-5",
+      "ledger": 1500,
+      "day": "2024-02-03",
+      "functionName": "mint",
+      "success": true,
+      "directCaller": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "originatingAccount": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "intermediary": null
+    },
+    {
+      "txHash": "tx-busy-6",
+      "ledger": 1600,
+      "day": "2024-02-03",
+      "functionName": "transfer",
+      "success": true,
+      "directCaller": "GCI2FCQLOQ4BLE5E3FDJK6JARETK7SFNQLEIHG3WIQ2ZXHV2TJFTUNWJ",
+      "originatingAccount": "GCI2FCQLOQ4BLE5E3FDJK6JARETK7SFNQLEIHG3WIQ2ZXHV2TJFTUNWJ",
+      "intermediary": null
+    }
+  ]
+}
