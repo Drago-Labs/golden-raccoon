@@ -1,0 +1,4 @@
+import type { DriftRow } from '@/server/research/allocation-drift/schema';
+export function DriftTable({rows}:{rows:DriftRow[]}) {
+  return <div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="pb-2 text-left">Current weights, drift and restoration amounts (USD)</caption><thead><tr>{['Asset or group','Current USD','Current bps','Target bps','Drift bps','Restore USD','Asset quantity'].map(label=><th key={label} scope="col" className="p-2">{label}</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.key}><th scope="row" className="max-w-56 break-all p-2">{row.label}<span className="block text-xs font-normal">{row.key}</span></th>{[row.currentUsd,row.currentBps,row.targetBps,row.driftBps,row.restoreUsd,row.restoreQuantity].map((value,index)=><td key={index} className="p-2 tabular-nums">{value??'Unavailable'}</td>)}</tr>)}</tbody></table></div>;
+}

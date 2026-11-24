@@ -1,0 +1,22 @@
+{
+  "source": "Recorded portfolio read API response when no live provider answered",
+  "recordedAt": "2026-11-20T00:06:00.000Z",
+  "result": {
+    "source": {
+      "status": "unavailable",
+      "provider": "no_live_portfolio",
+      "detail": "Real portfolio provider returned no usable holdings. No mock portfolio was generated."
+    },
+    "portfolio": {
+      "walletAddress": "0x4444444444444444444444444444444444444444",
+      "createdAt": "2026-11-20T00:00:00.000Z",
+      "nativeBalance": 0,
+      "nativeSymbol": "ETH",
+      "dayChangePercent": 0,
+      "totalValueUsd": 0,
+      "riskScore": 0,
+      "valuationStatus": "unavailable",
+      "holdings": []
+    }
+  }
+}

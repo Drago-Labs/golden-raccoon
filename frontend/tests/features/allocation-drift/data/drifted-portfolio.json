@@ -1,0 +1,109 @@
+{
+  "source": "Recorded portfolio read API response (provider real_portfolio, network ethereum)",
+  "recordedAt": "2026-11-20T00:05:00.000Z",
+  "note": "Two observations of the same wallet. Values are chosen so every weight, drift and restoration amount can be checked by hand: see docs/features/allocation-drift-evidence.md.",
+  "observations": [
+    {
+      "walletAddress": "0x4444444444444444444444444444444444444444",
+      "createdAt": "2026-11-01T00:00:00.000Z",
+      "nativeBalance": 25,
+      "nativeSymbol": "ETH",
+      "dayChangePercent": 0,
+      "totalValueUsd": 100000,
+      "riskScore": 12,
+      "valuationStatus": "complete",
+      "holdings": [
+        {
+          "tokenAddress": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+          "symbol": "WETH",
+          "name": "Wrapped Ether",
+          "chainId": "ethereum",
+          "balance": 25,
+          "priceUsd": 2000,
+          "priceStatus": "priced",
+          "valueUsd": 50000,
+          "allocationPercent": 50
+        },
+        {
+          "tokenAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "symbol": "USDC",
+          "name": "USD Coin",
+          "chainId": "ethereum",
+          "balance": 40000,
+          "priceUsd": 1,
+          "priceStatus": "priced",
+          "valueUsd": 40000,
+          "allocationPercent": 40
+        },
+        {
+          "tokenAddress": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+          "symbol": "DAI",
+          "name": "Dai Stablecoin",
+          "chainId": "ethereum",
+          "balance": 10000,
+          "priceUsd": 1,
+          "priceStatus": "priced",
+          "valueUsd": 10000,
+          "allocationPercent": 10
+        }
+      ],
+      "providerMeta": {
+        "provider": "real_portfolio",
+        "network": "ethereum",
+        "latencyMs": 142,
+        "requestId": "recorded-2026-11-01"
+      }
+    },
+    {
+      "walletAddress": "0x4444444444444444444444444444444444444444",
+      "createdAt": "2026-11-20T00:00:00.000Z",
+      "nativeBalance": 24,
+      "nativeSymbol": "ETH",
+      "dayChangePercent": 0,
+      "totalValueUsd": 100000,
+      "riskScore": 15,
+      "valuationStatus": "complete",
+      "holdings": [
+        {
+          "tokenAddress": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+          "symbol": "WETH",
+          "name": "Wrapped Ether",
+          "chainId": "ethereum",
+          "balance": 24,
+          "priceUsd": 2500,
+          "priceStatus": "priced",
+          "valueUsd": 60000,
+          "allocationPercent": 60
+        },
+        {
+          "tokenAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "symbol": "USDC",
+          "name": "USD Coin",
+          "chainId": "ethereum",
+          "balance": 30000,
+          "priceUsd": 1,
+          "priceStatus": "priced",
+          "valueUsd": 30000,
+          "allocationPercent": 30
+        },
+        {
+          "tokenAddress": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+          "symbol": "DAI",
+          "name": "Dai Stablecoin",
+          "chainId": "ethereum",
+          "balance": 10000,
+          "priceUsd": 1,
+          "priceStatus": "priced",
+          "valueUsd": 10000,
+          "allocationPercent": 10
+        }
+      ],
+      "providerMeta": {
+        "provider": "real_portfolio",
+        "network": "ethereum",
+        "latencyMs": 137,
+        "requestId": "recorded-2026-11-20"
+      }
+    }
+  ]
+}
