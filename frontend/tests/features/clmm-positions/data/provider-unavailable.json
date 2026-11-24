@@ -1,0 +1,10 @@
+{
+  "label": "provider-unavailable",
+  "address": "0x1111111111111111111111111111111111111111",
+  "network": "ethereum",
+  "reason": "Position NFT provider is not configured in this environment.",
+  "expected": {
+    "state": "unavailable",
+    "positions": []
+  }
+}

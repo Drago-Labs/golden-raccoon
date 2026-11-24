@@ -1,0 +1,49 @@
+{
+  "label": "out-of-range",
+  "address": "0x1111111111111111111111111111111111111111",
+  "network": "ethereum",
+  "position": {
+    "tokenId": "2",
+    "operator": "0x1111111111111111111111111111111111111111",
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "fee": 3000,
+    "tickLower": -60,
+    "tickUpper": 60,
+    "liquidity": "1000000000000",
+    "feeGrowthInside0LastX128": "0",
+    "feeGrowthInside1LastX128": "0",
+    "tokensOwed0": "0",
+    "tokensOwed1": "0",
+    "pool": "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
+  },
+  "pool": {
+    "pool": "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640",
+    "sqrtPriceX96": "79704936542881920863903188246",
+    "tick": 120,
+    "feeGrowthGlobal0X128": "0",
+    "feeGrowthGlobal1X128": "0",
+    "tickLowerData": {
+      "feeGrowthOutside0X128": "0",
+      "feeGrowthOutside1X128": "0"
+    },
+    "tickUpperData": {
+      "feeGrowthOutside0X128": "0",
+      "feeGrowthOutside1X128": "0"
+    },
+    "token0Symbol": "TKA",
+    "token1Symbol": "TKB",
+    "token0Decimals": 18,
+    "token1Decimals": 18
+  },
+  "expected": {
+    "amount0Raw": "0",
+    "amount1Raw": "5999709018",
+    "amount0": "0",
+    "amount1": "0.000000005999709018",
+    "status": "out_of_range_above",
+    "inRange": false,
+    "distanceToNearestBoundPercent": "-0.59",
+    "nearestBound": "upper"
+  }
+}
