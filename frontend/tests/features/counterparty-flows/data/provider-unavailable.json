@@ -1,0 +1,8 @@
+{
+  "account": "GBEPERBCCDFZAMJRV7XIA7EZ7EQ2SBGPG6NAIOHEU3CXVVUA5FR3O4WT",
+  "network": "stellar-testnet",
+  "windowStart": "2026-01-01T00:00:00.000Z",
+  "windowEnd": "2026-01-31T00:00:00.000Z",
+  "reason": "Horizon timed out",
+  "events": []
+}

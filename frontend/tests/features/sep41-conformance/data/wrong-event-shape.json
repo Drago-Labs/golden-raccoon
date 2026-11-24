@@ -1,0 +1,99 @@
+{
+  "contractId": "CADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP5KR",
+  "functions": [
+    {
+      "name": "allowance",
+      "inputs": [
+        { "name": "from", "type": "Address" },
+        { "name": "spender", "type": "Address" }
+      ],
+      "outputs": [{ "name": "", "type": "i128" }]
+    },
+    {
+      "name": "approve",
+      "inputs": [
+        { "name": "from", "type": "Address" },
+        { "name": "spender", "type": "Address" },
+        { "name": "amount", "type": "i128" },
+        { "name": "live_until_ledger", "type": "u32" }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "balance",
+      "inputs": [{ "name": "id", "type": "Address" }],
+      "outputs": [{ "name": "", "type": "i128" }]
+    },
+    {
+      "name": "transfer",
+      "inputs": [
+        { "name": "from", "type": "Address" },
+        { "name": "to", "type": "Address" },
+        { "name": "amount", "type": "i128" }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "transfer_from",
+      "inputs": [
+        { "name": "spender", "type": "Address" },
+        { "name": "from", "type": "Address" },
+        { "name": "to", "type": "Address" },
+        { "name": "amount", "type": "i128" }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "burn",
+      "inputs": [
+        { "name": "from", "type": "Address" },
+        { "name": "amount", "type": "i128" }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "burn_from",
+      "inputs": [
+        { "name": "spender", "type": "Address" },
+        { "name": "from", "type": "Address" },
+        { "name": "amount", "type": "i128" }
+      ],
+      "outputs": []
+    },
+    {
+      "name": "decimals",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "u32" }]
+    },
+    {
+      "name": "name",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "String" }]
+    },
+    {
+      "name": "symbol",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "String" }]
+    }
+  ],
+  "simulations": [
+    { "function": "decimals", "ok": true, "value": 7, "authorizationRequired": false, "error": null },
+    { "function": "name", "ok": true, "value": "Broken Events", "authorizationRequired": false, "error": null },
+    { "function": "symbol", "ok": true, "value": "BRK", "authorizationRequired": false, "error": null },
+    { "function": "balance", "ok": true, "value": "1", "authorizationRequired": false, "error": null }
+  ],
+  "events": [
+    {
+      "id": "evt-bad-transfer",
+      "ledger": 2001,
+      "topics": ["transfer", "GFROM..."],
+      "data": { "map": { "value": "100" } }
+    },
+    {
+      "id": "evt-bad-approve",
+      "ledger": 2002,
+      "topics": ["approve", "GFROM...", "GSPENDER..."],
+      "data": { "map": { "amount": "10" } }
+    }
+  ]
+}

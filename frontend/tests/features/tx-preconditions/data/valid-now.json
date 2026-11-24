@@ -1,0 +1,15 @@
+{
+  "name": "valid-now",
+  "envelope_xdr": "AAAAAgAAAADqSmxj4pxSCr71UHsTLsX5lUd2rr6+e5JCHuppFEbSLAAAAGQAAAAAAAAAZQAAAAIAAAABAAAAAGmkHDAAAAAAaaQ4UAAAAAEAAAPoAA9CPwAAAAEAAAAAAAAAMgAAAAAAAAA8AAAABQAAAAAAAAAAAAAAAQAAAAAAAAABAAAAAP0XJDhaoMdbZPt4zWAvodmR/ev3axPFjtcC6sg16fYYAAAAAAAAAAAAmJaAAAAAAAAAAAEURtIsAAAAQHPjEB8OBOkpkDd5OjB31K5i9XH+5bB1xfoOkXJw/h1miir83+Svtk6O20UsekNGj29Dw1XKy3tf7xi0OyPJ2AU=",
+  "network": "stellar-testnet",
+  "evaluated_at": "2026-03-01T12:00:00.000Z",
+  "ledger": 55000,
+  "closed_at": "2026-03-01T12:00:00.000Z",
+  "account": {
+    "id": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+    "sequence": "100",
+    "sequence_ledger": 54990,
+    "sequence_time": "1772365800",
+    "last_modified_ledger": 54990
+  }
+}
