@@ -1,0 +1,61 @@
+{
+  "source": "Recorded offline portfolio captures and one page of the transaction-history read API",
+  "recordedAt": "2026-11-20T00:06:00Z",
+  "window": {
+    "start": "2026-11-18T00:00:00.000Z",
+    "end": "2026-11-19T00:00:00.000Z",
+    "granularity": "day"
+  },
+  "note": "A 10,000 USD deposit of 5 WETH mid-period: change 11,500 = flow 10,000 + price effect 1,000 + residual 500.",
+  "observations": [
+    {
+      "walletAddress": "0x4444444444444444444444444444444444444444",
+      "network": "ethereum",
+      "at": "2026-11-18T00:00:00.000Z",
+      "source": "Offline portfolio capture",
+      "holdings": [
+        {
+          "key": "ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+          "symbol": "WETH",
+          "chain": "ethereum",
+          "quantity": "10",
+          "priceUsd": "2000.00000000",
+          "valueUsd": "20000.00000000"
+        }
+      ]
+    },
+    {
+      "walletAddress": "0x4444444444444444444444444444444444444444",
+      "network": "ethereum",
+      "at": "2026-11-19T00:00:00.000Z",
+      "source": "Offline portfolio capture",
+      "holdings": [
+        {
+          "key": "ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+          "symbol": "WETH",
+          "chain": "ethereum",
+          "quantity": "15",
+          "priceUsd": "2100.00000000",
+          "valueUsd": "31500.00000000"
+        }
+      ]
+    }
+  ],
+  "history": {
+    "items": [
+      {
+        "hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "type": "transfer",
+        "asset": "WETH",
+        "valueUsd": 10000.0,
+        "status": "confirmed",
+        "lifecycleStatus": "confirmed",
+        "chainFamily": "evm",
+        "network": "ethereum",
+        "walletAddress": "0x4444444444444444444444444444444444444444",
+        "createdAt": "2026-11-18T12:00:00.000Z"
+      }
+    ],
+    "nextCursor": null
+  }
+}
