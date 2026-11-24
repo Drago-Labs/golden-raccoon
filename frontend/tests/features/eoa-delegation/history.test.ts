@@ -1,0 +1,5 @@
+import { describe, expect, it } from "vitest";
+import { buildAuthorizationHistory } from "@/server/research/eoa-delegation/authorizationHistory";
+import { delegationCoverage } from "@/server/research/eoa-delegation/coverage";
+import { boundedHistoryLimit, DELEGATION_LIMITS } from "@/server/research/eoa-delegation/limits";
+describe("authorization history", () => { it("lists every authorization with its transaction and newest first", () => { const rows = buildAuthorizationHistory([{ transactionHash: "0xold", blockNumber: 1, address: "0x0000000000000000000000000000000000007702" }, { transactionHash: "0xnew", blockNumber: 2, address: "0x0000000000000000000000000000000000000000" }]); expect(rows.map((row) => row.transactionHash)).toEqual(["0xnew", "0xold"]); expect(rows[0].revoked).toBe(true); }); it("bounds history and states coverage", () => { expect(boundedHistoryLimit(1000)).toBe(DELEGATION_LIMITS.maxHistory); expect(delegationCoverage({ historyAvailable: false, sourceAvailable: false })).toHaveLength(2); }); });

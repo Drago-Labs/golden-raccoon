@@ -1,0 +1,4 @@
+import { describe, expect, it } from "vitest";
+import { inspectEoaDelegation } from "@/server/research/eoa-delegation";
+import { DESIGNATOR, request, TARGET } from "./fixtures";
+describe("delegation service", () => { it("combines current code, source evidence, and every authorization", async () => { const report = await inspectEoaDelegation(request, { readCode: async () => DESIGNATOR, readHistory: async () => [{ transactionHash: "0xabc", blockNumber: 10, address: TARGET }], inspectTarget: async () => ({ verifiedSource: true, functionNames: ["execute"] }) }); expect(report.state).toBe("delegated"); expect(report.target?.toLowerCase()).toBe(TARGET.toLowerCase()); expect(report.history).toHaveLength(1); }); it("reports a plain EOA", async () => { expect((await inspectEoaDelegation(request, { readCode: async () => "0x" })).state).toBe("plain"); }); });
