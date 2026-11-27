@@ -1,0 +1,29 @@
+{
+  "from_ledger": 10,
+  "to_ledger": 40,
+  "pool_id": "CABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAFNSZ",
+  "opening_reserve_a": "1000000000",
+  "opening_reserve_b": "1000000000",
+  "storage_reserve_a": "1200000000",
+  "storage_reserve_b": "800000000",
+  "truncated": false,
+  "events": [
+    {
+      "id": "d1",
+      "ledger": 20,
+      "topic": "swap",
+      "transactionHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "amountA": "100000000",
+      "amountB": "90000000",
+      "direction": "a_to_b"
+    },
+    {
+      "id": "d2",
+      "ledger": 30,
+      "topic": "sync",
+      "transactionHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "reserveA": "1050000000",
+      "reserveB": "950000000"
+    }
+  ]
+}

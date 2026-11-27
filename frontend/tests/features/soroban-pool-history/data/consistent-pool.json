@@ -1,0 +1,29 @@
+{
+  "from_ledger": 10,
+  "to_ledger": 50,
+  "pool_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+  "opening_reserve_a": "1000000000",
+  "opening_reserve_b": "1000000000",
+  "storage_reserve_a": "1150000000",
+  "storage_reserve_b": "1054545455",
+  "truncated": false,
+  "events": [
+    {
+      "id": "e1",
+      "ledger": 15,
+      "topic": "deposit",
+      "transactionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "amountA": "100000000",
+      "amountB": "100000000"
+    },
+    {
+      "id": "e2",
+      "ledger": 25,
+      "topic": "swap",
+      "transactionHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "amountA": "50000000",
+      "amountB": "45454545",
+      "direction": "a_to_b"
+    }
+  ]
+}
