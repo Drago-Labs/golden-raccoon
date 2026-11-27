@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "contractId": "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+  "network": "stellar-testnet",
+  "state": "partial",
+  "wasmHash": "conflict-hash",
+  "metadata": {
+    "repository": "https://github.com/example/deployed-repo",
+    "commit": "deployed-commit-111",
+    "sdkVersion": "22.1.0",
+    "rustVersion": null,
+    "buildTool": null,
+    "sectionPresent": true
+  },
+  "comparisons": [
+    {
+      "field": "repository",
+      "status": "conflict",
+      "referenceSource": "README"
+    },
+    {
+      "field": "commit",
+      "status": "conflict",
+      "referenceSource": "release-notes"
+    },
+    {
+      "field": "sdkVersion",
+      "status": "conflict",
+      "referenceSource": "README"
+    }
+  ],
+  "readOnly": true
+}

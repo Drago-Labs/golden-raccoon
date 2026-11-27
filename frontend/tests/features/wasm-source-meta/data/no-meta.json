@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "contractId": "CDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+  "network": "stellar-testnet",
+  "state": "partial",
+  "wasmHash": "empty-hash",
+  "metadata": {
+    "repository": null,
+    "commit": null,
+    "sdkVersion": null,
+    "rustVersion": null,
+    "buildTool": null,
+    "entries": [],
+    "sectionPresent": false
+  },
+  "envMeta": {
+    "interfaceVersion": null,
+    "sectionPresent": false
+  },
+  "specMeta": {
+    "entryCount": null,
+    "sectionPresent": false
+  },
+  "coverageNotice": "No contractmetav0 section was found. Absence is reported as absent, not as a mismatch.",
+  "readOnly": true
+}

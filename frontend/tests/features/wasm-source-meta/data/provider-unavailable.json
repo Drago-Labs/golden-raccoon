@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "contractId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "network": "stellar-testnet",
+  "state": "unavailable",
+  "wasmHash": null,
+  "metadata": {
+    "repository": null,
+    "commit": null,
+    "sdkVersion": null,
+    "rustVersion": null,
+    "buildTool": null,
+    "entries": [],
+    "sectionPresent": false
+  },
+  "coverageNotice": "Wasm metadata unavailable: Provider is currently unavailable.",
+  "readOnly": true
+}
