@@ -1,0 +1,51 @@
+{
+  "contractId": "CADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP5KR",
+  "network": "stellar-testnet",
+  "windowStart": 1000,
+  "windowEnd": 2000,
+  "status": "available",
+  "priorCallerDays": {},
+  "coverageGaps": [],
+  "invocations": [
+    {
+      "txHash": "tx-nested-1",
+      "ledger": 1100,
+      "day": "2024-02-01",
+      "functionName": "swap",
+      "success": true,
+      "directCaller": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+      "originatingAccount": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "intermediary": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+    },
+    {
+      "txHash": "tx-nested-2",
+      "ledger": 1200,
+      "day": "2024-02-01",
+      "functionName": "swap",
+      "success": false,
+      "directCaller": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+      "originatingAccount": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "intermediary": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+    },
+    {
+      "txHash": "tx-nested-3",
+      "ledger": 1300,
+      "day": "2024-02-02",
+      "functionName": "deposit",
+      "success": true,
+      "directCaller": "CBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHBQ",
+      "originatingAccount": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+      "intermediary": "CBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHBQ"
+    },
+    {
+      "txHash": "tx-nested-4",
+      "ledger": 1400,
+      "day": "2024-02-02",
+      "functionName": "transfer",
+      "success": true,
+      "directCaller": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "originatingAccount": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "intermediary": null
+    }
+  ]
+}

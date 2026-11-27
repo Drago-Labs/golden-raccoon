@@ -1,0 +1,53 @@
+{
+  "contractId": "CADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP5KR",
+  "network": "stellar-testnet",
+  "windowStart": 1000,
+  "windowEnd": 2000,
+  "status": "available",
+  "priorCallerDays": {
+    "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5": ["2023-12-01", "2023-12-15"]
+  },
+  "coverageGaps": [],
+  "invocations": [
+    {
+      "txHash": "tx-admin-1",
+      "ledger": 1100,
+      "day": "2024-02-01",
+      "functionName": "set_admin",
+      "success": true,
+      "directCaller": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "originatingAccount": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "intermediary": null
+    },
+    {
+      "txHash": "tx-admin-2",
+      "ledger": 1200,
+      "day": "2024-02-01",
+      "functionName": "pause",
+      "success": true,
+      "directCaller": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "originatingAccount": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "intermediary": null
+    },
+    {
+      "txHash": "tx-admin-3",
+      "ledger": 1300,
+      "day": "2024-02-02",
+      "functionName": "upgrade",
+      "success": false,
+      "directCaller": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "originatingAccount": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "intermediary": null
+    },
+    {
+      "txHash": "tx-admin-4",
+      "ledger": 1400,
+      "day": "2024-02-02",
+      "functionName": "pause",
+      "success": true,
+      "directCaller": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "originatingAccount": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "intermediary": null
+    }
+  ]
+}
